@@ -1,0 +1,57 @@
+{
+  "name": "figaf-installer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Figaf Tool installer for SAP BTP Cloud Foundry",
+  "main": "main-process/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win nsis"
+  },
+  "author": "Figaf",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.figaf.installer",
+    "productName": "Figaf Installer",
+    "asar": true,
+    "icon": "figaf-logo.png",
+    "files": [
+      "main-process/**/*",
+      "installer/**/*",
+      "figaf-logo.png"
+    ],
+    "extraResources": [
+      {
+        "from": "Figaf-BTP-Deployment-btp-users",
+        "to": "Figaf-BTP-Deployment-btp-users",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "instructions.md",
+        "to": "instructions.md"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "Figaf-Installer-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Figaf Installer"
+    }
+  }
+}

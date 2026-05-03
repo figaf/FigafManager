@@ -1,0 +1,40 @@
+# Use the name of your company or anything else instead of <your-company> prefix. Avoid using underscore and special symbols in the name.
+ID: <your-company>-figaf
+
+# Use 'cf domains' command to fetch a value for LANDSCAPE_APPS_DOMAIN. It should be in cfapps.xxxxx.hana.ondemand.com format.
+LANDSCAPE_APPS_DOMAIN: 
+
+# You can find the latest version here: https://hub.docker.com/r/figaf/app/tags?page=1&name=btp.
+# Please do not use snapshot versions (they have SNAPSHOT in the name) if they are not provided for you directly from Figaf team (it is very rare practice, but possible to deliver a quick hotfix).
+# Use just a version number (e.g. 2210.3-btp) without figaf/app:
+DOCKER_IMAGE_VERSION:
+
+# Define username of your dockerhub account to do a pull operation on behalf of your user.
+# That helps to avoid the error 'You have reached your pull rate limit'.
+DOCKER_USERNAME:
+
+# Must be configured properly for integration with PI system through a Cloud connection.
+# See more details about cloud connector configuration here:
+# https://blogs.sap.com/2021/09/05/installation-and-configuration-of-sap-cloud-connector
+# https://help.figaf.com/portal/en/kb/articles/how-to-use-pi-po-systems-in-sap-btp#Specific_services
+# It should be populated also to integrate with local smtp server if cloud connector is configured with a locationId
+LOCATION_ID:
+
+# Max capacity of 'logs' folder
+LOGS_TOTAL_SIZE_CAP: 2GB
+
+# RAM allocated for the app. Possible units: K, M, G, k, m, g
+INSTANCE_MEMORY: 3700M #for a trial account
+#INSTANCE_MEMORY: 4G #for a production account (4G is the minimum requirement, you can set more)
+
+# The percentage of the physical memory size that is used as the maximum heap size
+MAX_RAM_PERCENTAGE: 50
+
+# Enables instance monitoring endpoint /instance-monitoring and adds Glowroot agent (see https://glowroot.org) to the instance
+ENABLE_INSTANCE_MONITORING: true
+
+#This configuration flag is used to specify whether the application should use a cloud connector for SMTP integration
+USE_CLOUD_CONNECTOR_FOR_SMTP_INTEGRATION: false
+
+#The configuration key specifies the name of a destination configured in the SAP BTP Destination service that contains the local SMTP server's host and port information.
+CLOUD_CONNECTOR_DESTINATION_NAME_FOR_SMTP_INTEGRATION:
