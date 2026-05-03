@@ -198,6 +198,7 @@ function ScreenWelcome({ ctx, setCtx, onNext }) {
 function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
   const { login } = ctx;
   const setLogin = (patch) => setCtx(c => ({ ...c, login: { ...c.login, ...patch } }));
+  const [gaChoice, setGaChoice] = React.useState(null);
 
   const btpLoggedIn = login.btpStatus === "done";
   const cfLoggedIn = login.cfStatus === "done";
@@ -206,32 +207,98 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
   React.useEffect(() => {
     const api = fg();
     if (!api) return;
-    const off = api.on("cf:loggedIn", () => {
+    const offCf1 = api.on("cf:loggedIn", () => {
       setLogin({ cfStatus: "done" });
       (async () => {
         const t = await api.cf.targetOrgSpace();
         if (t && t.ok) setLogin({ org: t.org, space: t.space, user: t.user || login.user });
       })();
     });
-    const off2 = api.on("cf:loginFailed", () => setLogin({ cfStatus: "error" }));
-    return () => { off && off(); off2 && off2(); };
+    const offCf2 = api.on("cf:loginFailed", () => setLogin({ cfStatus: "error" }));
+
+    const offGaChoice = api.on("btp:gaChoice", (p) => {
+      setGaChoice(p);
+    });
+    const offBtpOk = api.on("btp:loggedIn", (env) => {
+      setGaChoice(null);
+      if (env && env.ok) {
+        setLogin({
+          btpStatus: "done",
+          landscape: env.landscape,
+          subaccount: env.subaccount || "",
+          subaccountName: env.subaccountName || "",
+          subdomain: env.subdomain || "",
+          org: env.org || "",
+          apiUrl: env.apiUrl,
+        });
+      } else {
+        setLogin({ btpStatus: "error" });
+      }
+    });
+    const offBtpFail = api.on("btp:loginFailed", () => {
+      setGaChoice(null);
+      setLogin({ btpStatus: "error" });
+    });
+
+    return () => {
+      offCf1 && offCf1();
+      offCf2 && offCf2();
+      offGaChoice && offGaChoice();
+      offBtpOk && offBtpOk();
+      offBtpFail && offBtpFail();
+    };
     // eslint-disable-next-line
   }, []);
 
   async function startBtpLogin() {
     const api = fg();
     if (!api) return;
+    setGaChoice(null);
     setLogin({ btpStatus: "running" });
-    const login1 = await api.btp.login();
-    if (!login1.ok) { setLogin({ btpStatus: "error" }); return; }
-    const env = await api.btp.listEnvInstances();
-    if (!env.ok) { setLogin({ btpStatus: "error" }); return; }
+    await api.btp.loginStart();
+  }
+
+  async function cancelBtpLogin() {
+    const api = fg();
+    if (!api) return;
+    setGaChoice(null);
+    await api.btp.cancelLogin();
+    setLogin({ btpStatus: "idle" });
+  }
+
+  async function selectGa(val) {
+    const api = fg();
+    if (!api) return;
+    setGaChoice(null);
+    setLogin({ btpStatus: "running" });
+    if (typeof val === "number") {
+      // Interactive mode: write the choice index to the live btp login stdin
+      await api.btp.submitChoice(val);
+    } else {
+      // Post-login mode: target the GA by subdomain in a separate btp call
+      await api.btp.selectGlobalAccount(val);
+    }
+  }
+
+  async function handleLogout() {
+    const api = fg();
+    if (!api) return;
+    await api.btp.logout();
     setLogin({
-      btpStatus: "done",
-      landscape: env.landscape,
-      subaccount: env.subaccount || "",
-      org: env.org || "",
-      apiUrl: env.apiUrl,
+      btpStatus: "idle", cfStatus: "idle",
+      landscape: "", subaccount: "", subaccountName: "", subdomain: "", org: "", space: "", user: "", apiUrl: "",
+      passcode: "", passcodeRequested: false,
+    });
+  }
+
+  async function handleCfLogout() {
+    const api = fg();
+    if (!api) return;
+    await api.cf.logout();
+    setLogin({
+      cfStatus: "idle",
+      org: "", space: "",
+      passcode: "", passcodeRequested: false,
     });
   }
 
@@ -249,6 +316,26 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     if (!login.passcode || login.passcode.length < 4) return;
     setLogin({ cfStatus: "running" });
     await api.cf.submitPasscode(login.passcode);
+  }
+
+  async function pastePasscode() {
+    const api = fg();
+    if (!api) return;
+    try {
+      const r = await api.shell.readClipboard();
+      if (!r || !r.ok) {
+        appendLog([{ type: "warn", text: "Could not read clipboard." }]);
+        return;
+      }
+      const value = (r.text || "").trim();
+      if (!value) {
+        appendLog([{ type: "warn", text: "Clipboard is empty." }]);
+        return;
+      }
+      setLogin({ passcode: value });
+    } catch {
+      appendLog([{ type: "warn", text: "Could not read clipboard." }]);
+    }
   }
 
   return (
@@ -276,7 +363,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
         </div>
 
         <div className="card" style={{ marginBottom: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: btpLoggedIn ? 10 : 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: (btpLoggedIn || gaChoice) ? 10 : 14 }}>
             <div style={{ width: 36, height: 36, borderRadius: 8, background: "var(--fg-blue-soft)", color: "var(--fg-blue)", display: "grid", placeItems: "center" }}>
               <Ico.Cloud />
             </div>
@@ -285,7 +372,17 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
               <div style={{ fontSize: 12, color: "var(--ink-3)" }}>cli.btp.cloud.sap</div>
             </div>
             {btpLoggedIn && <span className="pill green"><Ico.Check /> Connected</span>}
-            {login.btpStatus === "running" && <span className="pill blue"><Ico.Spinner /> Waiting for browser…</span>}
+            {btpLoggedIn && (
+              <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={handleLogout}>
+                Sign out
+              </button>
+            )}
+            {!btpLoggedIn && login.btpStatus === "running" && gaChoice && (
+              <span className="pill blue">Awaiting selection</span>
+            )}
+            {!btpLoggedIn && login.btpStatus === "running" && !gaChoice && (
+              <span className="pill blue"><Ico.Spinner /> Connecting…</span>
+            )}
             {login.btpStatus === "idle" && (
               <button className="btn btn-primary" onClick={startBtpLogin}>
                 Sign in with SSO <Ico.External />
@@ -297,10 +394,70 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
               </button>
             )}
           </div>
+
+          {!btpLoggedIn && gaChoice && gaChoice.accounts && gaChoice.accounts.length > 0 && (
+            <div className="slide-in" style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 4 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 4 }}>
+                Choose a global account
+              </div>
+              <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 10 }}>
+                Your account has access to multiple global accounts. Pick the one you want to use.
+              </div>
+              {(() => {
+                const names = gaChoice.accounts.map(a => a.displayName || "");
+                const hasDuplicates = names.some((n, i) => n && names.indexOf(n) !== i);
+                return hasDuplicates ? (
+                  <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 6, background: "rgba(234,179,8,0.1)", border: "1px solid rgba(234,179,8,0.3)", fontSize: 11.5, color: "var(--ink-2)", lineHeight: 1.5 }}>
+                    Some accounts share the same display name. The order matches the BTP cockpit's global account switcher — if unsure, try option 1 and you can sign out to retry.
+                  </div>
+                ) : null;
+              })()}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {gaChoice.accounts.map((acct, i) => {
+                  const name = acct.displayName || acct.subdomain || acct.guid || `Account ${i + 1}`;
+                  const sub = acct.subdomain;
+                  const region = acct.region || acct.commercialRegion;
+                  const meta = [
+                    sub && sub !== name && `subdomain: ${sub}`,
+                    region && `region: ${region}`,
+                    acct.commercialModel,
+                  ].filter(Boolean);
+                  return (
+                    <button
+                      key={acct.index || acct.guid || i}
+                      className="choice"
+                      style={{ flexDirection: "row", alignItems: "center", padding: "12px 14px", gap: 14, textAlign: "left" }}
+                      onClick={() => selectGa(typeof acct.index === "number" ? acct.index : (acct.subdomain || acct.guid))}
+                    >
+                      <div style={{ width: 28, height: 28, borderRadius: 6, background: "var(--fg-blue-soft)", color: "var(--fg-blue)", display: "grid", placeItems: "center", flexShrink: 0, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-mono)" }}>
+                        {acct.index || (i + 1)}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-0)" }}>{name}</div>
+                        {meta.length > 0 && (
+                          <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 2, fontFamily: "var(--font-mono)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {meta.join(" · ")}
+                          </div>
+                        )}
+                      </div>
+                      <Ico.ArrowRight />
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+                <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={cancelBtpLogin}>
+                  Cancel sign-in
+                </button>
+              </div>
+            </div>
+          )}
+
           {btpLoggedIn && (
             <div className="summary-grid slide-in">
+              {login.subdomain && <div className="cell"><div className="k">Global account</div><div className="v">{login.subdomain}</div></div>}
+              {login.subaccountName && <div className="cell"><div className="k">Subaccount</div><div className="v">{login.subaccountName}</div></div>}
               {login.org && <div className="cell"><div className="k">Org</div><div className="v">{login.org}</div></div>}
-              {login.subaccount && <div className="cell"><div className="k">Subaccount</div><div className="v">{login.subaccount}</div></div>}
               <div className="cell"><div className="k">Landscape</div><div className="v">{login.landscape}</div></div>
               <div className="cell"><div className="k">API endpoint</div><div className="v">api.{login.landscape.replace(/^cf-/, 'cf.')}.hana.ondemand.com</div></div>
             </div>
@@ -319,6 +476,11 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
               </div>
             </div>
             {cfLoggedIn && <span className="pill green"><Ico.Check /> Connected</span>}
+            {cfLoggedIn && (
+              <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={handleCfLogout}>
+                Sign out
+              </button>
+            )}
           </div>
 
           {btpLoggedIn && !cfLoggedIn && (
@@ -353,6 +515,13 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                         disabled={login.cfStatus === "running"}
                         style={{ flex: 1, letterSpacing: "0.12em" }}
                       />
+                      <button
+                        className="btn"
+                        onClick={pastePasscode}
+                        disabled={login.cfStatus === "running"}
+                      >
+                        Paste
+                      </button>
                       <button
                         className="btn btn-primary"
                         onClick={submitPasscode}
@@ -459,9 +628,10 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
   const setCfg = (patch) => setCtx(c => ({ ...c, config: { ...c.config, ...patch } }));
   const [domains, setDomains] = React.useState([]);
   const [plans, setPlans] = React.useState(ctx.dbPlans);
+  const [dockerTags, setDockerTags] = React.useState([]);
   const [writing, setWriting] = React.useState(false);
 
-  const valid = cfg.id && cfg.domain && cfg.locationId && cfg.dbPlan && cfg.dockerVersion;
+  const valid = cfg.id && cfg.domain && cfg.dbPlan && cfg.dockerVersion;
 
   React.useEffect(() => {
     const api = fg();
@@ -478,7 +648,11 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
       const tag = await api.config.dockerHubLatestBtpTag();
       if (tag.ok) {
         setCfg({ dockerVersion: tag.tag });
-        if (!cfg.locationId && tag.tag && tag.tag.length <= 20) setCfg({ locationId: tag.tag });
+      }
+
+      const tags = await api.config.dockerHubBtpTags();
+      if (tags.ok && tags.tags.length) {
+        setDockerTags(tags.tags);
       }
 
       const mk = await api.cf.marketplacePostgresql();
@@ -501,6 +675,12 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
       domain: cfg.domain,
       locationId: cfg.locationId,
       dockerVersion: cfg.dockerVersion,
+      instanceMemory: cfg.instanceMemory,
+      maxRamPercentage: cfg.maxRamPercentage,
+      logsTotalSizeCap: cfg.logsTotalSizeCap,
+      enableInstanceMonitoring: cfg.enableInstanceMonitoring,
+      useCloudConnectorForSmtpIntegration: cfg.useCloudConnectorForSmtpIntegration,
+      cloudConnectorDestinationNameForSmtpIntegration: cfg.cloudConnectorDestinationNameForSmtpIntegration,
     });
     setWriting(false);
     if (r && r.ok) onNext();
@@ -535,16 +715,16 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
 
           <div className="field">
             <label className="field-label">
-              Location ID <span className="field-required">*</span>
+              Location ID
             </label>
             <input
               className="input is-mono"
               value={cfg.locationId}
               onChange={(e) => setCfg({ locationId: e.target.value })}
-              placeholder="2403-btp"
+              placeholder="location-1"
               maxLength={20}
             />
-            <div className="field-hint">Latest Figaf image tag from Docker Hub (auto-detected).</div>
+            <div className="field-hint">Must be configured properly for integration with PI system through a Cloud connection.</div>
           </div>
         </div>
 
@@ -573,14 +753,135 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
               Docker image version <span className="field-required">*</span>
             </label>
             <input
-              className="input is-mono"
+              list="dockerVersionsList"
+              className="select is-mono"
               value={cfg.dockerVersion || ""}
               onChange={(e) => setCfg({ dockerVersion: e.target.value })}
               placeholder="2403-btp"
             />
-            <div className="field-hint">figaf/app:&lt;version&gt; · avoid SNAPSHOT tags.</div>
+            <datalist id="dockerVersionsList">
+              {dockerTags.map((tag) => (
+                <option key={tag} value={tag} />
+              ))}
+            </datalist>
+            <div className="field-hint">Latest Figaf image tag from Docker Hub (auto-detected). Select from dropdown or enter manually.</div>
           </div>
         </div>
+
+        <div className="divider" />
+
+        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", margin: "0 0 12px" }}>Application settings</div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 8 }}>
+          <div className="field">
+            <label className="field-label">
+              Instance memory <span className="field-required">*</span>
+            </label>
+            <input
+              className="input is-mono"
+              value={cfg.instanceMemory}
+              onChange={(e) => setCfg({ instanceMemory: e.target.value })}
+              placeholder="3700M"
+            />
+            <div className="field-hint">RAM allocated for the app. Possible units: K, M, G, k, m, g</div>
+          </div>
+
+          <div className="field">
+            <label className="field-label">
+              Max RAM percentage <span className="field-required">*</span>
+            </label>
+            <input
+              className="input is-mono"
+              value={cfg.maxRamPercentage}
+              onChange={(e) => setCfg({ maxRamPercentage: e.target.value })}
+              placeholder="50"
+            />
+            <div className="field-hint">Percentage of physical memory used as maximum heap size</div>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 8 }}>
+          <div className="field">
+            <label className="field-label">
+              Logs total size cap <span className="field-required">*</span>
+            </label>
+            <input
+              className="input is-mono"
+              value={cfg.logsTotalSizeCap}
+              onChange={(e) => setCfg({ logsTotalSizeCap: e.target.value })}
+              placeholder="2GB"
+            />
+            <div className="field-hint">Max capacity of 'logs' folder</div>
+          </div>
+
+          <div className="field">
+            <label className="field-label">
+              Enable instance monitoring
+            </label>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "10px 0" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={cfg.enableInstanceMonitoring === true}
+                  onChange={(e) => setCfg({ enableInstanceMonitoring: e.target.checked })}
+                  style={{ cursor: "pointer" }}
+                />
+                Enable Glowroot monitoring
+              </label>
+            </div>
+            <div className="field-hint">Adds Glowroot agent for instance monitoring endpoint</div>
+          </div>
+        </div>
+
+        <div className="divider" />
+
+        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", margin: "0 0 12px" }}>Cloud connector settings</div>
+
+        <div className="field">
+          <label className="field-label">
+            Use cloud connector for SMTP integration
+          </label>
+          <div style={{ display: "flex", gap: 12, alignItems: "center", padding: "10px 0" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+              <input
+                type="radio"
+                name="smtp-connector"
+                value="false"
+                checked={cfg.useCloudConnectorForSmtpIntegration === false}
+                onChange={() => setCfg({ useCloudConnectorForSmtpIntegration: false })}
+                style={{ cursor: "pointer" }}
+              />
+              <span style={{ fontSize: 13 }}>No</span>
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+              <input
+                type="radio"
+                name="smtp-connector"
+                value="true"
+                checked={cfg.useCloudConnectorForSmtpIntegration === true}
+                onChange={() => setCfg({ useCloudConnectorForSmtpIntegration: true })}
+                style={{ cursor: "pointer" }}
+              />
+              <span style={{ fontSize: 13 }}>Yes</span>
+            </label>
+          </div>
+          <div className="field-hint">Whether the application should use a cloud connector for SMTP integration</div>
+        </div>
+
+        {cfg.useCloudConnectorForSmtpIntegration && (
+          <div className="field" style={{ marginTop: 12 }}>
+            <label className="field-label">
+              Cloud connector destination name
+            </label>
+            <input
+              className="input is-mono"
+              value={cfg.cloudConnectorDestinationNameForSmtpIntegration}
+              onChange={(e) => setCfg({ cloudConnectorDestinationNameForSmtpIntegration: e.target.value })}
+              placeholder="smtp-destination"
+            />
+            <div className="field-hint">Name of destination configured in SAP BTP Destination service for local SMTP server</div>
+          </div>
+        )}
 
         <div className="divider" />
 

@@ -34,6 +34,12 @@ function App() {
       locationId: "",
       dbPlan: "trial",
       dockerVersion: "",
+      instanceMemory: "3700M",
+      maxRamPercentage: "50",
+      logsTotalSizeCap: "2GB",
+      enableInstanceMonitoring: true,
+      useCloudConnectorForSmtpIntegration: false,
+      cloudConnectorDestinationNameForSmtpIntegration: "",
     },
     dbPlans: [
       { name: "trial",       description: "Trial PostgreSQL service offering",              free: true,  size: "shared" },

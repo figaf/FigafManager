@@ -2,7 +2,7 @@ const path = require("path");
 const fs = require("fs");
 const fsp = fs.promises;
 const os = require("os");
-const { app, dialog } = require("electron");
+const { app, dialog, clipboard } = require("electron");
 const { spawn } = require("child_process");
 const https = require("https");
 
@@ -16,7 +16,10 @@ const state = {
   space: null,
   user: null,
   subaccount: null,
+  globalAccountSubdomain: null,
+  btpLoginWaitingForChoice: false,
   cfLoginProc: null,
+  btpLoginProc: null,
   deployDirResolved: null,
   cliPaths: { btp: null, cf: null },
   cliPathsLoaded: false,
@@ -78,6 +81,7 @@ function resolveDeployDir() {
   state.deployDirResolved = writable;
   return writable;
 }
+
 
 function copyRecursiveSync(src, dest) {
   const stat = fs.statSync(src);
@@ -393,7 +397,7 @@ const handlers = {
   async "prereq:dockerHub"() {
     try {
       const data = await httpsJson(
-        "https://hub.docker.com/v2/repositories/figaf/app/tags?name=btp&page_size=1&ordering=-last_updated"
+        "https://hub.docker.com/v2/repositories/figaf/app/tags?name=btp&page_size=1&ordering=last_updated"
       );
       const latest = data?.results?.[0]?.name || null;
       return { ok: !!latest, latest };
@@ -414,43 +418,216 @@ const handlers = {
   },
 
   // --- BTP login + landscape ---
-  async "btp:login"() {
-    const r = await run(resolveBtp(), ["login", "--url", "https://cli.btp.cloud.sap", "--sso"], {
-      source: "btp",
+  // Long-lived `btp login` process — kept alive so we can write the GA choice
+  // number to its stdin when the multi-account prompt appears.
+  // After a successful exit (code 0), we call `btp get accounts/global-account`
+  // to retrieve the subdomain of the now-targeted account.
+  async "btp:loginStart"() {
+    if (state.btpLoginProc && !state.btpLoginProc.killed) {
+      if (state.btpLoginWaitingForChoice) {
+        // Don't kill the process while we're waiting for the user's GA choice —
+        // the modal is open and the user is about to write to stdin.
+        log("btp", "warn", "Login in progress (awaiting GA choice), ignoring re-invocation");
+        return { ok: true };
+      }
+      try { state.btpLoginProc.kill(); } catch {}
+    }
+    state.btpLoginWaitingForChoice = false;
+    const btpBin = resolveBtp();
+    const args = ["login", "--url", "https://cli.btp.cloud.sap", "--sso"];
+    const proc = spawn(btpBin, args, { shell: false, windowsHide: true });
+    state.btpLoginProc = proc;
+    log("cmd", "cmd", `${btpBin} ${args.join(" ")}`);
+
+    // ANSI escapes + the BTP CLI spinner's `\r` redraws can corrupt line-by-line
+    // parsing (e.g. a leading `\r` glued to "Choose a global account:" defeats `^`).
+    // Instead: keep a rolling "clean" buffer (ANSI/CR stripped) and pattern-match
+    // the whole multi-GA block at once — the prompt is independent of how the OS
+    // chunks the bytes.
+    const ansiRe = /\x1b\[[0-9;?]*[a-zA-Z]/g;
+    let cleanBuffer = "";
+    let lineRemainder = "";
+    let promptEmitted = false;
+
+    const flushLines = (chunk, source) => {
+      lineRemainder += chunk;
+      const parts = lineRemainder.split(/\r\n|\n/);
+      lineRemainder = parts.pop();
+      for (const raw of parts) {
+        // For each line, drop leading CRs (spinner redraws) and ANSI escapes
+        const line = raw.replace(ansiRe, "").replace(/\r/g, "").trim();
+        if (line.length) log("btp", source, line);
+      }
+    };
+
+    const tryDetectGaPrompt = () => {
+      if (promptEmitted) return;
+      const m = /Choose a global account:?[\s\S]*?Choose option\s*[>:]/i.exec(cleanBuffer);
+      if (!m) return;
+      const block = m[0];
+      const accounts = [];
+      const optRe = /\[(\d+)\]\s+([^\r\n]+?)\s*$/gm;
+      let am;
+      while ((am = optRe.exec(block))) {
+        accounts.push({ index: Number(am[1]), displayName: am[2].trim() });
+      }
+      if (accounts.length === 0) return;
+      promptEmitted = true;
+      // Flush any partial line so the drawer reflects the prompt before we ask
+      if (lineRemainder.trim()) {
+        log("btp", "line", lineRemainder.replace(ansiRe, "").replace(/\r/g, "").trim());
+        lineRemainder = "";
+      }
+      state.btpLoginWaitingForChoice = true;
+      emit("btp:gaChoice", { accounts });
+      // Drop the consumed portion so a future re-prompt could be detected
+      cleanBuffer = cleanBuffer.slice(m.index + m[0].length);
+    };
+
+    const ingest = (text, source) => {
+      cleanBuffer += text.replace(ansiRe, "").replace(/\r(?!\n)/g, "\n");
+      // Cap buffer size to avoid unbounded growth on long sessions
+      if (cleanBuffer.length > 16384) cleanBuffer = cleanBuffer.slice(-8192);
+      flushLines(text, source);
+      tryDetectGaPrompt();
+    };
+
+    proc.stdout.on("data", (buf) => ingest(buf.toString(), "line"));
+    proc.stderr.on("data", (buf) => ingest(buf.toString(), "err"));
+    proc.on("error", (err) => {
+      log("btp", "err", `btp spawn error: ${err.message}`);
     });
-    return { ok: r.code === 0, stdout: r.stdout, stderr: r.stderr };
+
+    proc.on("close", async (code, signal) => {
+      if (lineRemainder.trim().length) {
+        log("btp", "line", lineRemainder.replace(ansiRe, "").replace(/\r/g, "").trim());
+        lineRemainder = "";
+      }
+      const detail = signal ? `code=${code} signal=${signal}` : `code=${code}`;
+      log("btp", code === 0 ? "ok" : "err", `btp login exited (${detail})`);
+      state.btpLoginProc = null;
+      state.btpLoginWaitingForChoice = false;
+      if (code === 0) {
+        // Fetch the subdomain of the now-targeted global account
+        const gaInfo = await run(resolveBtp(), ["--format", "json", "get", "accounts/global-account"], { source: "btp" });
+        if (gaInfo.code === 0) {
+          try {
+            const js = gaInfo.stdout.indexOf("{");
+            if (js >= 0) {
+              const data = JSON.parse(gaInfo.stdout.slice(js));
+              state.globalAccountSubdomain = data.subdomain || null;
+              log("btp", "line", `Global account subdomain: ${state.globalAccountSubdomain}`);
+            }
+          } catch (e) {
+            log("btp", "warn", `Could not parse GA info: ${e.message}`);
+          }
+        }
+        const env = await handlers["btp:listEnvInstances"]();
+        emit("btp:loggedIn", { ...env, subdomain: state.globalAccountSubdomain });
+      } else {
+        emit("btp:loginFailed", { code, signal });
+      }
+    });
+
+    return { ok: true };
+  },
+  async "btp:submitChoice"(_evt, { choice }) {
+    const proc = state.btpLoginProc;
+    if (!proc || proc.killed) return { ok: false, error: "No active btp login session" };
+    try {
+      state.btpLoginWaitingForChoice = false;
+      proc.stdin.write(String(choice).trim() + os.EOL);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  },
+  async "btp:cancelLogin"() {
+    const proc = state.btpLoginProc;
+    if (proc && !proc.killed) {
+      try { proc.kill(); } catch {}
+    }
+    state.btpLoginProc = null;
+    state.btpLoginWaitingForChoice = false;
+    return { ok: true };
+  },
+  async "btp:selectGlobalAccount"(_evt, { subdomain }) {
+    const r = await run(resolveBtp(), ["target", "--global-account", subdomain], { source: "btp" });
+    if (r.code !== 0) {
+      emit("btp:loggedIn", { ok: false, error: r.stderr || "Failed to target global account" });
+      return { ok: false, error: r.stderr || "Failed to target global account" };
+    }
+    state.globalAccountSubdomain = subdomain;
+    const env = await handlers["btp:listEnvInstances"]();
+    emit("btp:loggedIn", { ...env, subdomain });
+    return { ok: true };
+  },
+  async "btp:logout"() {
+    await run(resolveBtp(), ["logout"], { source: "btp" });
+    await run(resolveCf(), ["logout"], { source: "cf" }).catch(() => {});
+    state.globalAccountSubdomain = null;
+    state.landscape = null;
+    state.subaccount = null;
+    state.org = null;
+    state.space = null;
+    state.user = null;
+    return { ok: true };
   },
   async "btp:listEnvInstances"() {
-    const r = await run(resolveBtp(), ["--format", "json", "list", "accounts/environment-instance"], {
+    // Newer btp CLI requires --subaccount for environment-instance listing.
+    // Resolve the current target's subaccounts first, then probe each for CF.
+    const subRes = await run(resolveBtp(), ["--format", "json", "list", "accounts/subaccount"], {
       source: "btp",
     });
-    if (r.code !== 0) return { ok: false, error: r.stderr || "btp failed" };
-    const jsonStart = r.stdout.indexOf("{");
-    let parsed;
+    if (subRes.code !== 0) return { ok: false, error: subRes.stderr || "Failed to list subaccounts" };
+
+    let subaccounts = [];
     try {
-      parsed = JSON.parse(r.stdout.slice(jsonStart));
+      const jsonStart = subRes.stdout.indexOf("{");
+      const data = jsonStart >= 0 ? JSON.parse(subRes.stdout.slice(jsonStart)) : null;
+      subaccounts = (data && (data.value || data.subaccounts || data.children)) || [];
     } catch (e) {
-      return { ok: false, error: "Cannot parse btp output" };
+      return { ok: false, error: "Cannot parse subaccount list: " + e.message };
     }
-    const cf = (parsed.environmentInstances || []).find(
-      (e) => e.environmentType === "cloudfoundry"
-    );
-    if (!cf) return { ok: false, error: "No Cloud Foundry environment" };
-    state.landscape = cf.landscapeLabel;
-    let org = null;
-    try {
-      const labels = typeof cf.labels === "string" ? JSON.parse(cf.labels) : cf.labels;
-      org = labels?.["Org Name"] || null;
-    } catch {}
-    state.org = org;
-    state.subaccount = cf.subaccountGUID || null;
-    return {
-      ok: true,
-      landscape: cf.landscapeLabel,
-      apiUrl: `https://api.${cf.landscapeLabel.replace(/^cf-/, 'cf.')}.hana.ondemand.com`,
-      org,
-      subaccount: state.subaccount,
-    };
+    if (!subaccounts.length) return { ok: false, error: "No subaccounts found in current global account" };
+
+    for (const sa of subaccounts) {
+      const said = sa.guid || sa.subaccountGUID || sa.id;
+      if (!said) continue;
+      const r = await run(resolveBtp(), ["--format", "json", "list", "accounts/environment-instance", "--subaccount", said], {
+        source: "btp",
+      });
+      if (r.code !== 0) continue;
+
+      let parsed;
+      try {
+        const jsonStart = r.stdout.indexOf("{");
+        parsed = jsonStart >= 0 ? JSON.parse(r.stdout.slice(jsonStart)) : null;
+      } catch { continue; }
+      if (!parsed) continue;
+
+      const cf = (parsed.environmentInstances || []).find((e) => e.environmentType === "cloudfoundry");
+      if (!cf) continue;
+
+      state.landscape = cf.landscapeLabel;
+      state.subaccount = cf.subaccountGUID || said;
+      let org = null;
+      try {
+        const labels = typeof cf.labels === "string" ? JSON.parse(cf.labels) : cf.labels;
+        org = labels?.["Org Name"] || null;
+      } catch {}
+      state.org = org;
+      return {
+        ok: true,
+        landscape: cf.landscapeLabel,
+        apiUrl: `https://api.${cf.landscapeLabel.replace(/^cf-/, 'cf.')}.hana.ondemand.com`,
+        org,
+        subaccount: state.subaccount,
+        subaccountName: sa.displayName || sa.name || null,
+        subdomain: state.globalAccountSubdomain,
+      };
+    }
+    return { ok: false, error: "No Cloud Foundry environment found in any subaccount" };
   },
   async "btp:listUsers"() {
     const args = ["list", "security/user"];
@@ -530,6 +707,17 @@ const handlers = {
     state.user = user || state.user;
     return { ok: true, org, space, user };
   },
+  async "cf:logout"() {
+    if (state.cfLoginProc && !state.cfLoginProc.killed) {
+      try { state.cfLoginProc.kill(); } catch {}
+    }
+    state.cfLoginProc = null;
+    await run(resolveCf(), ["logout"], { source: "cf" }).catch(() => {});
+    state.org = null;
+    state.space = null;
+    state.user = null;
+    return { ok: true };
+  },
 
   // --- config ---
   async "cf:domains"() {
@@ -557,12 +745,23 @@ const handlers = {
   async "config:dockerHubLatestBtpTag"() {
     try {
       const data = await httpsJson(
-        "https://hub.docker.com/v2/repositories/figaf/app/tags?name=btp&page_size=1&ordering=-last_updated"
+        "https://hub.docker.com/v2/repositories/figaf/app/tags?name=btp&page_size=1&ordering=last_updated"
       );
       const latest = data?.results?.[0]?.name || null;
       return { ok: !!latest, tag: latest };
     } catch (e) {
       return { ok: false, error: e.message };
+    }
+  },
+  async "config:dockerHubBtpTags"() {
+    try {
+      const data = await httpsJson(
+        "https://hub.docker.com/v2/repositories/figaf/app/tags?name=btp&page_size=10&ordering=last_updated"
+      );
+      const tags = (data?.results || []).map(r => r.name).filter(Boolean);
+      return { ok: tags.length > 0, tags };
+    } catch (e) {
+      return { ok: false, tags: [], error: e.message };
     }
   },
   async "config:deployDir"() {
@@ -582,6 +781,12 @@ const handlers = {
       ["LOCATION_ID", vars.locationId],
       ["DOCKER_IMAGE_VERSION", vars.dockerVersion],
       ["DOCKER_USERNAME", vars.dockerUsername],
+      ["INSTANCE_MEMORY", vars.instanceMemory],
+      ["MAX_RAM_PERCENTAGE", vars.maxRamPercentage],
+      ["LOGS_TOTAL_SIZE_CAP", vars.logsTotalSizeCap],
+      ["ENABLE_INSTANCE_MONITORING", vars.enableInstanceMonitoring],
+      ["USE_CLOUD_CONNECTOR_FOR_SMTP_INTEGRATION", vars.useCloudConnectorForSmtpIntegration],
+      ["CLOUD_CONNECTOR_DESTINATION_NAME_FOR_SMTP_INTEGRATION", vars.cloudConnectorDestinationNameForSmtpIntegration],
     ];
     for (const [key, value] of mutations) {
       if (value == null || value === "") continue;
@@ -648,6 +853,13 @@ const handlers = {
     await shellApi.openExternal(url);
     return { ok: true };
   },
+  async "shell:readClipboard"() {
+    try {
+      return { ok: true, text: clipboard.readText() || "" };
+    } catch (e) {
+      return { ok: false, error: e.message || "Failed to read clipboard" };
+    }
+  },
 };
 
 module.exports = {
@@ -662,6 +874,9 @@ module.exports = {
   dispose() {
     if (state.cfLoginProc && !state.cfLoginProc.killed) {
       try { state.cfLoginProc.kill(); } catch {}
+    }
+    if (state.btpLoginProc && !state.btpLoginProc.killed) {
+      try { state.btpLoginProc.kill(); } catch {}
     }
   },
 };
