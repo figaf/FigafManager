@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Figaf Manager</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="/installer/styles.css" />
+  <!-- electron-app.css intentionally omitted: no frameless-window chrome in a browser tab -->
+
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+
+  <!-- Injected by server.js at request time: sets window.figafMode + window.figafSession -->
+  <!-- FIGAF_MODE_INJECT -->
+
+  <!-- Browser window.figaf shim (fetch + WebSocket) — must load before app.jsx -->
+  <script src="/cloud/client.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" src="/installer/components.jsx"></script>
+  <script type="text/babel" src="/installer/screens.jsx"></script>
+  <script type="text/babel" src="/installer/app.jsx"></script>
+</body>
+</html>

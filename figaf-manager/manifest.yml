@@ -1,0 +1,15 @@
+# CF manifest for Figaf Manager (the wizard app itself).
+# Deployed once via BTP cockpit "Deploy Application" — no service bindings required.
+# The wizard is gated by cf login --sso (passcode) rather than XSUAA.
+applications:
+  - name: figaf-manager
+    memory: 1G
+    disk_quota: 2G
+    instances: 1
+    buildpack: nodejs_buildpack
+    command: node cloud/server.js
+    random-route: true
+    env:
+      NODE_ENV: production
+      # Optional: pin deployment template source (defaults to GitHub btp-users branch tip)
+      # FIGAF_DEPLOYMENT_ZIP_URL: https://your-mirror.example.com/btp-users.zip

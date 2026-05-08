@@ -1,0 +1,9 @@
+node_modules/
+# CLI binaries are populated by scripts/build-zip.js — never committed
+bin/btp
+bin/cf
+# build output
+dist/
+*.zip
+*.sig
+*.cert

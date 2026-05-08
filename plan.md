@@ -4,6 +4,47 @@ This plan operationalizes the strategy in [let-s-look-at-security-and-distributi
 
 ---
 
+## Progress (as of 2026-05-08)
+
+### Completed
+
+- **`figaf-manager/` directory created** inside the Electron repo (`c:\Figaf-installer\figaf-manager\`)
+- **`manifest.yml`** — CF manifest written; fixed twice:
+  1. Removed `routes: - route: figaf-manager.((domain))` (cockpit cannot resolve `((var))` placeholders at deploy time)
+  2. Changed `random-route: false` → `random-route: true` (false + no routes block = 0 mapped routes)
+- **`scripts/build-zip.js`** — build script operational; fixed:
+  - BTP CLI version updated `2.72.0` → `2.106.1` (old version 404'd)
+  - CF CLI download URL changed to stable channel (`packages.cloudfoundry.org/stable?...`)
+  - `require("archiver")` moved to top-of-file so Node.js caches it before `npm ci --omit=dev` removes it from disk
+  - Added `res.resume()` in redirect branch of `httpsGet` to drain socket and prevent event-loop hang
+- **`Dockerfile`** — local Docker image working; fixed: `npm ci` → `npm install --omit=dev` (no `package-lock.json`)
+- **`.dockerignore`** — created (excludes Windows `node_modules/`, `dist/`, `scripts/`)
+- **`.cfignore`** — created
+- **`package.json`** — `btpCliVersion: "2.106.1"`, deps `express` + `ws`, devDep `archiver`
+- **Docker local test** — `docker run --rm -p 8080:8080 figaf-manager` serves UI at `http://localhost:8080` ✓
+- **BTP Cockpit deploy** — `figaf-manager` app deployed and `RUNNING` on `cfapps.us10-001.hana.ondemand.com`
+
+### In Progress
+
+- **Route mapping** — app is running but has 0 mapped routes. Fix committed (`random-route: true`). Next step: rebuild zip (`npm install && npm run build-zip`), redeploy, confirm URL is accessible.
+
+### Not Started (plan phases below)
+
+- Phase 1A — host-agnostic refactor (`lib/cli-orchestrator.js`)
+- Phase 1B — CF server adapter (`cloud/server.js` is a stub; no Express/WS yet)
+- Phase 1C — renderer client shim (`cloud/client.js`)
+- Phase 1D — renderer mode-aware behavior (`window.figafMode`)
+- Phase 1G — open-source repo + cosign release workflow
+
+### Resolved open questions
+
+- **§5 open question — manifest variable substitution via cockpit**: confirmed the cockpit does NOT resolve `((var))` placeholders. Fix: `random-route: true`, no `routes:` block. ✓
+- **§5 open question — cockpit upload size limit**: no size error encountered at ~120 MB. Not a blocker. ✓
+
+---
+
+---
+
 ## 1. Architecture
 
 ```
@@ -369,7 +410,7 @@ After printing the figaf URL and the **Open Figaf** button, hosted mode shows a 
 
 A README note also tells the customer they can run `cf delete figaf-manager` themselves from the cockpit if they prefer.
 
-### Phase 1E — Manifest (single-app, no services)
+### Phase 1E — Manifest (single-app, no services) ✓ DONE
 
 `manifest.yml` (at the root of the deployable zip):
 
@@ -381,13 +422,12 @@ applications:
     instances: 1
     buildpack: nodejs_buildpack
     command: node cloud/server.js
-    routes:
-      - route: figaf-manager.((domain))
+    random-route: true
     env:
       NODE_ENV: production
 ```
 
-The cockpit's Deploy Application dialog accepts `((domain))` parameters via cf manifest variable substitution; if substitution does not happen via the cockpit's flow we ship `manifest.yml` with the route line removed and let CF auto-assign the route on the customer's default domain (`figaf-manager.<cf-default-domain>`).
+**Verified in trial**: the BTP cockpit's Deploy Application does NOT resolve `((var))` placeholders. `random-route: true` makes CF auto-assign the route; no `routes:` block needed.
 
 **No services, no role collection, no `xs-security.json`.** The app is publicly reachable on `https://figaf-manager.<cfdomain>`. The wizard inside is gated by the user's `cf login --sso` passcode (see §2.3).
 

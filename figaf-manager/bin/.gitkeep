@@ -1,0 +1,2 @@
+# Linux binaries (btp, cf) are populated by scripts/build-zip.js at release time.
+# They are never committed — see .gitignore.

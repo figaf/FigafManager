@@ -1,0 +1,15 @@
+# cf push / cf local stage — omit files the buildpack doesn't need at runtime
+
+# Dev dependencies installed by npm on the build machine
+node_modules/
+
+# Build artefacts
+dist/
+
+# Build / tooling scripts (not needed at runtime)
+scripts/
+
+# Editor / OS noise
+.gitignore
+*.md
+Dockerfile
