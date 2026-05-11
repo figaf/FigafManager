@@ -3,14 +3,15 @@
 //
 // What it does:
 //   1. Download Linux x86_64 btp + cf binaries (versions pinned in package.json)
-//      into bin/ (skipped if already present)
-//   2. Run  `npm ci --omit=dev`  to get production node_modules
-//   3. Zip: cloud/, installer/, lib/, bin/btp, bin/cf, node_modules/,
-//           manifest.yml, package.json, figaf-logo.png
-//      → dist/figaf-manager-app-<version>.zip
+//      into bin/ (skipped if already present).
+//   2. Stage a self-contained app tree in apps/figaf-manager/.staging/:
+//        cloud/, host.cloud.js, bin/, manifest.yml, package.json,
+//        node_modules/@figaf/{core,ui}/  (copied from packages/, NOT symlinked —
+//                                         the logo lives inside @figaf/ui),
+//        node_modules/{express,ws,…}      (installed by npm install in staging).
+//   3. Zip the staging directory contents → dist/figaf-manager-app-<version>.zip
 //
-// Requires: npm install (archiver available as devDependency)
-// Run from inside figaf-manager/:  node scripts/build-zip.js
+// Run from inside apps/figaf-manager/:  node scripts/build-zip.js
 
 "use strict";
 const fs   = require("fs");
@@ -19,31 +20,43 @@ const path = require("path");
 const os   = require("os");
 const https = require("https");
 const { execSync, spawnSync } = require("child_process");
-const { createGunzip } = require("zlib");
-const { Extract } = require("tar"); // Node built-in (via tar package if present) — fallback to tar CLI
 
-const ROOT = path.join(__dirname, "..");
-const pkg  = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+const APP_DIR        = path.join(__dirname, "..");
+const WORKSPACE_ROOT = path.join(APP_DIR, "..", "..");
+const pkg            = JSON.parse(fs.readFileSync(path.join(APP_DIR, "package.json"), "utf8"));
 
-// Load archiver now (before npm ci --omit=dev removes devDependencies)
 let archiver;
 try {
   archiver = require("archiver");
 } catch {
-  console.error("\narchiver not found — run  npm install  first (installs devDependencies)");
+  console.error("\narchiver not found — run  npm install  at the workspace root first (installs devDependencies)");
   process.exit(1);
 }
 
 const VERSION      = pkg.version;
 const BTP_VERSION  = pkg.btpCliVersion  || "2.106.1";
 
-const BIN_DIR  = path.join(ROOT, "bin");
-const DIST_DIR = path.join(ROOT, "dist");
-const OUT_ZIP  = path.join(DIST_DIR, `figaf-manager-app-${VERSION}.zip`);
+const BIN_DIR   = path.join(APP_DIR, "bin");
+const STAGE_DIR = path.join(APP_DIR, ".staging");
+const DIST_DIR  = path.join(APP_DIR, "dist");
+const OUT_ZIP   = path.join(DIST_DIR, `figaf-manager-app-${VERSION}.zip`);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function log(msg) { process.stdout.write(msg + "\n"); }
+
+function copyDir(src, dest, shouldSkip = () => false) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, entry.name);
+    const d = path.join(dest, entry.name);
+    if (shouldSkip(entry.name)) continue;
+    if (entry.isDirectory()) copyDir(s, d, shouldSkip);
+    else if (entry.isFile() || entry.isSymbolicLink()) {
+      try { fs.copyFileSync(s, d); } catch (e) { /* skip dangling symlinks */ }
+    }
+  }
+}
 
 function httpsGet(url, destPath, onProgress) {
   return new Promise((resolve, reject) => {
@@ -51,12 +64,11 @@ function httpsGet(url, destPath, onProgress) {
       if (hops > 8) return reject(new Error("Too many redirects"));
       const headers = {
         "User-Agent": "figaf-manager-build",
-        // Required by tools.hana.ondemand.com downloads
         "Cookie": "eula_3_2_agreed=tools.hana.ondemand.com/developer-license-3_2.txt",
       };
       https.get(currentUrl, { headers }, (res) => {
         if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
-          res.resume(); // drain body so the socket closes and the event loop doesn't stall
+          res.resume();
           return fetch(res.headers.location, hops + 1);
         }
         if (res.statusCode !== 200) {
@@ -80,7 +92,6 @@ function httpsGet(url, destPath, onProgress) {
 }
 
 function extractTarGz(tarPath, destDir, stripComponents = 1) {
-  // Use system tar (available on macOS, Linux, and Windows 10+)
   const result = spawnSync("tar", [
     "-xzf", tarPath,
     "-C", destDir,
@@ -94,7 +105,6 @@ function extractTarGz(tarPath, destDir, stripComponents = 1) {
 async function ensureBinaries() {
   await fsp.mkdir(BIN_DIR, { recursive: true });
 
-  // btp CLI (Linux x86_64)
   const btpBin = path.join(BIN_DIR, "btp");
   if (!fs.existsSync(btpBin)) {
     const btpTarName = `btp-cli-linux-amd64-${BTP_VERSION}.tar.gz`;
@@ -106,13 +116,8 @@ async function ensureBinaries() {
     process.stdout.write("\n");
     log("[btp] Extracting…");
     extractTarGz(tmpTar, BIN_DIR);
-    // The tarball may extract as 'btp' or include a subdirectory; find the binary
-    const extracted = fs.readdirSync(BIN_DIR).find(f => f === "btp" || f.startsWith("btp"));
-    if (!extracted || extracted !== "btp") {
-      // Rename if needed
-      const found = fs.readdirSync(BIN_DIR).find(f => !f.endsWith(".tar.gz") && !f.endsWith(".gitkeep"));
-      if (found && found !== "btp") fs.renameSync(path.join(BIN_DIR, found), btpBin);
-    }
+    const found = fs.readdirSync(BIN_DIR).find(f => !f.endsWith(".tar.gz") && !f.endsWith(".gitkeep") && f !== "btp" && f !== "cf" && f !== "LICENSE" && f !== "NOTICE");
+    if (found) fs.renameSync(path.join(BIN_DIR, found), btpBin);
     fs.chmodSync(btpBin, "755");
     try { fs.unlinkSync(tmpTar); } catch {}
     log("[btp] Done.");
@@ -120,7 +125,6 @@ async function ensureBinaries() {
     log("[btp] Already in bin/ — skipping download.");
   }
 
-  // cf CLI v8 (Linux x86_64) — stable channel always resolves to latest v8 release
   const cfBin = path.join(BIN_DIR, "cf");
   if (!fs.existsSync(cfBin)) {
     const cfUrl = "https://packages.cloudfoundry.org/stable?release=linux64-binary&version=v8&source=github";
@@ -130,8 +134,7 @@ async function ensureBinaries() {
       total ? process.stdout.write(`\r[cf]  ${Math.round((got / total) * 100)}%   `) : null);
     process.stdout.write("\n");
     log("[cf]  Extracting…");
-    extractTarGz(tmpTar, BIN_DIR, 0); // tarball puts 'cf8' at root
-    // Rename cf8 → cf
+    extractTarGz(tmpTar, BIN_DIR, 0);
     const cf8 = path.join(BIN_DIR, "cf8");
     if (fs.existsSync(cf8)) fs.renameSync(cf8, cfBin);
     fs.chmodSync(cfBin, "755");
@@ -142,19 +145,42 @@ async function ensureBinaries() {
   }
 }
 
-// ─── Step 2: npm ci --omit=dev ────────────────────────────────────────────────
+// ─── Step 2: Stage a self-contained app tree ──────────────────────────────────
 
-function installProdDeps() {
-  log("[npm] Running npm ci --omit=dev…");
-  execSync("npm ci --omit=dev", { cwd: ROOT, stdio: "inherit" });
-  log("[npm] Done.");
+function stage() {
+  log("[stage] Preparing .staging/…");
+  fs.rmSync(STAGE_DIR, { recursive: true, force: true });
+  fs.mkdirSync(STAGE_DIR);
+
+  copyDir(path.join(APP_DIR, "cloud"), path.join(STAGE_DIR, "cloud"), name => name.endsWith(".test.js"));
+  copyDir(BIN_DIR,                     path.join(STAGE_DIR, "bin"));
+  fs.copyFileSync(path.join(APP_DIR, "host.cloud.js"),    path.join(STAGE_DIR, "host.cloud.js"));
+  fs.copyFileSync(path.join(APP_DIR, "manifest.yml"),     path.join(STAGE_DIR, "manifest.yml"));
+
+  // Stripped package.json — @figaf/* live as plain directories under
+  // node_modules/, so npm install only needs to resolve the public deps.
+  const stagedPkg = JSON.parse(JSON.stringify(pkg));
+  for (const dep of ["@figaf/core", "@figaf/ui"]) delete stagedPkg.dependencies[dep];
+  fs.writeFileSync(path.join(STAGE_DIR, "package.json"), JSON.stringify(stagedPkg, null, 2));
+
+  // Plain-directory copies of the workspace packages
+  const figafModules = path.join(STAGE_DIR, "node_modules", "@figaf");
+  fs.mkdirSync(figafModules, { recursive: true });
+  copyDir(path.join(WORKSPACE_ROOT, "packages", "core"), path.join(figafModules, "core"));
+  copyDir(path.join(WORKSPACE_ROOT, "packages", "ui"),   path.join(figafModules, "ui"));
+
+  log("[stage] Running npm install --omit=dev in staging…");
+  execSync("npm install --omit=dev --no-package-lock --no-audit --no-fund", {
+    cwd: STAGE_DIR,
+    stdio: "inherit",
+  });
+  log("[stage] Done.");
 }
 
-// ─── Step 3: Build zip ────────────────────────────────────────────────────────
+// ─── Step 3: Build zip from staging ───────────────────────────────────────────
 
 async function buildZip() {
   await fsp.mkdir(DIST_DIR, { recursive: true });
-
   log(`[zip] Building ${path.basename(OUT_ZIP)}…`);
 
   const output = fs.createWriteStream(OUT_ZIP);
@@ -164,28 +190,7 @@ async function buildZip() {
     output.on("close", resolve);
     archive.on("error", reject);
     archive.pipe(output);
-
-    // cloud/ — server + client + index.html
-    archive.directory(path.join(ROOT, "cloud"), "cloud");
-
-    // installer/ — React UI assets (mode-aware copies)
-    archive.directory(path.join(ROOT, "installer"), "installer");
-
-    // lib/ — host-agnostic orchestrator
-    archive.directory(path.join(ROOT, "lib"), "lib");
-
-    // bin/ — Linux btp + cf binaries (gitignored, populated above)
-    archive.file(path.join(ROOT, "bin", "btp"), { name: "bin/btp" });
-    archive.file(path.join(ROOT, "bin", "cf"),  { name: "bin/cf"  });
-
-    // node_modules/ (production only, after npm ci --omit=dev)
-    archive.directory(path.join(ROOT, "node_modules"), "node_modules");
-
-    // Root files
-    archive.file(path.join(ROOT, "manifest.yml"),     { name: "manifest.yml" });
-    archive.file(path.join(ROOT, "package.json"),      { name: "package.json" });
-    archive.file(path.join(ROOT, "figaf-logo.png"),    { name: "figaf-logo.png" });
-
+    archive.directory(STAGE_DIR, false);
     archive.finalize();
   });
 
@@ -206,14 +211,14 @@ async function buildZip() {
   const skipZip      = process.argv.includes("--skip-zip");
 
   if (!skipBinaries) await ensureBinaries();
-  if (!skipNpm)      installProdDeps();
+  if (!skipNpm)      stage();
   if (!skipZip) {
     await buildZip();
     log("\nBuild complete.");
     log(`Upload to BTP Cockpit → Space → Applications → Deploy Application:`);
     log(`  ${OUT_ZIP}`);
   } else {
-    log("\nBinaries ready in bin/ — skipped zip build.");
+    log("\nBinaries ready in bin/ — skipped staging + zip.");
   }
 })().catch((err) => {
   console.error("\nBuild failed:", err.message);
