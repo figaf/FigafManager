@@ -1,12 +1,13 @@
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
-const bridge = require("./bridge");
+const bridge = require("./ipc-bridge");
 
 const isDev = !app.isPackaged;
 
 let mainWindow = null;
 
 function createWindow() {
+  const uiDir = path.dirname(require.resolve("@figaf/ui/package.json"));
   mainWindow = new BrowserWindow({
     width: 960,
     height: 700,
@@ -15,7 +16,7 @@ function createWindow() {
     frame: false,
     backgroundColor: "#0f172a",
     show: false,
-    icon: path.join(__dirname, "..", "figaf-logo.png"),
+    icon: path.join(uiDir, "figaf-logo.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -25,7 +26,7 @@ function createWindow() {
   });
 
   mainWindow.once("ready-to-show", () => mainWindow.show());
-  mainWindow.loadFile(path.join(__dirname, "..", "installer", "index.html"));
+  mainWindow.loadFile(path.join(uiDir, "index.html"));
 
   if (isDev) {
     mainWindow.webContents.openDevTools({ mode: "detach" });
@@ -33,7 +34,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  bridge.register({ ipcMain, getWindow: () => mainWindow, shell });
+  bridge.register({ ipcMain, getWindow: () => mainWindow });
   registerWindowControls();
   createWindow();
 

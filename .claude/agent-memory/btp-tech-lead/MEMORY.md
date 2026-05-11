@@ -1,0 +1,8 @@
+- [Owner identity](user_owner.md) — afl@figaf.com is the Figaf Installer owner; senior, decisive, expects argued positions
+- [Auth-gate design (figaf-manager)](project_auth_gate.md) — accepted A+D layered design and what must ship together
+- [Auth-gate Q&A resolutions](feedback_auth_gate_decisions.md) — the 8 architectural decisions for the auth-gate PR
+- [Upstream-vs-downstream redaction stance](feedback_redaction_philosophy.md) — both, not either-or; rationale
+- [No new test framework](feedback_no_new_test_framework.md) — use node:test (built-in); don't add Jest/Vitest/Mocha
+- [Owner prefers tight PRs](feedback_pr_scope.md) — bundle related work, defer P2 hardening to follow-ups
+- [No operator password env var](feedback_no_password_env_var.md) — auth gate is runtime-token-only; never propose FIGAF_INSTALLER_PASSWORD
+- [server.js test seam](project_server_js_test_seam.md) — boot side-effects gated on require.main === module; exports {app,server,wss,...} for node:test

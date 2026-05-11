@@ -1,0 +1,7 @@
+{
+  "name": "@figaf/core",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Host-agnostic CLI orchestrator: btp/cf login, marketplace, service create/poll, cf push. Consumed by both figaf-local (Electron) and figaf-manager (cloud).",
+  "main": "index.js"
+}

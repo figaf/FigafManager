@@ -4,6 +4,69 @@
 const fg = () => (typeof window !== "undefined" && window.figaf) || null;
 
 // ═══════════════════════════════════════════════════════════
+// 0. Browser-auth banner (hosted-only)
+// ═══════════════════════════════════════════════════════════
+// Surfaces "your session was kicked" feedback when the cloud server has
+// invalidated this browser's auth cookie mid-flow. Driven by two signals:
+//   1. window.figafAuthKicked — set by index.html's one-shot sessionStorage
+//      check on page load (i.e., we just came back from /setup after a kick).
+//   2. btp:browserAuth event — fired by cloud/client.js when a live request
+//      hits 401/4003 (i.e., we're about to redirect now).
+// Gated on window.figafModeFlags.isHosted so figaf-local never renders this.
+function BrowserAuthBanner() {
+  const isHosted = (typeof window !== "undefined") && window.figafModeFlags && window.figafModeFlags.isHosted;
+  const [visible, setVisible] = React.useState(false);
+  const [message, setMessage] = React.useState("");
+
+  React.useEffect(() => {
+    if (!isHosted) return;
+    // 1. Cold-load case: we were just redirected back from /setup.
+    if (window.figafAuthKicked) {
+      setMessage("Your previous session expired and was re-authenticated. Pick up where you left off.");
+      setVisible(true);
+      window.figafAuthKicked = false;
+    }
+    // 2. Live case: a kick is happening right now (about to redirect).
+    const api = fg();
+    if (!api || !api.on) return;
+    const off = api.on("btp:browserAuth", () => {
+      setMessage("Session expired — redirecting to setup…");
+      setVisible(true);
+    });
+    return () => off && off();
+  }, [isHosted]);
+
+  if (!isHosted || !visible) return null;
+  return (
+    <div
+      role="status"
+      style={{
+        padding: "10px 14px",
+        marginBottom: 12,
+        borderRadius: 8,
+        background: "rgba(234, 179, 8, 0.10)",
+        border: "1px solid rgba(234, 179, 8, 0.35)",
+        color: "#7c4a03",
+        fontSize: 13,
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+      }}
+    >
+      <Ico.Info style={{ flexShrink: 0 }} />
+      <span style={{ flex: 1 }}>{message}</span>
+      <button
+        type="button"
+        onClick={() => setVisible(false)}
+        style={{ background: "transparent", border: "none", color: "#7c4a03", cursor: "pointer", fontSize: 12 }}
+      >
+        Dismiss
+      </button>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
 // 1. Welcome / Prerequisites
 // ═══════════════════════════════════════════════════════════
 function CliInstaller({ id, onInstalled }) {
@@ -122,7 +185,7 @@ function ScreenWelcome({ ctx, setCtx, onNext }) {
     else markError(id, r.error || "Not found");
   }, [markRunning, markDone, markError]);
 
-  const isHosted = typeof window !== "undefined" && window.figafMode === "hosted";
+  const isHosted = window.figafModeFlags.isHosted;
 
   React.useEffect(() => {
     if (ctx.prereqsStarted) return;
@@ -164,6 +227,7 @@ function ScreenWelcome({ ctx, setCtx, onNext }) {
   return (
     <>
       <div className="pane-body">
+        <BrowserAuthBanner />
         <div className="pane-head">
           <div className="pane-eyebrow">Step 1 · Welcome</div>
           {isHosted
@@ -1123,7 +1187,7 @@ function ScreenDeploy({ ctx, setCtx, onNext, onBack, appendLog }) {
 function ScreenDone({ ctx }) {
   const appUrl = `https://${ctx.config.id || "figaf-tool"}.${ctx.config.domain || `cfapps.${ctx.login.landscape.replace(/^cf-/, '')}.hana.ondemand.com`}`;
   const open = () => fg()?.shell.openExternal(appUrl);
-  const isHosted = typeof window !== "undefined" && window.figafMode === "hosted";
+  const isHosted = window.figafModeFlags.isHosted;
 
   const [deleteState, setDeleteState] = React.useState("idle"); // idle | running | done | error
 
@@ -1198,4 +1262,5 @@ function ScreenDone({ ctx }) {
 
 Object.assign(window, {
   ScreenWelcome, ScreenLogin, ScreenChoice, ScreenConfig, ScreenProgress, ScreenDeploy, ScreenDone,
+  BrowserAuthBanner,
 });

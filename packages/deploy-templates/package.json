@@ -1,0 +1,6 @@
+{
+  "name": "@figaf/deploy-templates",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SAP BTP Cloud Foundry deployment templates (origin: github.com/figaf/Figaf-BTP-Deployment, branch btp-users). Bundled into figaf-local; figaf-manager fetches the same tree from GitHub at runtime."
+}

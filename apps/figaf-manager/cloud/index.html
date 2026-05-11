@@ -19,6 +19,22 @@
   <!-- Injected by server.js at request time: sets window.figafMode + window.figafSession -->
   <!-- FIGAF_MODE_INJECT -->
 
+  <!-- Mode + feature flags — must load AFTER the inject and BEFORE app.jsx -->
+  <script src="/installer/mode.js"></script>
+
+  <!-- Auth-kick one-shot: if the previous page set this flag (e.g., a /rpc
+       call got 401 and we were redirected through /setup and re-claimed),
+       capture it into a window-global and clear it so a subsequent reload
+       doesn't re-surface the banner. -->
+  <script>
+    (function () {
+      try {
+        window.figafAuthKicked = window.sessionStorage.getItem("figaf:auth-kicked") === "1";
+        window.sessionStorage.removeItem("figaf:auth-kicked");
+      } catch (_) { window.figafAuthKicked = false; }
+    })();
+  </script>
+
   <!-- Browser window.figaf shim (fetch + WebSocket) — must load before app.jsx -->
   <script src="/cloud/client.js"></script>
 </head>

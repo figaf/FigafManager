@@ -10,17 +10,43 @@ const DEPLOYMENT_ZIP_URL =
   process.env.FIGAF_DEPLOYMENT_ZIP_URL ||
   "https://github.com/figaf/Figaf-BTP-Deployment/archive/refs/heads/btp-users.zip";
 
-// HostAdapter contract (see plan.md §Phase 1A):
-// {
-//   getUserDataDir(): string,
-//   resolveBinary(name): string,
-//   openExternal(url): Promise<void>,
-//   pickFile(opts): Promise<string|null>,
-//   readClipboard(): Promise<string>,
-//   resolveDeployTemplate(): { kind: 'bundle'|'github', src: string },
-//   storeCliPath?(cli, path): void,   // Electron only
-//   isHosted: boolean,
-// }
+/**
+ * @typedef {Object} HostAdapter
+ * @property {boolean} isHosted
+ *   true → cloud deployment (figaf-manager); false → desktop (figaf-local).
+ *   Drives all environment-specific branches in the orchestrator.
+ *
+ * @property {() => string} getUserDataDir
+ *   Per-host writable directory. Electron: app.getPath("userData").
+ *   Cloud: $HOME/sessions/<sessionId>.
+ *
+ * @property {(name: "btp"|"cf") => string} resolveBinary
+ *   Returns the full path (or bare name to fall back to PATH) for a CLI
+ *   binary. Electron: persisted under userData/cliPaths.json.
+ *   Cloud: bundled at /app/bin/<name>.
+ *
+ * @property {(name: "btp"|"cf", value: string|null) => void} [storeCliPath]
+ *   Persist a resolved CLI path. Electron only — cloud has no need.
+ *
+ * @property {(opts: object) => Promise<string|null>} pickFile
+ *   Native file picker. Returns absolute path, or null if cancelled.
+ *   Cloud: no-op (returns null).
+ *
+ * @property {(url: string) => Promise<void>} openExternal
+ *   Open URL in the OS's default browser. Cloud: no-op (the browser shim
+ *   in cloud/client.js handles this client-side via window.open).
+ *
+ * @property {() => Promise<string>} readClipboard
+ *   Return the system clipboard contents. Cloud: no-op (the browser shim
+ *   uses navigator.clipboard).
+ *
+ * @property {() => { kind: "bundle"|"github", src: string }} resolveDeployTemplate
+ *   Where to materialize the deployment template tree from.
+ *   Electron: { kind: "bundle", src: <bundled directory> } — copied to
+ *             userData/deploy/ on first use.
+ *   Cloud:    { kind: "github", src: <zip URL> } — downloaded into
+ *             getUserDataDir() on first use.
+ */
 
 function createOrchestrator({ host, send }) {
   const state = {

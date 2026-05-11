@@ -1,188 +1,180 @@
 # CLAUDE.md
 
-Architecture backbone for **Figaf Installer** — a Windows Electron desktop wizard that
-deploys the [Figaf Tool](https://figaf.com) to **SAP BTP Cloud Foundry**, and (planned)
-will also wire it up to **SAP Integration Suite**.
+Architecture backbone for **Figaf Installer** — an npm-workspaces monorepo that
+ships **two parallel wizards** for deploying the [Figaf Tool](https://figaf.com)
+to **SAP BTP Cloud Foundry**:
 
-This file is a graph-shaped reference: top-level nodes, edges between them, and the
-contract each node exposes. Skim the graph first, drill into the file table second.
+- **figaf-local** — a Windows Electron desktop installer.
+- **figaf-manager** — a BTP-hosted (Express + WebSocket) installer that runs in
+  a Cloud Foundry space and is driven from the user's browser.
+
+Both share their entire orchestration layer and React renderer; they only
+diverge at the host-environment seam (file dialogs, persistent storage, deploy
+template sourcing). Skim the graph first, drill into the file table second.
 
 ---
 
 ## Top-level graph
 
 ```
-                ┌──────────────────────────────────────────────────────┐
-                │                  ELECTRON APP (this repo)            │
-                │                                                      │
-                │   ┌────────────────┐   IPC   ┌───────────────────┐   │
-   user input ──┼─▶ │   Renderer     │ ──────▶ │   Main process    │   │
-                │   │  (React UI)    │ ◀────── │  (Node, child_proc) │   │
-                │   └────────────────┘ events  └─────────┬─────────┘   │
-                │                                        │             │
-                └────────────────────────────────────────┼─────────────┘
-                                                         │ spawns
-                       ┌─────────────────────────────────┼──────────────────────┐
-                       │                                 │                      │
-                       ▼                                 ▼                      ▼
-                ┌────────────┐                    ┌────────────┐         ┌──────────────┐
-                │  btp CLI   │                    │   cf CLI   │         │   web APIs   │
-                │  (SAP)     │                    │ (CF Found.)│         │ (DockerHub,  │
-                └─────┬──────┘                    └─────┬──────┘         │  GH releases)│
-                      │ SSO                             │ SSO+passcode   └──────────────┘
-                      ▼                                 ▼
-              ┌───────────────────────────────────────────────────┐
-              │             SAP BTP Cloud Foundry                 │
-              │                                                   │
-              │   approuter (Node) ──▶ figaf-app (Docker)         │
-              │        │                    │                     │
-              │        ▼                    ▼                     │
-              │   figaf-xsuaa          figaf-db (PG 16)           │
-              └───────────────────────────────────────────────────┘
+   ┌─── apps/figaf-local (Electron) ────┐    ┌─── apps/figaf-manager (Cloud) ─────┐
+   │ ┌──────────┐  IPC ┌──────────────┐ │    │ ┌──────────┐  fetch+ws ┌────────┐ │
+   │ │ Renderer │─────▶│ Main process │ │    │ │ Browser  │──────────▶│ Express│ │
+   │ │ (React)  │◀─────│ (Node,spawn) │ │    │ │ (React)  │◀──────────│ +ws    │ │
+   │ └──────────┘ evts └──────┬───────┘ │    │ └──────────┘   events  └───┬────┘ │
+   │                          │         │    │                            │      │
+   │   host.electron.js ──────┘         │    │       host.cloud.js ───────┘      │
+   └──────────────────┬─────────────────┘    └──────────────────┬────────────────┘
+                      │                                         │
+                      └──────────► packages/core/orchestrator.js ◄
+                                   (shared CLI + login + push logic)
+                                              │
+                       ┌──────────────────────┼──────────────────────────┐
+                       ▼                      ▼                          ▼
+                 ┌────────────┐         ┌────────────┐            ┌──────────────┐
+                 │  btp CLI   │         │   cf CLI   │            │   web APIs   │
+                 │  (SAP)     │         │ (CF Found.)│            │ (DockerHub,  │
+                 └─────┬──────┘         └─────┬──────┘            │  GH releases)│
+                       │ SSO                  │ SSO+passcode      └──────────────┘
+                       ▼                      ▼
+                ┌──────────────────────────────────────────────┐
+                │              SAP BTP Cloud Foundry           │
+                │   approuter (Node) ─▶ figaf-app (Docker)     │
+                │        │                    │                │
+                │        ▼                    ▼                │
+                │   figaf-xsuaa          figaf-db (PG 16)      │
+                └──────────────────────────────────────────────┘
 ```
 
-The renderer never spawns processes; the main process never touches the DOM.
-Everything between them is an IPC channel defined in
-[main-process/preload.js](main-process/preload.js).
+Both renderers consume the **same** `window.figaf` IPC surface (`prereq.*`,
+`btp.*`, `cf.*`, `config.*`, `shell.*`, `on(channel, handler)`). figaf-local
+implements that surface with `ipcRenderer.invoke`; figaf-manager implements it
+with `fetch("/rpc/:channel")` + `WebSocket(/stream)`. The orchestrator handlers
+are byte-identical between the two.
 
 ---
 
-## Node A — Renderer (React, no bundler)
-
-Loaded by [installer/index.html](installer/index.html), which pulls React 18 + Babel
-standalone from CDN, then runs three JSX files via in-browser Babel:
+## Workspace layout
 
 ```
-installer/
-├── index.html       — shell, mounts <App/>
-├── components.jsx   — Ico (SVGs), WinFrame, StepperRail, WizardFooter, TerminalDrawer, CheckRow
-├── screens.jsx      — one component per wizard step (see "wizard graph")
-├── app.jsx          — <App/>: state machine, step routing, log buffer, IPC subscription
-├── styles.css       — design tokens + components
-└── electron-app.css — frameless-window chrome (drag region, traffic lights)
+figaf-installer/                          ← workspace root (npm workspaces)
+├── package.json                          (workspaces: ["apps/*","packages/*"])
+├── apps/
+│   ├── figaf-local/                      Electron desktop installer
+│   │   ├── package.json                  (electron, electron-builder; renderer shell + logo
+│   │   │                                  resolved via require.resolve("@figaf/ui/..."))
+│   │   └── main-process/
+│   │       ├── main.js                   BrowserWindow, frameless chrome
+│   │       ├── preload.js                window.figaf bridge → ipcRenderer
+│   │       ├── ipc-bridge.js             wires orchestrator handlers to ipcMain
+│   │       └── host.electron.js          HostAdapter (dialog, userData, clipboard)
+│   └── figaf-manager/                    Cloud-hosted installer
+│       ├── package.json                  (express, ws)
+│       ├── cloud/
+│       │   ├── server.js                 Express + WebSocketServer
+│       │   ├── client.js                 browser shim → window.figaf via fetch+ws
+│       │   └── index.html                cloud shell with FIGAF_MODE_INJECT
+│       ├── host.cloud.js                 HostAdapter (session-scoped, bundled bin)
+│       ├── bin/                          Linux btp + cf binaries (gitignored, populated by build-zip)
+│       ├── scripts/build-zip.js          assembles dist/figaf-manager-app-<v>.zip
+│       ├── manifest.yml                  CF deployment manifest for the wizard itself
+│       └── Dockerfile                    workspace-root build context required
+└── packages/
+    ├── core/                             host-agnostic orchestrator
+    │   ├── package.json                  name: @figaf/core
+    │   ├── index.js                      re-exports orchestrator
+    │   └── orchestrator.js               every IPC handler + the HostAdapter @typedef
+    ├── ui/                               shared React renderer (no bundler)
+    │   ├── package.json                  name: @figaf/ui
+    │   ├── app.jsx                       <App/> state machine
+    │   ├── components.jsx                shared primitives (WinFrame, StepperRail, …)
+    │   ├── screens.jsx                   per-step screens
+    │   ├── styles.css                    design tokens + components
+    │   ├── electron-app.css              frameless titlebar (loaded only by figaf-local)
+    │   ├── mode.js                       window.figafModeFlags (isHosted + features)
+    │   ├── index.html                    Electron renderer shell (cloud has its own)
+    │   └── figaf-logo.png                shared brand mark (also used as Win exe icon + BrowserWindow icon)
+    └── deploy-templates/                 BTP CF deployment templates
+        ├── package.json                  name: @figaf/deploy-templates
+        ├── manifest.yml                  CF apps + service bindings (figaf-app, approuter)
+        ├── vars.yml                      template (rewritten at runtime by config:writeVars)
+        ├── db.json                       PG 16 service params
+        ├── xs-security.json              XSUAA roles
+        └── approuter/                    @sap/approuter package + xs-app.json
 ```
-
-State lives in a single `ctx` object inside `<App/>`. Each screen receives
-`{ ctx, setCtx, onNext, onBack, appendLog }` and patches `ctx` immutably.
-
-**Wizard graph** (steps are derived from `ctx.choice`):
-
-```
-Welcome ─▶ Login ─▶ Choice ─┬─▶ Config ─▶ Progress ─▶ Deploy ─▶ Done    (deploy path)
-                            │
-                            └─▶ Done                                    (connect path — TBD)
-```
-
-| Step       | Screen          | Drives                                                                   |
-|------------|-----------------|--------------------------------------------------------------------------|
-| `welcome`  | ScreenWelcome   | Parallel prereq probes: btp, cf, Docker Hub reachability, free disk      |
-| `login`    | ScreenLogin     | `btp login --sso` → discover landscape → `cf login --sso` + passcode     |
-| `choice`   | ScreenChoice    | Branch: deploy (default) or connect-to-IS (placeholder)                  |
-| `config`   | ScreenConfig    | Auto-fills domain (`cf domains`), DB plan (`cf marketplace`), latest tag |
-| `progress` | ScreenProgress  | Parallel: create figaf-db, create figaf-xsuaa, assign role               |
-| `deploy`   | ScreenDeploy    | `cf push --vars-file vars.yml`                                           |
-| `done`     | ScreenDone      | Success splash + opens `https://<id>.<domain>`                           |
-
-`TerminalDrawer` subscribes to the `cli:line` IPC event so every spawned command
-streams into a collapsible drawer at the bottom of the window.
 
 ---
 
-## Node B — Main process (Electron, Node.js)
+## Node A — Renderer (`packages/ui`)
 
-```
-main-process/
-├── main.js     — BrowserWindow boot, frameless chrome, registers bridge
-├── preload.js  — contextBridge → window.figaf  (the renderer's only API surface)
-└── bridge.js   — all IPC handlers + child_process orchestration
-```
+Single React tree. Each app reaches the renderer through its own `index.html` shell because the
+loading strategy differs (file:// vs http://):
 
-### IPC surface (window.figaf.*)
+- `packages/ui/index.html` — sibling-relative paths; loaded by figaf-local's
+  main.js via `mainWindow.loadFile(require.resolve("@figaf/ui/package.json")
+  → dirname → /index.html)`. Works in dev (workspace symlink) and packaged
+  (electron-builder bundles `node_modules/@figaf/ui` into the asar).
+- `apps/figaf-manager/cloud/index.html` — absolute paths under `/installer/*`
+  (express.static mounts `@figaf/ui` at that prefix).
 
-Defined in [main-process/preload.js](main-process/preload.js); implemented in
-[main-process/bridge.js](main-process/bridge.js).
+`window.figafModeFlags` (set by `packages/ui/mode.js`) drives all
+mode-conditional behavior:
 
-```
-window.figaf
-├── window.{minimize, toggleMax, close}              ─▶ titlebar buttons
-├── prereq.*                                         ─▶ CLI detection & install
-│   ├── whichBtp / whichCf                              probe stored path → fallback to `where`
-│   ├── installBtp                                      download tar.gz from tools.hana.ondemand.com
-│   ├── installCf                                       latest GitHub release of cloudfoundry/cli
-│   ├── locateCli(cli)                                  user picks .exe/.zip via dialog
-│   ├── getCliPaths / clearCliPath                      manage userData/cliPaths.json
-│   ├── dockerHub                                       latest figaf/app:btp tag
-│   └── disk                                            free GB on system drive
-├── btp.*                                            ─▶ SAP BTP CLI
-│   ├── login                                           btp login --sso
-│   ├── listEnvInstances                                discovers landscape + subaccount
-│   ├── listUsers                                       btp list security/user
-│   └── assignRole(user, role)                          btp assign security/role-collection
-├── cf.*                                             ─▶ Cloud Foundry CLI
-│   ├── loginStart(apiUrl)                              spawns `cf login --sso`, holds stdin open
-│   ├── submitPasscode(code)                            writes passcode to live cf stdin
-│   ├── targetOrgSpace                                  parses `cf target`
-│   ├── domains                                         filters cfapps.* from `cf domains`
-│   ├── marketplacePostgresql                           `cf marketplace -e postgresql-db`
-│   ├── createService({offering,plan,name,configFile})  cf create-service (idempotent on "already exists")
-│   ├── service(name) / pollService(name)               status:* line; pollService loops 10s up to 15min
-│   └── push                                            cf push --vars-file vars.yml in deployDir
-├── config.*                                         ─▶ files & metadata
-│   ├── readVars / writeVars(vars)                      mutate vars.yml in deployDir
-│   ├── deployDir                                       resolves writable copy (see "deploy dir resolution")
-│   └── dockerHubLatestBtpTag                           same source as prereq.dockerHub
-├── shell.{openPasscodeUrl, openExternal}            ─▶ Electron shell.openExternal
-└── on(channel, handler)                             ─▶ unsubscribe-returning listener
+```js
+window.figafModeFlags = {
+  isHosted: <bool>,
+  features: { cliInstall, diskCheck, windowChrome, selfDelete },
+};
 ```
 
-### Streamed IPC events (main → renderer)
+Add new conditionals to `mode.js` rather than scattering `isHosted` ternaries
+across screens.
+
+**Wizard graph** (steps derived from `ctx.choice`):
+
+```
+Welcome ─▶ Login ─▶ Choice ─┬─▶ Config ─▶ Progress ─▶ Deploy ─▶ Done
+                            └─▶ Done                            (connect-to-IS — TBD)
+```
+
+`TerminalDrawer` subscribes to `cli:line` events streamed by the orchestrator.
+
+---
+
+## Node B — Orchestrator (`packages/core/orchestrator.js`)
+
+`createOrchestrator({ host, send })` returns `{ handlers, dispose }` —
+~38 channel handlers covering: prereq probes, btp/cf login state machines
+(GA prompt detection, passcode pipe), service create/poll, `cf push`,
+vars.yml mutation, shell helpers. Streamed events:
 
 | Channel             | Payload                                       | Emitted by                |
 |---------------------|-----------------------------------------------|---------------------------|
-| `cli:line`          | `{source, type: cmd\|line\|err\|ok\|warn, text}` | every spawned process     |
-| `cli:install`       | `{cli, phase: start\|download\|extract\|done\|error, percent?, error?}` | installBtp/installCf/locateCli |
-| `cf:loggedIn`       | `{}`                                          | `cf login` exits 0        |
-| `cf:loginFailed`    | `{code}`                                      | `cf login` exits non-zero |
-| `cf:serviceStatus`  | `{name, status}`                              | each `pollService` tick   |
+| `cli:line`          | `{source, type: cmd\|line\|err\|ok\|warn, text}`        | every spawned process     |
+| `cli:install`       | `{cli, phase, percent?, error?}`              | install/locate flows      |
+| `cf:loggedIn`       | `{}`                                          | cf login exits 0          |
+| `cf:loginFailed`    | `{code}`                                      | cf login exits non-zero   |
+| `cf:serviceStatus`  | `{name, status}`                              | each pollService tick     |
 
-### Subprocess invariants
-
-- `spawn(cmd, args, { shell: false })` — **shell aliases (`doskey`) and `$PATH`
-  globbing are deliberately bypassed.** That's why we persist absolute paths in
-  `userData/cliPaths.json` (`btp`, `cf`). `resolveBtp() / resolveCf()` return the
-  stored path or fall back to the bare command name.
-- All stdout/stderr is fan-routed: captured in the resolved promise *and* streamed
-  line-by-line as `cli:line` events.
-- The **CF login child process is long-lived**: `cf:loginStart` spawns it, keeps
-  stdin open, then `cf:submitPasscode` writes the user-pasted passcode. Closing the
-  window calls `bridge.dispose()` which kills it.
-
-### Deploy dir resolution
-
-[bridge.js#resolveDeployDir](main-process/bridge.js) — the bundled
-`Figaf-BTP-Deployment-btp-users/` is **read-only when packaged** (lives under
-`process.resourcesPath`), so on first use the installer copies it to
-`app.getPath('userData')/deploy/`. All `vars.yml` writes and `cf push` invocations
-target that writable copy.
+The HostAdapter contract (`@typedef HostAdapter` at the top of orchestrator.js)
+is the only seam between the two apps — see file for full JSDoc.
 
 ---
 
-## Node C — Bundled deployment templates
+## Node C — Host adapters
 
-```
-Figaf-BTP-Deployment-btp-users/        (origin: github.com/figaf/Figaf-BTP-Deployment, btp-users branch)
-├── manifest.yml          two CF apps: ((ID))-app (Docker) + ((ID))-router (Node approuter)
-├── vars.yml              placeholders rewritten by config.writeVars
-├── db.json               PG 16, locale en_US, extensions: ltree, citext, pgcrypto, hstore, btree_gist/gin, pg_trgm, uuid-ossp
-├── xs-security.json      18 IRT* role scopes + role templates → role collection PI_Administrator
-├── approuter/            @sap/approuter package + xs-app.json (route → token-destination, xsuaa auth)
-├── notes.txt             reference CLI commands
-└── README.md             upstream readme
-```
+Both adapters expose the exact same shape; they differ only in implementation.
 
-The renderer never reads these directly; the main process is the only consumer.
-**Routing on BTP**: `https://<ID>.<domain>` → approuter (XSUAA-protected) → forwards
-to internal route `https://<ID>-internal.<domain>` → figaf-app on port 8080.
+| HostAdapter method      | figaf-local (Electron)                  | figaf-manager (Cloud)            |
+|-------------------------|-----------------------------------------|----------------------------------|
+| `getUserDataDir`        | `app.getPath("userData")`               | `$HOME/sessions/<sessionId>`     |
+| `resolveBinary`         | userData/cliPaths.json or PATH fallback | `apps/figaf-manager/bin/<name>` (or PATH in dev) |
+| `storeCliPath`          | persists to cliPaths.json               | not implemented                  |
+| `pickFile`              | `dialog.showOpenDialog`                 | no-op (returns null)             |
+| `openExternal`          | `shell.openExternal`                    | no-op (browser uses window.open) |
+| `readClipboard`         | `clipboard.readText`                    | no-op (browser uses navigator.clipboard) |
+| `resolveDeployTemplate` | `{ kind: "bundle", src: <bundled dir> }`| `{ kind: "github", src: <zip URL> }` |
+| `isHosted`              | `false`                                 | `true`                           |
 
 ---
 
@@ -190,23 +182,29 @@ to internal route `https://<ID>-internal.<domain>` → figaf-app on port 8080.
 
 | External                          | Used for                                              | Reached via                    |
 |-----------------------------------|-------------------------------------------------------|--------------------------------|
-| `tools.hana.ondemand.com`         | btp CLI tar.gz download                               | `httpsDownload` (sets EULA cookie) |
+| `tools.hana.ondemand.com`         | btp CLI tar.gz download (Win) / EULA cookie           | `httpsDownload`                |
 | `api.github.com/repos/cloudfoundry/cli/releases/latest` | cf CLI windows zip                | `httpsJson`                    |
+| `packages.cloudfoundry.org/stable`| cf CLI Linux tar.gz (build-zip.js)                    | `httpsGet`                     |
 | `hub.docker.com/v2/repositories/figaf/app/tags`        | latest `figaf/app:*-btp` tag       | `httpsJson`                    |
+| `github.com/figaf/Figaf-BTP-Deployment` | deploy template zip (cloud only at runtime)     | `httpsDownload`                |
 | `cli.btp.cloud.sap`               | btp login endpoint                                    | `btp login --url`              |
 | `api.cf.<landscape>.hana.ondemand.com` | cf API endpoint (landscape-derived)              | `cf login -a`                  |
-| `login.cf.<landscape>.hana.ondemand.com/passcode` | one-time passcode page                | `shell.openExternal`           |
 
 ---
 
 ## Node E — Packaging
 
-- [package.json](package.json) — `electron`, `electron-builder`. No bundler; React is a CDN script.
-- `npm start` → `electron .` (loads `main-process/main.js`).
-- `npm run build:win` → NSIS installer at `dist/Figaf-Installer-<version>-x64.exe`.
-- `extraResources` ships `Figaf-BTP-Deployment-btp-users/` and `instructions.md`
-  alongside the asar — that's why `resolveDeployDir()` looks under
-  `process.resourcesPath` in production.
+| App | Build command | Output |
+|---|---|---|
+| figaf-local | `npm --workspace apps/figaf-local run build:win` | `apps/figaf-local/dist/Figaf-Installer-<v>-x64.exe` |
+| figaf-manager | `npm --workspace apps/figaf-manager run build-zip` | `apps/figaf-manager/dist/figaf-manager-app-<v>.zip` |
+
+- electron-builder `extraResources` copies `packages/deploy-templates/` next to
+  the asar; `host.electron.js` resolves it from `process.resourcesPath`.
+- `build-zip.js` stages a self-contained tree under
+  `apps/figaf-manager/.staging/` (with `@figaf/core` and `@figaf/ui` as plain
+  directories under `node_modules/`), then `npm install --omit=dev` for the
+  public deps, then zips.
 
 ---
 
@@ -214,21 +212,32 @@ to internal route `https://<ID>-internal.<domain>` → figaf-app on port 8080.
 
 | Path | Role |
 |------|------|
-| [main-process/main.js](main-process/main.js) | Electron entry, BrowserWindow, frameless chrome |
-| [main-process/preload.js](main-process/preload.js) | `window.figaf` IPC surface |
-| [main-process/bridge.js](main-process/bridge.js) | All IPC handlers, subprocess orchestration, downloads |
-| [installer/index.html](installer/index.html) | Renderer shell |
-| [installer/app.jsx](installer/app.jsx) | `<App/>`, wizard state machine |
-| [installer/screens.jsx](installer/screens.jsx) | Per-step screens + their IPC choreography |
-| [installer/components.jsx](installer/components.jsx) | Shared primitives (icons, frame, stepper, terminal) |
-| [installer/styles.css](installer/styles.css) | Design tokens & component styles |
-| [installer/electron-app.css](installer/electron-app.css) | Frameless window chrome |
-| [Figaf-BTP-Deployment-btp-users/manifest.yml](Figaf-BTP-Deployment-btp-users/manifest.yml) | CF manifest (apps + service bindings) |
-| [Figaf-BTP-Deployment-btp-users/vars.yml](Figaf-BTP-Deployment-btp-users/vars.yml) | Variable template (rewritten at runtime) |
-| [Figaf-BTP-Deployment-btp-users/xs-security.json](Figaf-BTP-Deployment-btp-users/xs-security.json) | XSUAA roles |
-| [Figaf-BTP-Deployment-btp-users/db.json](Figaf-BTP-Deployment-btp-users/db.json) | PG service parameters |
-| [Figaf-BTP-Deployment-btp-users/approuter/xs-app.json](Figaf-BTP-Deployment-btp-users/approuter/xs-app.json) | Approuter routing |
-| [package.json](package.json) | Electron app + electron-builder NSIS config |
+| [apps/figaf-local/main-process/main.js](apps/figaf-local/main-process/main.js) | Electron entry, BrowserWindow, frameless chrome |
+| [apps/figaf-local/main-process/preload.js](apps/figaf-local/main-process/preload.js) | `window.figaf` IPC surface |
+| [apps/figaf-local/main-process/ipc-bridge.js](apps/figaf-local/main-process/ipc-bridge.js) | wires orchestrator handlers to ipcMain |
+| [apps/figaf-local/main-process/host.electron.js](apps/figaf-local/main-process/host.electron.js) | Electron HostAdapter |
+| [packages/ui/index.html](packages/ui/index.html) | Electron renderer shell (resolved by main.js via require.resolve) |
+| [apps/figaf-manager/cloud/server.js](apps/figaf-manager/cloud/server.js) | Express RPC + WebSocketServer |
+| [apps/figaf-manager/cloud/client.js](apps/figaf-manager/cloud/client.js) | browser `window.figaf` shim (fetch + ws) |
+| [apps/figaf-manager/cloud/index.html](apps/figaf-manager/cloud/index.html) | Cloud renderer shell with mode injection |
+| [apps/figaf-manager/host.cloud.js](apps/figaf-manager/host.cloud.js) | Cloud HostAdapter |
+| [apps/figaf-manager/Dockerfile](apps/figaf-manager/Dockerfile) | container build (workspace root context) |
+| [apps/figaf-manager/manifest.yml](apps/figaf-manager/manifest.yml) | CF manifest for the wizard itself |
+| [apps/figaf-manager/scripts/build-zip.js](apps/figaf-manager/scripts/build-zip.js) | Assemble the cockpit-deployable zip |
+| [packages/core/orchestrator.js](packages/core/orchestrator.js) | All ~38 IPC handlers + HostAdapter typedef |
+| [packages/core/index.js](packages/core/index.js) | re-export of orchestrator |
+| [packages/ui/app.jsx](packages/ui/app.jsx) | `<App/>`, wizard state machine |
+| [packages/ui/screens.jsx](packages/ui/screens.jsx) | Per-step screens + their IPC choreography |
+| [packages/ui/components.jsx](packages/ui/components.jsx) | Shared primitives (icons, frame, stepper, terminal) |
+| [packages/ui/mode.js](packages/ui/mode.js) | window.figafModeFlags (isHosted + feature flags) |
+| [packages/ui/styles.css](packages/ui/styles.css) | Design tokens & component styles |
+| [packages/ui/electron-app.css](packages/ui/electron-app.css) | Frameless window chrome (figaf-local only) |
+| [packages/deploy-templates/manifest.yml](packages/deploy-templates/manifest.yml) | CF manifest (figaf-app + approuter) |
+| [packages/deploy-templates/vars.yml](packages/deploy-templates/vars.yml) | Variable template (rewritten at runtime) |
+| [packages/deploy-templates/xs-security.json](packages/deploy-templates/xs-security.json) | XSUAA roles |
+| [packages/deploy-templates/db.json](packages/deploy-templates/db.json) | PG service parameters |
+| [packages/deploy-templates/approuter/xs-app.json](packages/deploy-templates/approuter/xs-app.json) | Approuter routing |
+| [package.json](package.json) | workspace root |
 | [instructions.md](instructions.md) | Manual CLI walkthrough that the GUI automates |
 | [BTP-CLI/bttp-cli-commands.md](BTP-CLI/bttp-cli-commands.md) | btp CLI reference dump |
 
@@ -236,25 +245,32 @@ to internal route `https://<ID>-internal.<domain>` → figaf-app on port 8080.
 
 ## Conventions when editing
 
-- **Add a new IPC handler**: register it in `bridge.js#handlers`, then expose it on
-  `window.figaf` in `preload.js`. Renderer code consumes only via `window.figaf`.
+- **Add a new IPC handler**: register it in `packages/core/orchestrator.js`'s
+  `handlers` map. It is automatically wired by both apps:
+  - `apps/figaf-local/main-process/ipc-bridge.js` iterates `Object.entries(handlers)`.
+  - `apps/figaf-manager/cloud/server.js` looks up `sess.handlers[channel]` per RPC.
+  Then expose it on `window.figaf` in **both**:
+  - `apps/figaf-local/main-process/preload.js` (`ipcRenderer.invoke(...)`)
+  - `apps/figaf-manager/cloud/client.js` (`rpc(...)`)
 - **Stream output to the terminal drawer**: use `run(cmd, args, { source })` in
-  bridge — it handles fan-out automatically. Manual `spawn()` (e.g. the
-  long-lived `cf login`) must wire stdout/stderr to `log(source, type, line)`.
+  the orchestrator — it handles fan-out automatically. Manual `spawn()` (the
+  long-lived `cf login` and `btp login` procs) must wire stdout/stderr to
+  `log(source, type, line)`.
 - **New wizard step**: add to `baseSteps` / `deploySteps` / `connectSteps` in
-  `app.jsx`, write a `Screen<X>` in `screens.jsx`, switch on `id` in `<App/>`,
-  expose it on `window`.
-- **No bundler**: don't `import`/`export`. JSX files declare globals and reach each
-  other via `window.X` (see the bottom of every `.jsx` file).
+  `packages/ui/app.jsx`, write a `Screen<X>` in `packages/ui/screens.jsx`,
+  switch on `id` in `<App/>`. Both apps pick it up automatically.
+- **Mode-conditional UI**: declare a flag in `packages/ui/mode.js`, then read it
+  from `window.figafModeFlags.features.<flag>`. Don't inline `isHosted` ternaries.
+- **No bundler**: don't `import`/`export` in renderer code. JSX files declare
+  globals on `window` and reach each other that way.
 - **Path persistence over PATH**: when adding a new external CLI, follow the
-  `cliPaths` / `userData/cliPaths.json` pattern — never assume `$PATH`.
+  `cliPaths.json` pattern in `host.electron.js` — never assume `$PATH`.
 
 ## Roadmap markers in code
 
 - `ScreenChoice` exposes a "Connect to Integration Suite" branch that currently
-  drops straight to `done`. The plan is to grow this into a separate flow that
-  links an existing Figaf deployment to an IS tenant — when implementing,
-  add `connectSteps` to `app.jsx` and corresponding screens.
-- `xs-app.json` and `manifest.yml` already contain commented-out
-  `figaf-connectivity` / `figaf-destination` services for PI/PO agent integration —
-  re-enable when that scenario is wired into the wizard.
+  drops to `done`. The plan is to grow this into a separate flow (`connectSteps`
+  in `packages/ui/app.jsx` + corresponding screens). Both apps will pick it up.
+- `xs-app.json` and `manifest.yml` in `packages/deploy-templates/` already
+  contain commented-out `figaf-connectivity` / `figaf-destination` services for
+  PI/PO agent integration — re-enable when that scenario is wired into the wizard.

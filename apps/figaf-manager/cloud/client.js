@@ -12,13 +12,35 @@
 (function () {
   "use strict";
 
+  // ─── Auth-kick handling ────────────────────────────────────────────────────
+  // Plan §1.5 + §1.7 commit 7. The cloud server can reject this client at
+  // two seams:
+  //   - HTTP 401 from POST /rpc/* when the auth cookie is missing/expired.
+  //   - WS close code 4003 (or pre-upgrade 401) from /stream for the same.
+  // Either signal means: drop to /setup, but first fire a synthetic
+  // btp:browserAuth event so the renderer can paint a banner if the wizard
+  // is mid-flow. Idempotent — multiple kicks queue one redirect.
+
+  var kicked = false;
+  function handleAuthKick(reason) {
+    if (kicked) return;
+    kicked = true;
+    try { window.sessionStorage.setItem("figaf:auth-kicked", "1"); } catch (_) {}
+    var bus = subscribers.get("btp:browserAuth");
+    if (bus) bus.forEach(function (h) { try { h({ reason: reason || "kicked" }); } catch (_) {} });
+    // Brief delay so the banner/toast has time to render before navigation.
+    setTimeout(function () {
+      try { window.location.href = "/setup"; } catch (_) {}
+    }, 800);
+  }
+
   // ─── WebSocket event bus ───────────────────────────────────────────────────
 
-  const subscribers = new Map(); // channel → Set<handler>
+  var subscribers = new Map(); // channel → Set<handler>
 
   function openStream() {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(proto + "://" + location.host + "/stream");
+    var proto = location.protocol === "https:" ? "wss" : "ws";
+    var ws = new WebSocket(proto + "://" + location.host + "/stream");
 
     ws.addEventListener("open", function () {
       console.log("[figaf] stream connected");
@@ -34,10 +56,20 @@
     });
 
     ws.addEventListener("close", function (evt) {
-      if (evt.code !== 4001) {
-        // Reconnect on unexpected close (not an auth rejection)
-        setTimeout(openStream, 2000);
+      // 4003: server-issued unauthenticated (post-upgrade) — auth-kick redirect.
+      // Note: when the server rejects pre-upgrade with HTTP 401, the browser
+      // surfaces it as a generic close + error rather than a clean 4003. We
+      // detect "never opened, very fast close" as a fallback below.
+      if (evt.code === 4003) {
+        handleAuthKick("ws-4003");
+        return;
       }
+      if (evt.code === 4001) {
+        // Legacy/no-session: leave as-is (no reconnect, no redirect).
+        return;
+      }
+      // Reconnect on unexpected close (e.g., dyno restart). Slight back-off.
+      if (!kicked) setTimeout(openStream, 2000);
     });
 
     ws.addEventListener("error", function () {});
@@ -54,6 +86,10 @@
       body: JSON.stringify(args != null ? args : {}),
       credentials: "same-origin",
     }).then(function (r) {
+      if (r.status === 401) {
+        handleAuthKick("rpc-401");
+        return { ok: false, error: "unauthenticated" };
+      }
       return r.json().catch(function () { return { ok: false, error: "HTTP " + r.status }; });
     });
   }

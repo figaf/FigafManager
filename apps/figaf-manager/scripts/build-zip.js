@@ -158,22 +158,27 @@ function stage() {
   fs.copyFileSync(path.join(APP_DIR, "manifest.yml"),     path.join(STAGE_DIR, "manifest.yml"));
 
   // Stripped package.json — @figaf/* live as plain directories under
-  // node_modules/, so npm install only needs to resolve the public deps.
+  // node_modules/.  bundleDependencies tells npm (both the local install below
+  // and the CF buildpack's own npm install at deploy time) to treat these as
+  // pre-bundled and never prune or re-fetch them from the registry.
   const stagedPkg = JSON.parse(JSON.stringify(pkg));
   for (const dep of ["@figaf/core", "@figaf/ui"]) delete stagedPkg.dependencies[dep];
+  stagedPkg.bundleDependencies = ["@figaf/core", "@figaf/ui"];
   fs.writeFileSync(path.join(STAGE_DIR, "package.json"), JSON.stringify(stagedPkg, null, 2));
-
-  // Plain-directory copies of the workspace packages
-  const figafModules = path.join(STAGE_DIR, "node_modules", "@figaf");
-  fs.mkdirSync(figafModules, { recursive: true });
-  copyDir(path.join(WORKSPACE_ROOT, "packages", "core"), path.join(figafModules, "core"));
-  copyDir(path.join(WORKSPACE_ROOT, "packages", "ui"),   path.join(figafModules, "ui"));
 
   log("[stage] Running npm install --omit=dev in staging…");
   execSync("npm install --omit=dev --no-package-lock --no-audit --no-fund", {
     cwd: STAGE_DIR,
     stdio: "inherit",
   });
+
+  // Copy @figaf/* AFTER npm install so the install run cannot prune them.
+  // (npm 7+ auto-prunes node_modules entries absent from package.json.)
+  const figafModules = path.join(STAGE_DIR, "node_modules", "@figaf");
+  fs.mkdirSync(figafModules, { recursive: true });
+  copyDir(path.join(WORKSPACE_ROOT, "packages", "core"), path.join(figafModules, "core"));
+  copyDir(path.join(WORKSPACE_ROOT, "packages", "ui"),   path.join(figafModules, "ui"));
+
   log("[stage] Done.");
 }
 

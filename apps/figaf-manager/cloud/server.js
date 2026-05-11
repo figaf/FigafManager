@@ -4,9 +4,10 @@ const http = require("http");
 const { WebSocketServer } = require("ws");
 const crypto = require("crypto");
 const path = require("path");
-const os = require("os");
 const fs = require("fs");
-const { createOrchestrator, DEPLOYMENT_ZIP_URL } = require("../lib/cli-orchestrator");
+const { createOrchestrator, DEPLOYMENT_ZIP_URL } = require("@figaf/core");
+const { createHost } = require("../host.cloud");
+const auth = require("./auth");
 
 const PORT = process.env.PORT || 8080;
 // Random per-boot secret — all sessions invalidate on container restart (acceptable for wizard use-case).
@@ -21,33 +22,25 @@ function newSession(sessionId) {
   const wsClients = new Set();
 
   function send(channel, payload) {
-    const frame = JSON.stringify({ channel, payload });
+    // Defensive downstream redaction layer (auth-gate plan §1.4).
+    // cli:line text is scrubbed for base64url-shaped tokens before fan-out.
+    // The boot [SETUP] line is printed via console.log (not cli:line), so the
+    // operator's only copy of the token never crosses this seam — this is
+    // belt-and-braces in case future orchestrator code accidentally echoes it.
+    let outPayload = payload;
+    if (channel === "cli:line" && payload && typeof payload.text === "string") {
+      const redacted = auth.redact(payload.text);
+      if (redacted !== payload.text) {
+        outPayload = Object.assign({}, payload, { text: redacted });
+      }
+    }
+    const frame = JSON.stringify({ channel, payload: outPayload });
     for (const ws of wsClients) {
       if (ws.readyState === 1 /* OPEN */) ws.send(frame);
     }
   }
 
-  const host = {
-    getUserDataDir: () => path.join(os.homedir(), "sessions", sessionId),
-    resolveBinary: (name) => {
-      const bundled = path.join(__dirname, "..", "bin", name);
-      // Dev fallback: if the Linux binary hasn't been downloaded yet, use the
-      // system-installed CLI (works on a Windows/Mac dev machine with btp+cf on PATH)
-      if (!fs.existsSync(bundled) && process.env.NODE_ENV !== "production") return name;
-      return bundled;
-    },
-    openExternal: () => Promise.resolve(),
-    pickFile: () => Promise.resolve(null),
-    readClipboard: () => Promise.resolve(""),
-    resolveDeployTemplate: () => ({
-      kind: "github",
-      src:
-        process.env.FIGAF_DEPLOYMENT_ZIP_URL ||
-        "https://github.com/figaf/Figaf-BTP-Deployment/archive/refs/heads/btp-users.zip",
-    }),
-    isHosted: true,
-  };
-
+  const host = createHost({ sessionId });
   const { handlers, dispose } = createOrchestrator({ host, send });
   const sess = { handlers, dispose, wsClients, lastSeen: Date.now() };
   sessions.set(sessionId, sess);
@@ -140,29 +133,90 @@ function sessionMiddleware(req, res, next) {
   next();
 }
 
+// ─── Auth gate (v1 token model) ────────────────────────────────────────────
+// See auth-gate-implementation-plan.md Part I. The cookie issued by
+// /setup/claim is checked on every gated request via auth.verifyAuth().
+
+function requireAuth(req, res, next) {
+  const v = auth.verifyAuth(req);
+  if (v.ok) return next();
+  // Browser-style HTML GETs (anything except /rpc/* and not XHR) get a 302
+  // redirect to /setup so the operator lands on the claim page. RPC clients
+  // get a structured 401 they can react to.
+  const isRpc = req.path.startsWith("/rpc/");
+  const accept = String(req.headers["accept"] || "");
+  const wantsHtml = !isRpc && (req.method === "GET") && (accept.includes("text/html") || accept === "" || accept.includes("*/*"));
+  if (wantsHtml) {
+    res.redirect(302, "/setup");
+    return;
+  }
+  res.status(401).json({ ok: false, error: "unauthenticated", reason: v.reason });
+}
+
 // ─── Express app ──────────────────────────────────────────────────────────────
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 app.use(sessionMiddleware);
 
-const rootDir = path.join(__dirname, "..");
-const installerDir = path.join(rootDir, "installer");
+// Shared renderer lives in @figaf/ui (resolved through the workspace symlink in
+// node_modules); we keep the public URL prefix /installer so the cloud-mode
+// index.html template doesn't need to change.
+const installerDir = path.dirname(require.resolve("@figaf/ui/package.json"));
 
-// Static: installer UI assets (JSX, CSS)
+// Static (ungated): installer UI assets (JSX, CSS) — public source code, no
+// secrets. Gating them adds friction (Babel-standalone fetches mode.js before
+// the auth cookie is set during the post-claim navigation) without security
+// benefit.
 app.use("/installer", express.static(installerDir));
 
-// Static: logo — installer's "../figaf-logo.png" resolves to /figaf-logo.png in browser
-app.get("/figaf-logo.png", (_req, res) => res.sendFile(path.join(rootDir, "figaf-logo.png")));
+// Static (ungated): logo
+app.get("/figaf-logo.png", (_req, res) => res.sendFile(path.join(installerDir, "figaf-logo.png")));
 
-// Static: browser shim
+// Static (ungated): browser shim
 app.get("/cloud/client.js", (_req, res) => {
   res.setHeader("Content-Type", "application/javascript; charset=utf-8");
   res.sendFile(path.join(__dirname, "client.js"));
 });
 
-// Root: serve templated index.html with mode-flag injection
-app.get("/", (req, res) => {
+// ─── /setup (ungated) ───────────────────────────────────────────────────────
+// Operator-facing claim flow. The page is intentionally vanilla HTML; no React,
+// no module imports, so it cannot be locked out by the same kind of failure
+// that would lock the wizard out.
+
+app.get("/setup", (req, res) => {
+  if (auth.isClaimed()) {
+    // Browser convention: still serve the page so the operator can see the
+    // "already-claimed" copy. The form will receive 410 on submit; matches §1.6.
+  }
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.sendFile(path.join(__dirname, "setup.html"));
+});
+
+app.post("/setup/claim", (req, res) => {
+  const submitted = (req.body && typeof req.body.token === "string") ? req.body.token.trim() : "";
+  const v = auth.verifySetupToken(submitted);
+  if (!v.ok) {
+    if (v.code === "ALREADY_CLAIMED" || v.code === "NO_TOKEN") {
+      // NO_TOKEN here means "hash already wiped post-claim" → semantically Gone.
+      return res.status(410).json({ ok: false, error: "already_claimed" });
+    }
+    return res.status(401).json({ ok: false, error: "invalid_token" });
+  }
+  const ip = auth.clientIp(req);
+  const ua = req.headers["user-agent"] || "";
+  auth.recordClaim({ ip, ua });
+  // Audit line: token is gone from memory; mark the log boundary.
+  console.log("[SETUP] Token redacted post-claim");
+  auth.issueCookie(res, { ip, ua });
+  res.status(200).json({ ok: true, redirect: "/" });
+});
+
+// ─── Gated surface ─────────────────────────────────────────────────────────
+
+// Root: serve templated index.html with mode-flag injection (gated).
+app.get("/", requireAuth, (req, res) => {
   const tmpl = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
   const injection = [
     "<script>",
@@ -175,8 +229,8 @@ app.get("/", (req, res) => {
   res.send(html);
 });
 
-// RPC: POST /rpc/:channel → orchestrator handler
-app.post("/rpc/:channel", async (req, res) => {
+// RPC: POST /rpc/:channel → orchestrator handler (gated).
+app.post("/rpc/:channel", requireAuth, async (req, res) => {
   const { channel } = req.params;
   const sess = getOrCreateSession(req.sessionId);
   const handler = sess.handlers[channel];
@@ -195,12 +249,43 @@ app.post("/rpc/:channel", async (req, res) => {
 // ─── HTTP + WebSocket server ────────────────────────────────────────────────────
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: "/stream" });
+// `noServer: true` — we own the upgrade event so we can authenticate BEFORE
+// the WS handshake completes. Once handleUpgrade resolves, we can no longer
+// send an HTTP error code; pre-upgrade is the only correct seam (plan Q4).
+const wss = new WebSocketServer({ noServer: true });
+
+server.on("upgrade", (req, socket, head) => {
+  // Only intercept our /stream path; let other upgrade-able protocols pass.
+  const url = req.url || "";
+  if (!url.startsWith("/stream")) {
+    socket.destroy();
+    return;
+  }
+  const v = auth.verifyAuth(req);
+  if (!v.ok) {
+    // RFC 6455: before upgrade, respond with a real HTTP status. The browser
+    // surfaces this as a WS construction error; client.js handles it.
+    socket.write(
+      "HTTP/1.1 401 Unauthorized\r\n" +
+      "Connection: close\r\n" +
+      "Content-Length: 0\r\n" +
+      "\r\n"
+    );
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    wss.emit("connection", ws, req);
+  });
+});
 
 wss.on("connection", (ws, req) => {
   const sessionId = sessionIdFromReq(req);
   if (!sessionId) {
-    ws.close(4001, "No valid session cookie");
+    // Should be unreachable: requireAuth on /rpc/* and sessionMiddleware on
+    // the upgrade request both run, but defensively close with 4003 (auth)
+    // rather than 4001 (no session) so the client redirects to /setup.
+    ws.close(4003, "Unauthenticated");
     return;
   }
   const sess = getOrCreateSession(sessionId);
@@ -215,16 +300,48 @@ wss.on("connection", (ws, req) => {
   });
 });
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`figaf-manager listening on :${PORT}`);
-  console.log(`DEPLOYMENT_ZIP_URL: ${DEPLOYMENT_ZIP_URL}`);
-});
-
-// ─── Graceful shutdown (CF SIGTERM) ────────────────────────────────────────────
-
-process.on("SIGTERM", () => {
-  for (const sess of sessions.values()) {
-    try { sess.dispose(); } catch {}
+// ─── Boot: mint setup token + emit [SETUP] line BEFORE app.listen() ────────
+// One-shot operation. The cleartext is printed to stdout exactly once; the
+// SHA-256 hash lives in cloud/auth.js module state for the lifetime of the
+// process. Cockpit operator reads this line from the Logs view to claim.
+function bootMintToken() {
+  const token = auth.generateSetupToken();
+  console.log(auth.formatSetupLogLine(token));
+  if (auth.secretIsEphemeral) {
+    console.log(
+      "[INFO] FIGAF_AUTH_SECRET not set — using ephemeral per-boot secret. " +
+      "All sessions will invalidate on restart."
+    );
   }
-  server.close(() => process.exit(0));
-});
+  // T+5min audit boundary marker. If the operator claims earlier, the
+  // /setup/claim handler emits the same line; this timer ensures the marker
+  // appears even if the operator never claims (token-rotation story is
+  // "redeploy the app").
+  setTimeout(() => {
+    if (auth.isClaimed()) return; // claim handler already emitted the line
+    console.log("[SETUP] Token redacted post-claim");
+  }, 5 * 60 * 1000).unref();
+}
+
+// Only run boot side-effects + .listen() when invoked as the main entry-point
+// (e.g., `node server.js`). When the test runner require()s this file, it
+// gets the Express app, HTTP server, and WS server without auto-starting.
+if (require.main === module) {
+  bootMintToken();
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`figaf-manager listening on :${PORT}`);
+    console.log(`DEPLOYMENT_ZIP_URL: ${DEPLOYMENT_ZIP_URL}`);
+  });
+
+  // ─── Graceful shutdown (CF SIGTERM) ──────────────────────────────────────
+  process.on("SIGTERM", () => {
+    for (const sess of sessions.values()) {
+      try { sess.dispose(); } catch {}
+    }
+    server.close(() => process.exit(0));
+  });
+}
+
+// ─── Test seam ─────────────────────────────────────────────────────────────
+// Tests require("./server") and start the server on a random port themselves.
+module.exports = { app, server, wss, sessions, bootMintToken };

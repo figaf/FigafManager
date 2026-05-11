@@ -6,7 +6,7 @@ function App() {
   const [step, setStepRaw] = React.useState(0);
   const [terminalOpen, setTerminalOpen] = React.useState(false);
 
-  const isHosted = typeof window !== "undefined" && window.figafMode === "hosted";
+  const isHosted = window.figafModeFlags.isHosted;
 
   const [ctx, setCtx] = React.useState({
     prereqsStarted: false,

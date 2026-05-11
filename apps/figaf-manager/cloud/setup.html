@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Figaf Installer — Setup</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink-0: #0b1220;
+      --ink-2: #303a4a;
+      --ink-3: #5a6478;
+      --fg-blue: #1565d8;
+      --fg-blue-soft: rgba(21, 101, 216, 0.07);
+      --warn-bg: #fff7ed;
+      --warn-border: #fed7aa;
+      --warn-ink: #9a3412;
+      --error: #e11d48;
+      --line: rgba(15, 23, 42, 0.08);
+      --bg: #f5f7fb;
+      --card: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; font-family: "Figtree", system-ui, sans-serif; color: var(--ink-0); background: var(--bg); }
+    .wrap { max-width: 640px; margin: 48px auto; padding: 0 20px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 28px; box-shadow: 0 1px 2px rgba(15,23,42,0.04); }
+    h1 { margin: 0 0 12px; font-size: 22px; font-weight: 700; }
+    p { margin: 0 0 12px; line-height: 1.55; color: var(--ink-2); font-size: 14px; }
+    .lead { font-size: 15px; color: var(--ink-2); }
+    .panel { background: var(--fg-blue-soft); border: 1px solid rgba(21,101,216,0.18); border-radius: 8px; padding: 14px 16px; margin: 18px 0; font-size: 13px; color: var(--ink-2); }
+    .panel strong { color: var(--ink-0); }
+    .warn { background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn-ink); border-radius: 8px; padding: 14px 16px; margin: 14px 0; font-size: 13px; }
+    .warn strong { color: var(--warn-ink); }
+    label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-0); margin: 16px 0 6px; }
+    input[type="password"], input[type="text"] {
+      width: 100%; padding: 10px 12px; font-size: 14px;
+      border: 1px solid var(--line); border-radius: 8px;
+      font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+      letter-spacing: 0.5px;
+      background: #fafbfd;
+    }
+    input:focus { outline: 2px solid var(--fg-blue); outline-offset: -1px; background: #fff; }
+    .row { display: flex; gap: 8px; margin-top: 14px; align-items: center; }
+    .btn-primary {
+      background: var(--fg-blue); color: #fff; border: none;
+      border-radius: 8px; padding: 10px 16px; font-size: 14px; font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+    .toggle {
+      background: transparent; border: none; color: var(--fg-blue);
+      font-size: 12px; cursor: pointer; padding: 6px 8px;
+    }
+    .status { min-height: 20px; font-size: 13px; margin-top: 12px; }
+    .status.err { color: var(--error); }
+    .status.ok { color: #16a34a; }
+    footer { margin-top: 16px; font-size: 11px; color: var(--ink-3); line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Figaf Installer — Setup</h1>
+
+      <p class="lead">
+        This installer requires one-time setup before you can use it. The deployment generated a one-time setup token
+        and printed it to this app's startup logs in the BTP cockpit. Paste it below to claim this installer instance.
+      </p>
+
+      <div class="panel">
+        <strong>Where to find the token:</strong>
+        In the SAP BTP cockpit, open the Cloud Foundry space where you deployed this app &rarr;
+        open the app <code>figaf-manager</code> &rarr; &ldquo;Logs&rdquo; tab &rarr;
+        find the most recent line beginning with <code>[SETUP] Token:</code>.
+      </div>
+
+      <form id="claim-form" autocomplete="off">
+        <label for="token">Setup token</label>
+        <input type="password" id="token" name="token" autocomplete="off" spellcheck="false" required />
+        <div class="row">
+          <button type="submit" class="btn-primary" id="submit-btn">Claim and continue</button>
+          <button type="button" class="toggle" id="toggle-btn">Show</button>
+        </div>
+        <div class="status" id="status" role="status" aria-live="polite"></div>
+      </form>
+
+      <div class="panel" style="margin-top: 22px;">
+        <strong>Trust scope:</strong>
+        Anyone in your Cloud Foundry space with the <code>Space Developer</code> or <code>Space Auditor</code> role
+        can read this app's logs and therefore could claim this installer. Only the first claim succeeds; subsequent
+        attempts return <code>Gone</code>. After you claim, your browser receives a session cookie that expires in 8 hours.
+      </div>
+
+      <div class="warn">
+        <strong>Note:</strong> if you have configured a log drain (e.g., an SIEM, Loggregator forwarder, or
+        Application Logging Service) for this space, the setup token has also been forwarded there.
+        Treat any system that received your CF logs at deploy time as trusted, or redeploy to rotate the token.
+      </div>
+
+      <footer>
+        The operator who deploys this app must have the <code>Space Developer</code> role to view the startup logs in
+        the cockpit. If you see only <code>Space Auditor</code> in your role assignments, ask your space manager to
+        either grant <code>Space Developer</code> or read the token for you out of the cockpit Logs view.
+      </footer>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+      var form = document.getElementById("claim-form");
+      var input = document.getElementById("token");
+      var btn = document.getElementById("submit-btn");
+      var toggle = document.getElementById("toggle-btn");
+      var status = document.getElementById("status");
+
+      toggle.addEventListener("click", function () {
+        if (input.type === "password") { input.type = "text"; toggle.textContent = "Hide"; }
+        else { input.type = "password"; toggle.textContent = "Show"; }
+      });
+
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        status.className = "status";
+        status.textContent = "";
+        btn.disabled = true;
+        var token = input.value.trim();
+        fetch("/setup/claim", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: token }),
+          credentials: "same-origin",
+        })
+          .then(function (r) {
+            return r.json().then(function (body) { return { status: r.status, body: body }; });
+          })
+          .then(function (res) {
+            if (res.status === 200 && res.body && res.body.ok) {
+              status.className = "status ok";
+              status.textContent = "Claimed. Redirecting…";
+              window.location.href = (res.body.redirect || "/");
+              return;
+            }
+            btn.disabled = false;
+            status.className = "status err";
+            if (res.status === 410) {
+              status.textContent =
+                "This installer has already been claimed. If you are the operator, your browser may have lost its " +
+                "session cookie — clear the cookie for this domain and reload the app to be redirected to the wizard. " +
+                "If you are not the operator, this installer is no longer accepting new claims; redeploy the app to " +
+                "issue a fresh setup token.";
+            } else if (res.status === 401) {
+              status.textContent =
+                "That token is not valid. Check that you copied the full value from the [SETUP] Token line in the " +
+                "cockpit logs and try again.";
+            } else {
+              status.textContent = "Unexpected error (" + res.status + "). Please retry.";
+            }
+          })
+          .catch(function () {
+            btn.disabled = false;
+            status.className = "status err";
+            status.textContent = "Network error. Please retry.";
+          });
+      });
+    })();
+  </script>
+</body>
+</html>

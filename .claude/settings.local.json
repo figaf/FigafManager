@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --check packages/core/orchestrator.js)",
+      "Bash(node --check apps/figaf-manager/cloud/server.js)",
+      "Bash(node --check apps/figaf-local/main-process/main.js)",
+      "Bash(node --check apps/figaf-manager/scripts/build-zip.js)",
+      "Bash(npx --yes eslint --version)",
+      "Bash(node --test apps/figaf-manager/cloud/auth.test.js)",
+      "Bash(node --test apps/figaf-manager/cloud/redact.test.js)",
+      "Bash(node -e \"const s = require\\('./apps/figaf-manager/cloud/server.js'\\); console.log\\('app:', typeof s.app\\); console.log\\('server:', typeof s.server\\); console.log\\('wss:', typeof s.wss\\);\")",
+      "Bash(node --test apps/figaf-manager/cloud/server.test.js)",
+      "Bash(node --test apps/figaf-manager/cloud/ws-auth.test.js)",
+      "Bash(node --test apps/figaf-manager/cloud/auth.test.js apps/figaf-manager/cloud/redact.test.js apps/figaf-manager/cloud/server.test.js apps/figaf-manager/cloud/ws-auth.test.js)",
+      "Bash(node --test \"apps/figaf-manager/cloud/auth.test.js\" \"apps/figaf-manager/cloud/redact.test.js\" \"apps/figaf-manager/cloud/server.test.js\" \"apps/figaf-manager/cloud/ws-auth.test.js\")",
+      "Bash(timeout 3 node apps/figaf-manager/cloud/server.js)"
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+- [figaf-manager auth posture](project_figaf_manager_auth_posture.md) — figaf-manager ships with no XSUAA/approuter; routes are public and self-issue session cookies.
+- [SSO URL leak threat model](project_sso_url_leak.md) — btp login --sso completion URL is a pre-auth bearer credential; must be redacted from /stream fan-out.
+- [Orchestrator handler hotspots](project_orchestrator_hotspots.md) — which RPC handlers are most dangerous when reachable unauthenticated.
+- [CF/BTP CLI state is dyno-global](project_cli_state_not_session_scoped.md) — login state in ~/.cf and ~/.bluemix is shared across sessions unless CF_HOME/BLUEMIX_HOME is set per session.
+- [User profile](user_role.md) — afl@figaf.com, owns the figaf-installer monorepo; reviewing the cloud-hosted variant for security before broader rollout.
+- [figaf-manager auth design decision](project_figaf_manager_auth_decision.md) — cockpit-only constraint; cockpit-log token + single-use self-destruct chosen as primary, XSUAA-manifest as fallback.
+- [XSUAA upgrade evaluation](project_xsuaa_upgrade_evaluation.md) — conditions for the in-wizard XSUAA upgrade to be a real security win vs. parallel-doors; hard constraints on its implementation.

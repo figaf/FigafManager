@@ -1,0 +1,20 @@
+# Dependencies (workspace-hoisted)
+node_modules/
+
+# Electron-builder / build outputs
+dist/
+*.zip
+*.sig
+*.cert
+
+# figaf-manager build artifacts
+apps/figaf-manager/bin/btp
+apps/figaf-manager/bin/cf
+apps/figaf-manager/.staging/
+apps/figaf-manager/.figaf-manager.cache
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

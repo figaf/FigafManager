@@ -1,0 +1,14 @@
+{
+  "name": "@figaf/ui",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Shared React renderer (JSX, transpiled in-browser via Babel standalone). Loaded by both apps' index.html shells.",
+  "files": [
+    "app.jsx",
+    "components.jsx",
+    "screens.jsx",
+    "styles.css",
+    "electron-app.css",
+    "mode.js"
+  ]
+}

@@ -127,7 +127,7 @@ const Ico = {
 function FigafMark({ size = 18 }) {
   return (
     <img 
-      src="../figaf-logo.png" 
+      src="./figaf-logo.png"
       height={size}
       style={{ objectFit: "contain", borderRadius: 4 }}
       alt="Figaf Logo"
@@ -137,10 +137,10 @@ function FigafMark({ size = 18 }) {
 
 // ───────────── Windows 11 chrome ─────────────
 function WinFrame({ title = "Figaf Manager", children }) {
-  const isHosted = typeof window !== "undefined" && window.figafMode === "hosted";
+  const features = window.figafModeFlags.features;
   const api = typeof window !== "undefined" ? window.figaf : null;
 
-  if (isHosted) {
+  if (!features.windowChrome) {
     return (
       <div className="win">
         <div className="win-titlebar" style={{ cursor: "default" }}>
