@@ -367,6 +367,67 @@ wss.on("connection", (ws, req) => {
   });
 });
 
+// ─── Idle self-destruct (v2 V4 mitigation) ─────────────────────────────────
+// Defense in depth: the longer a wizard sits deployed without use, the wider
+// the exposure window for the cockpit-log token (v1) or a leaked role
+// assignment (v2). After IDLE_TTL_HOURS of no authenticated traffic, the
+// wizard tears itself down via the same multi-step uninstall used by the
+// "Delete this manager" button.
+//
+// Controls:
+//   FIGAF_IDLE_SELF_DESTRUCT_HOURS  — TTL in hours. Defaults to 0 (DISABLED)
+//                                     so an operator who deploys and walks
+//                                     away gets no surprises. Set explicitly
+//                                     in the manifest to opt in.
+//                                     Min sane value: 1 hour.
+//   FIGAF_IDLE_SELF_DESTRUCT_GRACE  — minutes to log a warning before the
+//                                     teardown actually runs. Default 30.
+//
+// Activity heuristic: max(lastSeen across active sessions, processStart).
+// A session is "active" if any RPC or WS message has bumped its lastSeen.
+// No sessions yet → process boot is the anchor.
+
+const IDLE_TTL_HOURS = Number(process.env.FIGAF_IDLE_SELF_DESTRUCT_HOURS || 0);
+const IDLE_GRACE_MIN = Number(process.env.FIGAF_IDLE_SELF_DESTRUCT_GRACE  || 30);
+const PROCESS_START = Date.now();
+let _idleWarned = false;
+
+function lastActivityMs() {
+  let max = PROCESS_START;
+  for (const sess of sessions.values()) {
+    if (sess.lastSeen > max) max = sess.lastSeen;
+  }
+  return max;
+}
+
+async function maybeIdleSelfDestruct() {
+  if (!(IDLE_TTL_HOURS > 0)) return;
+  const idleMs = Date.now() - lastActivityMs();
+  const ttlMs = IDLE_TTL_HOURS * 60 * 60 * 1000;
+  const graceMs = Math.max(0, IDLE_GRACE_MIN) * 60 * 1000;
+  if (idleMs < ttlMs - graceMs) return;
+  if (idleMs < ttlMs) {
+    if (!_idleWarned) {
+      _idleWarned = true;
+      console.log(`[INFO] Idle self-destruct armed: no authenticated traffic in ${(idleMs / 3600000).toFixed(1)}h. Teardown in ${((ttlMs - idleMs) / 60000).toFixed(0)} min unless activity resumes.`);
+    }
+    return;
+  }
+  // TTL exceeded. Find any session whose orchestrator we can use, or build a
+  // throw-away one with a synthetic id so we can drive cf:uninstallManager.
+  console.log("[WARN] Idle self-destruct firing — tearing down figaf-manager (and approuter, if present).");
+  const sessId = sessions.keys().next().value || "idle-self-destruct";
+  const sess = getOrCreateSession(sessId);
+  try {
+    await sess.handlers["cf:uninstallManager"]({ deleteRoleCollections: false });
+  } catch (e) {
+    console.error("[ERR] Idle self-destruct teardown failed:", e.message);
+  }
+}
+
+// Probe every 5 minutes. unref() so the timer does not prevent shutdown.
+setInterval(maybeIdleSelfDestruct, 5 * 60 * 1000).unref();
+
 // ─── Boot: mint setup token + emit [SETUP] line BEFORE app.listen() ────────
 // One-shot operation. The cleartext is printed to stdout exactly once; the
 // SHA-256 hash lives in cloud/auth.js module state for the lifetime of the
@@ -419,4 +480,15 @@ if (require.main === module) {
 
 // ─── Test seam ─────────────────────────────────────────────────────────────
 // Tests require("./server") and start the server on a random port themselves.
-module.exports = { app, server, wss, sessions, bootMintToken, XSUAA_ACTIVE };
+module.exports = {
+  app,
+  server,
+  wss,
+  sessions,
+  bootMintToken,
+  XSUAA_ACTIVE,
+  // v2: exposed for the idle-self-destruct test only
+  __lastActivityMs: lastActivityMs,
+  __maybeIdleSelfDestruct: maybeIdleSelfDestruct,
+  __IDLE_TTL_HOURS: IDLE_TTL_HOURS,
+};
