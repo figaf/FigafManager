@@ -15,6 +15,26 @@
 
 const crypto = require("crypto");
 
+// ─── v2 mode-switch guard ──────────────────────────────────────────────────
+// Defense in depth: if VCAP_SERVICES contains an xsuaa binding at module
+// init, the wizard is in XSUAA mode and v1 token-gate paths must never
+// accept a cookie or mint a token. server.js is responsible for swapping
+// the middleware function pointer (see XSUAA_ACTIVE), but a forgotten code
+// path calling verifyAuth() / generateSetupToken() in XSUAA mode would
+// silently succeed and create a parallel auth surface. We fail closed here.
+//
+// Computed once at require()-time. Changes to VCAP_SERVICES after boot are
+// not supported — the restage that creates the binding is the seam.
+function _detectXsuaaAtInit() {
+  const raw = process.env.VCAP_SERVICES;
+  if (!raw) return false;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed && parsed.xsuaa) && parsed.xsuaa.length > 0;
+  } catch { return false; }
+}
+const _xsuaaModeAtInit = _detectXsuaaAtInit();
+
 // ─── Module-scoped state (single process lifetime) ─────────────────────────
 
 const authState = {
@@ -85,6 +105,13 @@ function constantTimeEquals(a, b) {
  * we expose this for test resets but rely on policy at the call site.
  */
 function generateSetupToken() {
+  // v2 defense: callers in XSUAA mode should never request a fresh token.
+  // We throw instead of silently returning a bogus value so a mistake
+  // surfaces loudly during testing rather than producing a token that
+  // can't actually authenticate anything.
+  if (_xsuaaModeAtInit) {
+    throw new Error("generateSetupToken called in XSUAA mode (token gate is dormant)");
+  }
   const cleartext = toBase64Url(crypto.randomBytes(TOKEN_BYTES));
   authState.setupTokenHash = sha256(Buffer.from(cleartext, "utf8"));
   authState.claimed = false;
@@ -202,6 +229,10 @@ function parseCookieHeader(header) {
  * Returns { ok: true } or { ok: false, reason }.
  */
 function verifyAuth(req) {
+  // v2 defense: under XSUAA mode the v1 cookie is meaningless. If something
+  // calls into verifyAuth(), fail closed so we never accept a stale v1 cookie
+  // that was minted before the upgrade.
+  if (_xsuaaModeAtInit) return { ok: false, reason: "XSUAA_MODE_ACTIVE" };
   const cookies = parseCookieHeader(req && req.headers && req.headers.cookie);
   const raw = cookies[COOKIE_NAME];
   if (!raw) return { ok: false, reason: "NO_COOKIE" };
@@ -311,4 +342,5 @@ module.exports = {
   __resetForTests,
   // Exposed for the test suite only; do not use from server.js.
   __authState: authState,
+  __xsuaaModeAtInit: _xsuaaModeAtInit,
 };

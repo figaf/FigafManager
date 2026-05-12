@@ -8,6 +8,12 @@ const fs = require("fs");
 const { createOrchestrator, DEPLOYMENT_ZIP_URL } = require("@figaf/core");
 const { createHost } = require("../host.cloud");
 const auth = require("./auth");
+// v2: XSUAA mode-switch (auth-gate-implementation-plan.md §2.7).
+// Selected once at boot based on whether VCAP_SERVICES contains an xsuaa
+// binding; never per-request. The restage that creates that binding is the
+// seam — there is no live mode-switching within a single process lifetime.
+const xsuaa = require("./xsuaa-auth");
+const XSUAA_ACTIVE = xsuaa.isXsuaaActive();
 
 const PORT = process.env.PORT || 8080;
 // Random per-boot secret — all sessions invalidate on container restart (acceptable for wizard use-case).
@@ -133,11 +139,20 @@ function sessionMiddleware(req, res, next) {
   next();
 }
 
-// ─── Auth gate (v1 token model) ────────────────────────────────────────────
-// See auth-gate-implementation-plan.md Part I. The cookie issued by
-// /setup/claim is checked on every gated request via auth.verifyAuth().
+// ─── Auth gate ─────────────────────────────────────────────────────────────
+// Two middlewares, one selected once at boot.
+//
+//   v1 (token cookie): verifies the signed figaf_auth cookie via auth.js.
+//      On failure, browser-style GETs 302→/setup; RPC gets 401 JSON.
+//
+//   v2 (XSUAA):        verifies the Authorization: Bearer JWT forwarded by
+//      the approuter via xsuaa-auth.js. 401 on missing/invalid, 403 on
+//      valid-but-missing-scope. The approuter handles the IAS login flow,
+//      so we do not need a 302 fallback here.
+//
+// See auth-gate-implementation-plan.md §2.7.
 
-function requireAuth(req, res, next) {
+function requireAuthV1(req, res, next) {
   const v = auth.verifyAuth(req);
   if (v.ok) return next();
   // Browser-style HTML GETs (anything except /rpc/* and not XHR) get a 302
@@ -152,6 +167,9 @@ function requireAuth(req, res, next) {
   }
   res.status(401).json({ ok: false, error: "unauthenticated", reason: v.reason });
 }
+
+// Pointer swap. Both apps' bridge calls go through this single name.
+const requireAuth = XSUAA_ACTIVE ? xsuaa.requireJwt : requireAuthV1;
 
 // ─── Express app ──────────────────────────────────────────────────────────────
 
@@ -185,9 +203,14 @@ app.get("/cloud/client.js", (_req, res) => {
 // that would lock the wizard out.
 
 app.get("/setup", (req, res) => {
-  if (auth.isClaimed()) {
-    // Browser convention: still serve the page so the operator can see the
-    // "already-claimed" copy. The form will receive 410 on submit; matches §1.6.
+  // v2: token-claim flow is meaningless under XSUAA. Serve the static page
+  // anyway so an operator who hits a stale bookmark sees a clean explanation;
+  // the form's POST returns 410 below (see /setup/claim handler).
+  if (XSUAA_ACTIVE) {
+    // Soft-fail: still 200 with the HTML, but the claim post will 410.
+    // We don't redirect to / here because (a) the approuter handles auth
+    // upstream of this and (b) redirecting could create a loop in an
+    // operator's stale tab.
   }
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
@@ -195,6 +218,10 @@ app.get("/setup", (req, res) => {
 });
 
 app.post("/setup/claim", (req, res) => {
+  // v2: claim is permanently closed once the wizard is in XSUAA mode (§2.7).
+  if (XSUAA_ACTIVE) {
+    return res.status(410).json({ ok: false, error: "xsuaa_mode_active" });
+  }
   const submitted = (req.body && typeof req.body.token === "string") ? req.body.token.trim() : "";
   const v = auth.verifySetupToken(submitted);
   if (!v.ok) {
@@ -213,14 +240,28 @@ app.post("/setup/claim", (req, res) => {
   res.status(200).json({ ok: true, redirect: "/" });
 });
 
+// /health — unauthenticated probe endpoint for the approuter's
+// /_manager-health route. Returns the manager's mode-flag too so the
+// approuter (and the maintenance page indirectly) can confirm the upgrade
+// took effect after restage. Intentionally lightweight; no DB touch.
+app.get("/health", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.status(200).json({ ok: true, mode: XSUAA_ACTIVE ? "xsuaa" : "token" });
+});
+
 // ─── Gated surface ─────────────────────────────────────────────────────────
 
 // Root: serve templated index.html with mode-flag injection (gated).
 app.get("/", requireAuth, (req, res) => {
   const tmpl = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+  // v2: window.figafXsuaaMode lets the client shim (cloud/client.js) and
+  // mode.js change behavior — most importantly, redirect targets on 401:
+  //   token mode → /setup (claim flow)
+  //   xsuaa mode → /     (approuter triggers IAS re-login)
   const injection = [
     "<script>",
     `window.figafMode = "hosted";`,
+    `window.figafXsuaaMode = ${XSUAA_ACTIVE ? "true" : "false"};`,
     `window.figafSession = ${JSON.stringify({ sessionId: req.sessionId })};`,
     "</script>",
   ].join("\n");
@@ -254,6 +295,20 @@ const server = http.createServer(app);
 // send an HTTP error code; pre-upgrade is the only correct seam (plan Q4).
 const wss = new WebSocketServer({ noServer: true });
 
+// Reject the upgrade with a real HTTP 401 (RFC 6455: before upgrade, a real
+// HTTP status is the only message the browser will surface usefully). The
+// reason header is non-standard but harmless; client.js inspects WS close
+// codes (4003/4004) for the post-upgrade case.
+function rejectUpgrade(socket) {
+  socket.write(
+    "HTTP/1.1 401 Unauthorized\r\n" +
+    "Connection: close\r\n" +
+    "Content-Length: 0\r\n" +
+    "\r\n"
+  );
+  socket.destroy();
+}
+
 server.on("upgrade", (req, socket, head) => {
   // Only intercept our /stream path; let other upgrade-able protocols pass.
   const url = req.url || "";
@@ -261,19 +316,31 @@ server.on("upgrade", (req, socket, head) => {
     socket.destroy();
     return;
   }
-  const v = auth.verifyAuth(req);
-  if (!v.ok) {
-    // RFC 6455: before upgrade, respond with a real HTTP status. The browser
-    // surfaces this as a WS construction error; client.js handles it.
-    socket.write(
-      "HTTP/1.1 401 Unauthorized\r\n" +
-      "Connection: close\r\n" +
-      "Content-Length: 0\r\n" +
-      "\r\n"
-    );
-    socket.destroy();
+  if (XSUAA_ACTIVE) {
+    // v2 path: validate the approuter-forwarded JWT. We resolve a Promise,
+    // so close over (socket, head, req) carefully — by the time the promise
+    // resolves the socket may have already been destroyed, in which case
+    // handleUpgrade is a no-op.
+    xsuaa.verifyWsUpgrade(req).then((r) => {
+      if (r.ok) {
+        wss.handleUpgrade(req, socket, head, (ws) => {
+          // Stash identity for the connection handler if it wants it.
+          ws.figafUser = { name: r.user || null, email: r.email || null };
+          wss.emit("connection", ws, req);
+        });
+        return;
+      }
+      if (r.wsClose === 4004) {
+        // NO_SCOPE — same pre-upgrade HTTP signal (401) but client.js can
+        // distinguish via the close code on subsequent attempts.
+      }
+      rejectUpgrade(socket);
+    }).catch(() => rejectUpgrade(socket));
     return;
   }
+  // v1 path: signed cookie check.
+  const v = auth.verifyAuth(req);
+  if (!v.ok) { rejectUpgrade(socket); return; }
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit("connection", ws, req);
   });
@@ -304,7 +371,15 @@ wss.on("connection", (ws, req) => {
 // One-shot operation. The cleartext is printed to stdout exactly once; the
 // SHA-256 hash lives in cloud/auth.js module state for the lifetime of the
 // process. Cockpit operator reads this line from the Logs view to claim.
+//
+// v2: when XSUAA is active (post-upgrade restage), the entire token-gate
+// path is dormant. Emit a single [INFO] line instead so the operator can
+// confirm from cockpit logs that the binding took effect.
 function bootMintToken() {
+  if (XSUAA_ACTIVE) {
+    console.log("[INFO] XSUAA mode active — token gate disabled. Authentication is via the figaf-manager-approuter sibling app.");
+    return;
+  }
   const token = auth.generateSetupToken();
   console.log(auth.formatSetupLogLine(token));
   if (auth.secretIsEphemeral) {
@@ -344,4 +419,4 @@ if (require.main === module) {
 
 // ─── Test seam ─────────────────────────────────────────────────────────────
 // Tests require("./server") and start the server on a random port themselves.
-module.exports = { app, server, wss, sessions, bootMintToken };
+module.exports = { app, server, wss, sessions, bootMintToken, XSUAA_ACTIVE };
