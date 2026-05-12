@@ -1,0 +1,47 @@
+{
+  "welcomeFile": "/",
+  "authenticationMethod": "route",
+  "sessionTimeout": 60,
+  "websockets": {
+    "enabled": true
+  },
+  "routes": [
+    {
+      "source": "^/_health$",
+      "target": "/_health",
+      "localDir": "static",
+      "authenticationType": "none"
+    },
+    {
+      "source": "^/_manager-health$",
+      "target": "/_manager-health",
+      "destination": "figaf-manager-internal",
+      "authenticationType": "none",
+      "csrfProtection": false
+    },
+    {
+      "source": "^/stream(.*)$",
+      "target": "/stream$1",
+      "destination": "figaf-manager-internal",
+      "authenticationType": "xsuaa",
+      "scope": "$XSAPPNAME.FigafManagerOperator",
+      "csrfProtection": false
+    },
+    {
+      "source": "^/rpc/(.*)$",
+      "target": "/rpc/$1",
+      "destination": "figaf-manager-internal",
+      "authenticationType": "xsuaa",
+      "scope": "$XSAPPNAME.FigafManagerOperator",
+      "csrfProtection": false
+    },
+    {
+      "source": "^(.*)$",
+      "target": "$1",
+      "destination": "figaf-manager-internal",
+      "authenticationType": "xsuaa",
+      "scope": "$XSAPPNAME.FigafManagerOperator",
+      "csrfProtection": false
+    }
+  ]
+}

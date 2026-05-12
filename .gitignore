@@ -13,6 +13,9 @@ apps/figaf-manager/bin/cf
 apps/figaf-manager/.staging/
 apps/figaf-manager/.figaf-manager.cache
 
+# manager-approuter: auto-created at server boot for the unauth /_health probe
+packages/manager-approuter/static/
+
 # OS / editor noise
 .DS_Store
 Thumbs.db

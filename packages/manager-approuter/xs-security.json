@@ -1,0 +1,47 @@
+{
+  "xsappname": "figaf-manager-xsuaa",
+  "tenant-mode": "dedicated",
+  "description": "XSUAA for the Figaf Installer wizard (figaf-manager). Distinct from the Figaf Tool's figaf-xsuaa — do not share between apps (privilege-isolation seam).",
+  "scopes": [
+    {
+      "name": "$XSAPPNAME.FigafManagerOperator",
+      "description": "Run the Figaf installer wizard"
+    },
+    {
+      "name": "$XSAPPNAME.FigafManagerAdmin",
+      "description": "Destructive operations (delete tool deployment, rotate roles)"
+    }
+  ],
+  "role-templates": [
+    {
+      "name": "FigafManagerOperator",
+      "description": "Deploy and configure the Figaf Tool via the installer wizard.",
+      "scope-references": ["$XSAPPNAME.FigafManagerOperator"]
+    },
+    {
+      "name": "FigafManagerAdmin",
+      "description": "Includes operator + destructive operations.",
+      "scope-references": [
+        "$XSAPPNAME.FigafManagerOperator",
+        "$XSAPPNAME.FigafManagerAdmin"
+      ]
+    }
+  ],
+  "role-collections": [
+    {
+      "name": "FigafManagerOperator",
+      "description": "Run the Figaf installer wizard.",
+      "role-template-references": ["$XSAPPNAME.FigafManagerOperator"]
+    },
+    {
+      "name": "FigafManagerAdmin",
+      "description": "Full control of the installer including destructive operations.",
+      "role-template-references": ["$XSAPPNAME.FigafManagerAdmin"]
+    }
+  ],
+  "oauth2-configuration": {
+    "redirect-uris": ["https://**.hana.ondemand.com/**"],
+    "token-validity": 3600,
+    "refresh-token-validity": 86400
+  }
+}
