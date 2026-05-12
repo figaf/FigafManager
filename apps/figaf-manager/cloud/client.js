@@ -133,6 +133,18 @@
       pollService:          function (a) { return rpc("cf:pollService", a); },
       push:                 function ()  { return rpc("cf:push"); },
       deleteApp:            function (a) { return rpc("cf:deleteApp", a); },
+      // v2 XSUAA upgrade — see auth-gate-implementation-plan.md §2.
+      createXsuaa:           function ()  { return rpc("cf:createXsuaa"); },
+      pushManagerApprouter:  function ()  { return rpc("cf:pushManagerApprouter"); },
+      mapRoute:              function (a) { return rpc("cf:mapRoute", a); },
+      unmapRoute:            function (a) { return rpc("cf:unmapRoute", a); },
+      restage:               function (a) { return rpc("cf:restage", a); },
+      uninstallManager:      function (a) { return rpc("cf:uninstallManager", a || {}); },
+    },
+
+    xsuaa: {
+      upgradeStatus:                 function ()  { return rpc("xsuaa:upgradeStatus"); },
+      assignRoleCollectionPreflight: function ()  { return rpc("xsuaa:assignRoleCollectionPreflight"); },
     },
 
     config: {

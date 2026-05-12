@@ -80,6 +80,13 @@ function createHost({ getWindow }) {
     resolveDeployTemplate() {
       return { kind: "bundle", src: deployTemplateSrc() };
     },
+
+    // v2 XSUAA upgrade does not apply to the desktop installer. Returning
+    // null makes the cloud-only handlers (cf:createXsuaa, cf:pushManager-
+    // Approuter, etc.) fail closed with a friendly "not available" error.
+    resolveManagerApprouterDir() {
+      return null;
+    },
   };
 }
 

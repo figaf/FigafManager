@@ -46,6 +46,13 @@ const DEPLOYMENT_ZIP_URL =
  *             userData/deploy/ on first use.
  *   Cloud:    { kind: "github", src: <zip URL> } — downloaded into
  *             getUserDataDir() on first use.
+ *
+ * @property {() => string|null} [resolveManagerApprouterDir]
+ *   Absolute path to the bundled @figaf/manager-approuter directory (server.js,
+ *   xs-app.json, xs-security.json, maintenance.html, node_modules/). Returned
+ *   ONLY by hosts that ship the approuter payload — figaf-manager in cloud
+ *   mode after a v2-aware build-zip run. Electron returns null (the v2
+ *   XSUAA upgrade flow does not apply to the desktop installer).
  */
 
 function createOrchestrator({ host, send }) {
@@ -900,6 +907,241 @@ function createOrchestrator({ host, send }) {
       }
       await fsp.writeFile(file, text, "utf8");
       return { ok: true, path: file };
+    },
+
+    // XSUAA upgrade (v2) ──────────────────────────────────────────────────────
+    // See auth-gate-implementation-plan.md §2. The upgrade runs from inside
+    // the manager dyno using the operator's already-authenticated cf CLI.
+    // All handlers below are hosted-mode only — in figaf-local they return
+    // safe { ok: false, error: "not available in desktop mode" }.
+
+    /**
+     * Detect mid-upgrade state. Returns { hasXsuaaService, hasApprouterApp,
+     * managerBound, route, mode }. Pure inspection — never mutates.
+     */
+    async "xsuaa:upgradeStatus"() {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      const result = { ok: true, hasXsuaaService: false, hasApprouterApp: false, managerBound: false, route: null, mode: "token" };
+      const svc = await run(resolveCf(), ["service", "figaf-manager-xsuaa"], { source: "cf" });
+      result.hasXsuaaService = svc.code === 0;
+      const app = await run(resolveCf(), ["app", "figaf-manager-approuter"], { source: "cf" });
+      result.hasApprouterApp = app.code === 0;
+      // Read manager's own routes from VCAP_APPLICATION (set by CF on every dyno).
+      try {
+        const va = JSON.parse(process.env.VCAP_APPLICATION || "{}");
+        result.route = (va.uris && va.uris[0]) || null;
+      } catch { /* leave null */ }
+      // managerBound: try cf services and look for figaf-manager in the
+      // bound apps column. CF v8 doesn't have a direct "show bindings for
+      // service X" CLI, so we use cf curl on the service binding endpoint.
+      const sb = await run(resolveCf(), ["curl", "/v3/service_credential_bindings?service_instance_names=figaf-manager-xsuaa&app_names=figaf-manager"], { source: "cf" });
+      if (sb.code === 0) {
+        try {
+          const parsed = JSON.parse(sb.stdout);
+          result.managerBound = Array.isArray(parsed.resources) && parsed.resources.length > 0;
+        } catch { /* ignore */ }
+      }
+      result.mode = result.managerBound ? "xsuaa" : "token";
+      return result;
+    },
+
+    /**
+     * Phase 1.1 — create the wizard's XSUAA service instance using the
+     * bundled xs-security.json. Idempotent: if the service already exists,
+     * we return ok with alreadyExists=true.
+     */
+    async "cf:createXsuaa"() {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      const approuterDir = host.resolveManagerApprouterDir && host.resolveManagerApprouterDir();
+      if (!approuterDir) {
+        return { ok: false, error: "manager-approuter not bundled in this build; redeploy with v2 zip" };
+      }
+      const xsSecurityPath = path.join(approuterDir, "xs-security.json");
+      if (!fs.existsSync(xsSecurityPath)) {
+        return { ok: false, error: `xs-security.json not found at ${xsSecurityPath}` };
+      }
+      send("xsuaa:upgradePhase", { phase: "create-xsuaa", state: "running" });
+      const args = ["create-service", "xsuaa", "application", "figaf-manager-xsuaa", "-c", xsSecurityPath];
+      const r = await run(resolveCf(), args, { source: "cf" });
+      const alreadyExists = /already exists/i.test(r.stdout + r.stderr);
+      if (r.code !== 0 && !alreadyExists) {
+        send("xsuaa:upgradePhase", { phase: "create-xsuaa", state: "failed", error: r.stderr || "create-service failed" });
+        return { ok: false, error: r.stderr || "create-service failed" };
+      }
+      // Poll until provisioning succeeds. Reuse the cf:pollService loop
+      // pattern; emit cf:serviceStatus so the UI's existing polling-screen
+      // pattern lights up.
+      const start = Date.now();
+      const timeoutMs = 10 * 60 * 1000;
+      while (Date.now() - start < timeoutMs) {
+        const s = await run(resolveCf(), ["service", "figaf-manager-xsuaa"], { source: "cf" });
+        const line = /status:\s+(.+)/i.exec(s.stdout)?.[1]?.trim() || "unknown";
+        send("cf:serviceStatus", { name: "figaf-manager-xsuaa", status: line });
+        if (/succeeded/i.test(line)) {
+          send("xsuaa:upgradePhase", { phase: "create-xsuaa", state: "done" });
+          return { ok: true, alreadyExists, status: line };
+        }
+        if (/failed/i.test(line)) {
+          send("xsuaa:upgradePhase", { phase: "create-xsuaa", state: "failed", error: line });
+          return { ok: false, error: line };
+        }
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+      send("xsuaa:upgradePhase", { phase: "create-xsuaa", state: "failed", error: "timeout" });
+      return { ok: false, error: "timeout polling figaf-manager-xsuaa" };
+    },
+
+    /**
+     * Phase 1.3-1.6 — push, bind, start the manager-approuter app.
+     * Reads the bundled approuter dir, materializes a synthetic manifest
+     * with the wizard's route info, then runs cf push.
+     */
+    async "cf:pushManagerApprouter"() {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      const approuterDir = host.resolveManagerApprouterDir && host.resolveManagerApprouterDir();
+      if (!approuterDir || !fs.existsSync(approuterDir)) {
+        return { ok: false, error: "manager-approuter not bundled in this build; redeploy with v2 zip" };
+      }
+      send("xsuaa:upgradePhase", { phase: "push-approuter", state: "running" });
+
+      // We push with --no-route --no-start so phase 2 can map the route
+      // atomically. The approuter's own internal port comes from $PORT (CF
+      // sets it). Memory: 128 MB is fine for @sap/approuter under steady load.
+      const pushArgs = [
+        "push", "figaf-manager-approuter",
+        "-p", approuterDir,
+        "-m", "128M",
+        "-k", "256M",
+        "--no-route",
+        "--no-start",
+      ];
+      const r = await run(resolveCf(), pushArgs, { source: "cf" });
+      if (r.code !== 0) {
+        send("xsuaa:upgradePhase", { phase: "push-approuter", state: "failed", error: r.stderr });
+        return { ok: false, error: r.stderr || "cf push failed" };
+      }
+      // 1.5 bind-service
+      const b = await run(resolveCf(), ["bind-service", "figaf-manager-approuter", "figaf-manager-xsuaa"], { source: "cf" });
+      if (b.code !== 0 && !/already bound/i.test(b.stdout + b.stderr)) {
+        send("xsuaa:upgradePhase", { phase: "push-approuter", state: "failed", error: b.stderr });
+        return { ok: false, error: b.stderr || "bind-service failed" };
+      }
+      // 1.6 start
+      const s = await run(resolveCf(), ["start", "figaf-manager-approuter"], { source: "cf" });
+      if (s.code !== 0) {
+        send("xsuaa:upgradePhase", { phase: "push-approuter", state: "failed", error: s.stderr });
+        return { ok: false, error: s.stderr || "cf start failed" };
+      }
+      send("xsuaa:upgradePhase", { phase: "push-approuter", state: "done" });
+      return { ok: true };
+    },
+
+    async "cf:mapRoute"({ app, domain, hostname }) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      if (!app || !domain || !hostname) return { ok: false, error: "app/domain/hostname required" };
+      const r = await run(resolveCf(), ["map-route", app, domain, "--hostname", hostname], { source: "cf" });
+      const exists = /already exists|already mapped/i.test(r.stdout + r.stderr);
+      return { ok: r.code === 0 || exists, alreadyMapped: exists, stderr: r.stderr };
+    },
+
+    async "cf:unmapRoute"({ app, domain, hostname }) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      if (!app || !domain || !hostname) return { ok: false, error: "app/domain/hostname required" };
+      const r = await run(resolveCf(), ["unmap-route", app, domain, "--hostname", hostname], { source: "cf" });
+      // cf unmap-route returns non-zero if the route wasn't mapped — treat
+      // as success (idempotent rollback).
+      const notMapped = /not mapped|does not exist/i.test(r.stdout + r.stderr);
+      return { ok: r.code === 0 || notMapped, notMapped, stderr: r.stderr };
+    },
+
+    /**
+     * Phase 2.5 — bind manager to xsuaa, then restage. After restage the
+     * manager comes back up with VCAP_SERVICES.xsuaa populated, which flips
+     * XSUAA_ACTIVE=true in server.js at the new process's boot.
+     *
+     * The handler returns BEFORE restage completes — the dyno is going to
+     * die in the next ~30-90s and the response would never reach the
+     * browser otherwise. The UI polls via the approuter's /_manager-health
+     * to detect when the manager is back.
+     */
+    async "cf:restage"({ app, bindXsuaa }) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      const appName = app || "figaf-manager";
+      if (bindXsuaa) {
+        const b = await run(resolveCf(), ["bind-service", appName, "figaf-manager-xsuaa"], { source: "cf" });
+        if (b.code !== 0 && !/already bound/i.test(b.stdout + b.stderr)) {
+          return { ok: false, error: b.stderr || "bind-service failed" };
+        }
+      }
+      send("xsuaa:upgradePhase", { phase: "restage", state: "running" });
+      // Fire-and-forget: spawn cf restage in the background so we can
+      // return success to the browser before the dyno dies.
+      const cfBin = resolveCf();
+      const proc = spawn(cfBin, ["restage", appName], { shell: false, windowsHide: true, detached: false });
+      proc.stdout.on("data", (b) => log("cf", "line", b.toString()));
+      proc.stderr.on("data", (b) => log("cf", "err", b.toString()));
+      // No proc.on("close") wiring — by the time it would fire, this process
+      // is most likely already terminated by CF.
+      return { ok: true, message: "restage initiated; manager will be unavailable for 30-90s" };
+    },
+
+    /**
+     * Build the cockpit URL the operator should click to self-assign to the
+     * FigafManagerOperator role collection. Composed from data the wizard
+     * already has via btp accounts subaccount list.
+     */
+    async "xsuaa:assignRoleCollectionPreflight"() {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      const ga = state.globalAccountSubdomain;
+      const sub = state.subaccount;
+      if (!ga || !sub) return { ok: false, error: "missing globalAccountSubdomain or subaccount" };
+      // Cockpit URL shape varies by region (eu10, us10, ap20…). Derive from
+      // the cf landscape; fall back to the EMEA cockpit if landscape unknown.
+      const landscape = state.landscape || "";
+      // landscape values: cf-eu10, cf-us10, cf-ap20 … → region: eu10/us10/ap20
+      const region = landscape.replace(/^cf-/, "");
+      const cockpitHost = region
+        ? `cockpit.btp.cloud.sap`
+        : `cockpit.btp.cloud.sap`;
+      const url = `https://${cockpitHost}/cockpit/?idpId=&globalaccount=${encodeURIComponent(ga)}#/globalaccount/${encodeURIComponent(ga)}/subaccount/${encodeURIComponent(sub)}/users`;
+      return { ok: true, url, roleCollection: "FigafManagerOperator" };
+    },
+
+    /**
+     * Multi-step teardown (§2.8). Fire-and-forget delete-self pattern: we
+     * respond { ok: true } first, then run the teardown in a setImmediate.
+     * By the time the operator's browser re-polls, the manager and its
+     * approuter are both gone.
+     */
+    async "cf:uninstallManager"({ deleteRoleCollections } = {}) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      // Schedule teardown after the current call frame so the RPC response
+      // can flush back to the browser before any blocking work begins.
+      setImmediate(async () => {
+        const steps = [
+          { name: "unbind-service approuter", args: ["unbind-service", "figaf-manager-approuter", "figaf-manager-xsuaa"] },
+          { name: "unbind-service manager",   args: ["unbind-service", "figaf-manager", "figaf-manager-xsuaa"] },
+          { name: "delete approuter",         args: ["delete", "figaf-manager-approuter", "-r", "-f"] },
+          { name: "delete manager",           args: ["delete", "figaf-manager", "-r", "-f"] },
+          { name: "delete-service xsuaa",     args: ["delete-service", "figaf-manager-xsuaa", "-f"] },
+        ];
+        for (const step of steps) {
+          log("teardown", "line", `Running: cf ${step.args.join(" ")}`);
+          await run(resolveCf(), step.args, { source: "cf" }).catch((e) => {
+            log("teardown", "err", `${step.name} failed: ${e.message}`);
+          });
+        }
+        if (deleteRoleCollections) {
+          for (const rc of ["FigafManagerOperator", "FigafManagerAdmin"]) {
+            const args = ["delete", "security/role-collection", rc, "--force"];
+            if (state.subaccount) args.push("--subaccount", state.subaccount);
+            await run(resolveBtp(), args, { source: "btp" }).catch(() => {});
+          }
+        }
+        // We are about to be killed (the manager just delete'd itself).
+        // Nothing else to do.
+      });
+      return { ok: true, message: "Uninstall in progress. Page will go offline in ~30s." };
     },
 
     // shell ───────────────────────────────────────────────────────────────────

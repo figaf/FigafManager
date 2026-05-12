@@ -37,6 +37,25 @@ function createHost({ sessionId }) {
         process.env.FIGAF_DEPLOYMENT_ZIP_URL ||
         "https://github.com/figaf/Figaf-BTP-Deployment/archive/refs/heads/btp-users.zip",
     }),
+
+    /**
+     * v2 XSUAA upgrade: bundled manager-approuter directory. In the cloud
+     * zip the build-zip pipeline stages it at /app/manager-approuter/
+     * (sibling of /app/cloud/). __dirname here is /app/ (host.cloud.js
+     * is at the app root). Returns null if the v2 payload is absent —
+     * the orchestrator handlers surface "redeploy with v2 zip" in that
+     * case so an operator running v1-era zip on the new server.js sees
+     * a friendly error rather than a confusing path failure.
+     */
+    resolveManagerApprouterDir() {
+      const candidate = path.join(__dirname, "manager-approuter");
+      if (fs.existsSync(candidate)) return candidate;
+      // Dev fallback: workspace-root packages/manager-approuter when this
+      // file is run via `node cloud/server.js` from a checkout.
+      const devCandidate = path.join(__dirname, "..", "..", "packages", "manager-approuter");
+      if (fs.existsSync(devCandidate)) return devCandidate;
+      return null;
+    },
   };
 }
 

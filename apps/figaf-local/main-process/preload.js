@@ -56,6 +56,20 @@ contextBridge.exposeInMainWorld("figaf", {
     service: (name) => ipcRenderer.invoke("cf:service", { name }),
     pollService: (name) => ipcRenderer.invoke("cf:pollService", { name }),
     push: () => ipcRenderer.invoke("cf:push"),
+    // v2 XSUAA upgrade (no-ops on desktop — the handlers return
+    // "not available in desktop mode" but we expose the surface to keep the
+    // window.figaf shape symmetric between the two apps).
+    createXsuaa:           () => ipcRenderer.invoke("cf:createXsuaa"),
+    pushManagerApprouter:  () => ipcRenderer.invoke("cf:pushManagerApprouter"),
+    mapRoute:              (a) => ipcRenderer.invoke("cf:mapRoute", a),
+    unmapRoute:            (a) => ipcRenderer.invoke("cf:unmapRoute", a),
+    restage:               (a) => ipcRenderer.invoke("cf:restage", a),
+    uninstallManager:      (a) => ipcRenderer.invoke("cf:uninstallManager", a || {}),
+  },
+
+  xsuaa: {
+    upgradeStatus:                 () => ipcRenderer.invoke("xsuaa:upgradeStatus"),
+    assignRoleCollectionPreflight: () => ipcRenderer.invoke("xsuaa:assignRoleCollectionPreflight"),
   },
 
   config: {
