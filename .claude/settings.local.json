@@ -13,7 +13,10 @@
       "Bash(node --test apps/figaf-manager/cloud/ws-auth.test.js)",
       "Bash(node --test apps/figaf-manager/cloud/auth.test.js apps/figaf-manager/cloud/redact.test.js apps/figaf-manager/cloud/server.test.js apps/figaf-manager/cloud/ws-auth.test.js)",
       "Bash(node --test \"apps/figaf-manager/cloud/auth.test.js\" \"apps/figaf-manager/cloud/redact.test.js\" \"apps/figaf-manager/cloud/server.test.js\" \"apps/figaf-manager/cloud/ws-auth.test.js\")",
-      "Bash(timeout 3 node apps/figaf-manager/cloud/server.js)"
+      "Bash(timeout 3 node apps/figaf-manager/cloud/server.js)",
+      "Bash(Remove-Item *)",
+      "Bash(node --test apps/figaf-manager/cloud/*.test.js)",
+      "Bash(git add *)"
     ]
   }
 }

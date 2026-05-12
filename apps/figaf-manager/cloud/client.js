@@ -122,7 +122,7 @@
     },
 
     cf: {
-      loginStart:           function (a) { return rpc("cf:loginStart", a); },
+      loginStart:           function (apiUrl) { return rpc("cf:loginStart", { apiUrl: apiUrl }); },
       submitPasscode:       function (a) { return rpc("cf:submitPasscode", a); },
       logout:               function ()  { return rpc("cf:logout"); },
       targetOrgSpace:       function ()  { return rpc("cf:targetOrgSpace"); },
@@ -145,7 +145,12 @@
 
     shell: {
       openExternal:    function (url) { window.open(url, "_blank", "noopener,noreferrer"); return Promise.resolve(); },
-      openPasscodeUrl: function (url) { window.open(url, "_blank", "noopener,noreferrer"); return Promise.resolve(); },
+      openPasscodeUrl: function (landscape) {
+        var lp = (landscape || "").replace(/^cf-/, "cf.");
+        var url = "https://login." + lp + ".hana.ondemand.com/passcode";
+        window.open(url, "_blank", "noopener,noreferrer");
+        return Promise.resolve({ ok: true, url: url });
+      },
       readClipboard:   function () {
         if (navigator.clipboard && navigator.clipboard.readText) {
           return navigator.clipboard.readText().then(function (text) { return { ok: true, text: text }; });

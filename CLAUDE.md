@@ -88,7 +88,13 @@ figaf-installer/                          ← workspace root (npm workspaces)
     │   ├── package.json                  name: @figaf/ui
     │   ├── app.jsx                       <App/> state machine
     │   ├── components.jsx                shared primitives (WinFrame, StepperRail, …)
-    │   ├── screens.jsx                   per-step screens
+    │   ├── screens/                      per-step wizard screens (one file per group)
+    │   │   ├── screen-setup.jsx          BrowserAuthBanner (private) + CliInstaller + ScreenWelcome
+    │   │   ├── screen-login.jsx          ScreenLogin
+    │   │   ├── screen-choice.jsx         ScreenChoice
+    │   │   ├── screen-config.jsx         ScreenConfig
+    │   │   ├── screen-ops.jsx            ScreenProgress + ScreenDeploy
+    │   │   └── screen-done.jsx           ScreenDone
     │   ├── styles.css                    design tokens + components
     │   ├── electron-app.css              frameless titlebar (loaded only by figaf-local)
     │   ├── mode.js                       window.figafModeFlags (isHosted + features)
@@ -227,7 +233,12 @@ Both adapters expose the exact same shape; they differ only in implementation.
 | [packages/core/orchestrator.js](packages/core/orchestrator.js) | All ~38 IPC handlers + HostAdapter typedef |
 | [packages/core/index.js](packages/core/index.js) | re-export of orchestrator |
 | [packages/ui/app.jsx](packages/ui/app.jsx) | `<App/>`, wizard state machine |
-| [packages/ui/screens.jsx](packages/ui/screens.jsx) | Per-step screens + their IPC choreography |
+| [packages/ui/screens/screen-setup.jsx](packages/ui/screens/screen-setup.jsx) | ScreenWelcome + CliInstaller + BrowserAuthBanner (private) |
+| [packages/ui/screens/screen-login.jsx](packages/ui/screens/screen-login.jsx) | ScreenLogin — BTP SSO + CF passcode flow |
+| [packages/ui/screens/screen-choice.jsx](packages/ui/screens/screen-choice.jsx) | ScreenChoice — deploy vs connect branch |
+| [packages/ui/screens/screen-config.jsx](packages/ui/screens/screen-config.jsx) | ScreenConfig — vars.yml form |
+| [packages/ui/screens/screen-ops.jsx](packages/ui/screens/screen-ops.jsx) | ScreenProgress + ScreenDeploy — async CF operations |
+| [packages/ui/screens/screen-done.jsx](packages/ui/screens/screen-done.jsx) | ScreenDone — completion + self-delete (hosted only) |
 | [packages/ui/components.jsx](packages/ui/components.jsx) | Shared primitives (icons, frame, stepper, terminal) |
 | [packages/ui/mode.js](packages/ui/mode.js) | window.figafModeFlags (isHosted + feature flags) |
 | [packages/ui/styles.css](packages/ui/styles.css) | Design tokens & component styles |
@@ -257,8 +268,9 @@ Both adapters expose the exact same shape; they differ only in implementation.
   long-lived `cf login` and `btp login` procs) must wire stdout/stderr to
   `log(source, type, line)`.
 - **New wizard step**: add to `baseSteps` / `deploySteps` / `connectSteps` in
-  `packages/ui/app.jsx`, write a `Screen<X>` in `packages/ui/screens.jsx`,
-  switch on `id` in `<App/>`. Both apps pick it up automatically.
+  `packages/ui/app.jsx`, write a `Screen<X>` in a new `packages/ui/screens/screen-<name>.jsx`
+  (assign to `window` at the bottom), add the `<script>` tag to both `index.html` files,
+  then switch on `id` in `<App/>`. Both apps pick it up automatically.
 - **Mode-conditional UI**: declare a flag in `packages/ui/mode.js`, then read it
   from `window.figafModeFlags.features.<flag>`. Don't inline `isHosted` ternaries.
 - **No bundler**: don't `import`/`export` in renderer code. JSX files declare

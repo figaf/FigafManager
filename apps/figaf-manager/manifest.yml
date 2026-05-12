@@ -4,7 +4,7 @@
 applications:
   - name: figaf-manager
     memory: 1G
-    disk_quota: 2G
+    disk_quota: 1G
     instances: 1
     buildpack: nodejs_buildpack
     command: node cloud/server.js

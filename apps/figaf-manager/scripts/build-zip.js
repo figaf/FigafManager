@@ -157,27 +157,27 @@ function stage() {
   fs.copyFileSync(path.join(APP_DIR, "host.cloud.js"),    path.join(STAGE_DIR, "host.cloud.js"));
   fs.copyFileSync(path.join(APP_DIR, "manifest.yml"),     path.join(STAGE_DIR, "manifest.yml"));
 
-  // Stripped package.json — @figaf/* live as plain directories under
-  // node_modules/.  bundleDependencies tells npm (both the local install below
-  // and the CF buildpack's own npm install at deploy time) to treat these as
-  // pre-bundled and never prune or re-fetch them from the registry.
+  // We rewrite @figaf/* dependencies to point to local file paths
+  // so the CF buildpack's npm install natively installs them from the local dir
+  // instead of pruning them.
   const stagedPkg = JSON.parse(JSON.stringify(pkg));
-  for (const dep of ["@figaf/core", "@figaf/ui"]) delete stagedPkg.dependencies[dep];
-  stagedPkg.bundleDependencies = ["@figaf/core", "@figaf/ui"];
+  stagedPkg.dependencies["@figaf/core"] = "file:packages/core";
+  stagedPkg.dependencies["@figaf/ui"] = "file:packages/ui";
+  delete stagedPkg.bundleDependencies;
   fs.writeFileSync(path.join(STAGE_DIR, "package.json"), JSON.stringify(stagedPkg, null, 2));
+
+  // Copy the local packages into the staging dir FIRST
+  const stagedPackagesDir = path.join(STAGE_DIR, "packages");
+  fs.mkdirSync(path.join(stagedPackagesDir, "core"), { recursive: true });
+  fs.mkdirSync(path.join(stagedPackagesDir, "ui"), { recursive: true });
+  copyDir(path.join(WORKSPACE_ROOT, "packages", "core"), path.join(stagedPackagesDir, "core"));
+  copyDir(path.join(WORKSPACE_ROOT, "packages", "ui"),   path.join(stagedPackagesDir, "ui"));
 
   log("[stage] Running npm install --omit=dev in staging…");
   execSync("npm install --omit=dev --no-package-lock --no-audit --no-fund", {
     cwd: STAGE_DIR,
     stdio: "inherit",
   });
-
-  // Copy @figaf/* AFTER npm install so the install run cannot prune them.
-  // (npm 7+ auto-prunes node_modules entries absent from package.json.)
-  const figafModules = path.join(STAGE_DIR, "node_modules", "@figaf");
-  fs.mkdirSync(figafModules, { recursive: true });
-  copyDir(path.join(WORKSPACE_ROOT, "packages", "core"), path.join(figafModules, "core"));
-  copyDir(path.join(WORKSPACE_ROOT, "packages", "ui"),   path.join(figafModules, "ui"));
 
   log("[stage] Done.");
 }

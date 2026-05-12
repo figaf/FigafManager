@@ -538,11 +538,20 @@ function createOrchestrator({ host, send }) {
         cleanBuffer = cleanBuffer.slice(m.index + m[0].length);
       };
 
+      const tryDetectSsoUrl = () => {
+        const m = /Please continue login at:\s*(https:\/\/\S+)/i.exec(cleanBuffer);
+        if (m) {
+          send("btp:ssoUrl", { url: m[1] });
+          cleanBuffer = cleanBuffer.replace(m[0], "");
+        }
+      };
+
       const ingest = (text, source) => {
         cleanBuffer += text.replace(ansiRe, "").replace(/\r(?!\n)/g, "\n");
         if (cleanBuffer.length > 16384) cleanBuffer = cleanBuffer.slice(-8192);
         flushLines(text, source);
         tryDetectGaPrompt();
+        tryDetectSsoUrl();
       };
 
       proc.stdout.on("data", (buf) => ingest(buf.toString(), "line"));
