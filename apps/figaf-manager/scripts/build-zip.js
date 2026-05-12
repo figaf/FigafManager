@@ -179,7 +179,43 @@ function stage() {
     stdio: "inherit",
   });
 
+  // v2 XSUAA upgrade (auth-gate-implementation-plan.md §2.4):
+  // bundle the wizard's approuter (`@figaf/manager-approuter`) so the
+  // manager dyno can `cf push` it as a second app during the upgrade flow.
+  // It is NOT a runtime dependency of figaf-manager — it is a payload
+  // shipped INSIDE the manager's zip, copied out at upgrade time. Hence we
+  // stage it at .staging/manager-approuter/ (sibling of cloud/, NOT under
+  // packages/), with its own node_modules/ populated by a separate
+  // `npm install --omit=dev` so the buildpack doesn't need to touch it.
+  stageManagerApprouter();
+
   log("[stage] Done.");
+}
+
+// v2: stage the wizard-scoped approuter as a payload inside the cloud zip.
+// At runtime the manager's cf:pushManagerApprouter handler copies this dir
+// to a session-local working directory and runs `cf push -p <dir>` against
+// it. node_modules is bundled so the buildpack inside the dyno doesn't have
+// to re-install — important because outbound npm-registry egress from the
+// manager dyno can't be assumed.
+function stageManagerApprouter() {
+  const src  = path.join(WORKSPACE_ROOT, "packages", "manager-approuter");
+  if (!fs.existsSync(src)) {
+    log("[stage] manager-approuter not present in workspace — skipping (v2 bundle disabled)");
+    return;
+  }
+  const dest = path.join(STAGE_DIR, "manager-approuter");
+  log("[stage] Bundling manager-approuter (v2 XSUAA bootstrap payload)…");
+  // Copy WITHOUT the workspace's symlinked node_modules — we run a fresh
+  // omit=dev install in the staged copy so the resulting tree is hoist-free
+  // and self-contained.
+  copyDir(src, dest, name => name === "node_modules" || name === "static" || name.endsWith(".test.js"));
+
+  log("[stage] Running npm install --omit=dev in manager-approuter…");
+  execSync("npm install --omit=dev --no-package-lock --no-audit --no-fund", {
+    cwd: dest,
+    stdio: "inherit",
+  });
 }
 
 // ─── Step 3: Build zip from staging ───────────────────────────────────────────
