@@ -5,10 +5,19 @@ const fg = () => (typeof window !== "undefined" && window.figaf) || null;
 // ═══════════════════════════════════════════════════════════
 // 7. Completion
 // ═══════════════════════════════════════════════════════════
-function ScreenDone({ ctx }) {
+function ScreenDone({ ctx, setCtx, setStep, STEPS }) {
   const appUrl = `https://${ctx.config.id || "figaf-tool"}.${ctx.config.domain || `cfapps.${ctx.login.landscape.replace(/^cf-/, '')}.hana.ondemand.com`}`;
   const open = () => fg()?.shell.openExternal(appUrl);
   const isHosted = window.figafModeFlags.isHosted;
+  const showXsuaaUpgrade = !!(window.figafModeFlags.features && window.figafModeFlags.features.xsuaaUpgrade);
+
+  function beginXsuaaUpgrade() {
+    if (!setCtx || !setStep) return;
+    // Flip the wizard branch to xsuaaSteps and reset to the first step
+    // of that branch (xsuaa-upgrade).
+    setCtx(c => ({ ...c, choice: "xsuaa-upgrade" }));
+    setStep(0);
+  }
 
   const [deleteState, setDeleteState] = React.useState("idle"); // idle | running | done | error
 
@@ -70,6 +79,11 @@ function ScreenDone({ ctx }) {
           >
             <Ico.Trash />
             {deleteState === "running" ? "Deleting…" : deleteState === "error" ? "Delete failed — retry" : "Delete this manager app"}
+          </button>
+        )}
+        {showXsuaaUpgrade && (
+          <button className="btn" onClick={beginXsuaaUpgrade} title="Replace the cockpit-log token with SAP IAS SSO via XSUAA">
+            <Ico.Shield /> Enable persistent SSO login
           </button>
         )}
         <div className="spacer" />

@@ -1,6 +1,7 @@
 /* global React, ReactDOM,
    WinFrame, StepperRail, WizardFooter, TerminalDrawer,
-   ScreenWelcome, ScreenLogin, ScreenChoice, ScreenConfig, ScreenProgress, ScreenDeploy, ScreenDone */
+   ScreenWelcome, ScreenLogin, ScreenChoice, ScreenConfig, ScreenProgress, ScreenDeploy, ScreenDone,
+   ScreenXsuaaUpgrade, ScreenXsuaaAssignRole */
 
 function App() {
   const [step, setStepRaw] = React.useState(0);
@@ -102,9 +103,21 @@ function App() {
     { id: "done",     label: "Finish",             sub: "Integration Suite setup" },
   ];
 
-  const STEPS = ctx.choice === "deploy"
-    ? [...baseSteps, ...deploySteps]
-    : [...baseSteps, ...connectSteps];
+  // v2: dedicated branch for the XSUAA upgrade flow. Entered from the Done
+  // screen via ctx.choice === "xsuaa-upgrade", or surfaced automatically on
+  // first wizard load after restage when isXsuaaMode is detected but the
+  // operator hasn't yet self-assigned to the role collection.
+  const xsuaaSteps = [
+    { id: "xsuaa-upgrade",     label: "Authentication",  sub: "Create XSUAA + approuter" },
+    { id: "xsuaa-assign-role", label: "Role assignment", sub: "Cockpit deep-link" },
+    { id: "done",              label: "Finish",          sub: "Persistent SSO live" },
+  ];
+
+  const STEPS =
+    ctx.choice === "deploy"        ? [...baseSteps, ...deploySteps] :
+    ctx.choice === "connect"       ? [...baseSteps, ...connectSteps] :
+    ctx.choice === "xsuaa-upgrade" ? xsuaaSteps :
+    [...baseSteps, ...deploySteps];
 
   const currentStep = Math.min(step, STEPS.length - 1);
   const setStep = (n) => setStepRaw(Math.max(0, Math.min(STEPS.length - 1, n)));
@@ -117,13 +130,15 @@ function App() {
 
   let Screen;
   switch (STEPS[currentStep].id) {
-    case "welcome":  Screen = <ScreenWelcome ctx={ctx} setCtx={setCtx} onNext={next} />; break;
-    case "login":    Screen = <ScreenLogin ctx={ctx} setCtx={setCtx} onNext={next} appendLog={appendLog} />; break;
-    case "choice":   Screen = <ScreenChoice ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
-    case "config":   Screen = <ScreenConfig ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
-    case "progress": Screen = <ScreenProgress ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
-    case "deploy":   Screen = <ScreenDeploy ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
-    case "done":     Screen = <ScreenDone ctx={ctx} />; break;
+    case "welcome":           Screen = <ScreenWelcome ctx={ctx} setCtx={setCtx} onNext={next} />; break;
+    case "login":             Screen = <ScreenLogin ctx={ctx} setCtx={setCtx} onNext={next} appendLog={appendLog} />; break;
+    case "choice":            Screen = <ScreenChoice ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
+    case "config":            Screen = <ScreenConfig ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
+    case "progress":          Screen = <ScreenProgress ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
+    case "deploy":            Screen = <ScreenDeploy ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
+    case "xsuaa-upgrade":     Screen = <ScreenXsuaaUpgrade ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
+    case "xsuaa-assign-role": Screen = <ScreenXsuaaAssignRole ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
+    case "done":              Screen = <ScreenDone ctx={ctx} setCtx={setCtx} setStep={setStepRaw} STEPS={STEPS} />; break;
     default: Screen = null;
   }
 
