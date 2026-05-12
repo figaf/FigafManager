@@ -23,15 +23,21 @@
   <script src="/installer/mode.js"></script>
 
   <!-- Auth-kick one-shot: if the previous page set this flag (e.g., a /rpc
-       call got 401 and we were redirected through /setup and re-claimed),
-       capture it into a window-global and clear it so a subsequent reload
-       doesn't re-surface the banner. -->
+       call got 401 and we were redirected through /setup and re-claimed,
+       or under XSUAA a 403 sent us to the approuter), capture it into a
+       window-global and clear it so a subsequent reload doesn't re-surface
+       the banner. Values: "1" = unauth, "no-scope" = JWT-valid-no-scope. -->
   <script>
     (function () {
       try {
-        window.figafAuthKicked = window.sessionStorage.getItem("figaf:auth-kicked") === "1";
+        var raw = window.sessionStorage.getItem("figaf:auth-kicked");
+        window.figafAuthKicked = !!raw;
+        window.figafAuthKickedNoScope = raw === "no-scope";
         window.sessionStorage.removeItem("figaf:auth-kicked");
-      } catch (_) { window.figafAuthKicked = false; }
+      } catch (_) {
+        window.figafAuthKicked = false;
+        window.figafAuthKickedNoScope = false;
+      }
     })();
   </script>
 

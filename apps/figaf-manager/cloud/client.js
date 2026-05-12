@@ -13,24 +13,37 @@
   "use strict";
 
   // ─── Auth-kick handling ────────────────────────────────────────────────────
-  // Plan §1.5 + §1.7 commit 7. The cloud server can reject this client at
-  // two seams:
-  //   - HTTP 401 from POST /rpc/* when the auth cookie is missing/expired.
-  //   - WS close code 4003 (or pre-upgrade 401) from /stream for the same.
-  // Either signal means: drop to /setup, but first fire a synthetic
-  // btp:browserAuth event so the renderer can paint a banner if the wizard
-  // is mid-flow. Idempotent — multiple kicks queue one redirect.
+  // Plan §1.5 + §1.7 commit 7, extended in §2.7 row 12 for v2 XSUAA mode.
+  // The cloud server can reject this client at two seams:
+  //   - HTTP 401 from POST /rpc/* when the auth cookie/JWT is missing/expired.
+  //   - HTTP 403 from POST /rpc/* (XSUAA mode only) when the JWT is valid but
+  //     lacks FigafManagerOperator scope.
+  //   - WS close codes:
+  //       4003 = unauth'd (no cookie / no JWT / invalid JWT)
+  //       4004 = JWT valid but scope missing (XSUAA mode only)
+  // Either signal means: redirect, but the TARGET differs by mode:
+  //   - token mode (v1): redirect to /setup so the operator can re-claim
+  //   - xsuaa mode (v2): redirect to /     which the approuter intercepts
+  //                      and triggers an IAS re-login (or 403 on NO_SCOPE)
+  // Idempotent — multiple kicks queue one redirect.
+
+  var xsuaaMode = (typeof window !== "undefined") && window.figafXsuaaMode === true;
 
   var kicked = false;
-  function handleAuthKick(reason) {
+  function handleAuthKick(reason, opts) {
     if (kicked) return;
     kicked = true;
-    try { window.sessionStorage.setItem("figaf:auth-kicked", "1"); } catch (_) {}
+    var noScope = opts && opts.noScope;
+    try { window.sessionStorage.setItem("figaf:auth-kicked", noScope ? "no-scope" : "1"); } catch (_) {}
     var bus = subscribers.get("btp:browserAuth");
-    if (bus) bus.forEach(function (h) { try { h({ reason: reason || "kicked" }); } catch (_) {} });
-    // Brief delay so the banner/toast has time to render before navigation.
+    if (bus) bus.forEach(function (h) { try { h({ reason: reason || "kicked", noScope: !!noScope }); } catch (_) {} });
+    // Redirect target depends on mode:
+    //   xsuaa + noScope  → reload / (approuter will render 403 page)
+    //   xsuaa (other)    → reload / (approuter re-triggers IAS)
+    //   token            → /setup (claim flow)
+    var target = xsuaaMode ? "/" : "/setup";
     setTimeout(function () {
-      try { window.location.href = "/setup"; } catch (_) {}
+      try { window.location.href = target; } catch (_) {}
     }, 800);
   }
 
@@ -56,12 +69,16 @@
     });
 
     ws.addEventListener("close", function (evt) {
-      // 4003: server-issued unauthenticated (post-upgrade) — auth-kick redirect.
+      // 4003: unauthenticated (no/invalid cookie or JWT) — auth-kick redirect.
+      // 4004: XSUAA mode — JWT valid but FigafManagerOperator scope missing.
       // Note: when the server rejects pre-upgrade with HTTP 401, the browser
-      // surfaces it as a generic close + error rather than a clean 4003. We
-      // detect "never opened, very fast close" as a fallback below.
+      // surfaces it as a generic close + error rather than a clean 4003/4004.
       if (evt.code === 4003) {
         handleAuthKick("ws-4003");
+        return;
+      }
+      if (evt.code === 4004) {
+        handleAuthKick("ws-4004", { noScope: true });
         return;
       }
       if (evt.code === 4001) {
@@ -89,6 +106,12 @@
       if (r.status === 401) {
         handleAuthKick("rpc-401");
         return { ok: false, error: "unauthenticated" };
+      }
+      if (r.status === 403) {
+        // XSUAA mode: JWT valid, scope missing. Redirect to / (approuter
+        // will render a 403 page; re-login won't help) and flag the kick.
+        handleAuthKick("rpc-403", { noScope: true });
+        return { ok: false, error: "forbidden" };
       }
       return r.json().catch(function () { return { ok: false, error: "HTTP " + r.status }; });
     });
