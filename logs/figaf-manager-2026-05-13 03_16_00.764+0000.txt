@@ -1,0 +1,191 @@
+2026-05-13T03:13:47.362+0000 [API/1] STDOUT Added process: "web"
+2026-05-13T03:13:47.370+0000 [API/1] STDOUT Created app with guid 23d29c41-ed93-45a3-8002-e930ab448574
+2026-05-13T03:13:47.382+0000 [API/1] STDOUT Applied manifest to app with guid 23d29c41-ed93-45a3-8002-e930ab448574 (---
+2026-05-13T03:13:47.382+0000 [API/1] STDOUT applications:
+2026-05-13T03:13:47.383+0000 [API/1] STDOUT - name: figaf-manager
+2026-05-13T03:13:47.383+0000 [API/1] STDOUT memory: 1G
+2026-05-13T03:13:47.383+0000 [API/1] STDOUT disk_quota: 1G
+2026-05-13T03:13:47.384+0000 [API/1] STDOUT instances: 1
+2026-05-13T03:13:47.384+0000 [API/1] STDOUT buildpack: nodejs_buildpack
+2026-05-13T03:13:47.384+0000 [API/1] STDOUT command: node cloud/server.js
+2026-05-13T03:13:47.385+0000 [API/1] STDOUT random-route: true
+2026-05-13T03:13:47.386+0000 [API/1] STDOUT env: "[PRIVATE DATA HIDDEN]"
+2026-05-13T03:13:47.386+0000 [API/1] STDOUT )
+2026-05-13T03:13:47.501+0000 [API/0] STDOUT Updating process: "web"
+2026-05-13T03:13:47.526+0000 [API/0] STDOUT Scaling process: "web"
+2026-05-13T03:13:47.559+0000 [API/0] STDOUT Updated app with guid 23d29c41-ed93-45a3-8002-e930ab448574 ({"lifecycle"=>{"data"=>{"buildpacks"=>["nodejs_buildpack"]}}})
+2026-05-13T03:13:47.656+0000 [API/0] STDOUT Updated app with guid 23d29c41-ed93-45a3-8002-e930ab448574 ({"environment_variables"=>"[PRIVATE DATA HIDDEN]"})
+2026-05-13T03:13:50.180+0000 [API/6] STDOUT Uploading app package for app with guid 23d29c41-ed93-45a3-8002-e930ab448574
+2026-05-13T03:13:55.170+0000 [API/14] STDOUT Creating build for app with guid 23d29c41-ed93-45a3-8002-e930ab448574
+2026-05-13T03:13:55.536+0000 [STG/0] STDOUT Downloading nodejs_buildpack...
+2026-05-13T03:13:55.592+0000 [STG/0] STDOUT Downloaded nodejs_buildpack
+2026-05-13T03:13:55.592+0000 [STG/0] STDOUT Cell c839c7b1-088e-41af-b9b7-66256aacd457 creating container for instance ce06f7b8-26bf-470f-9cb4-bf2fa98964c0
+2026-05-13T03:13:56.484+0000 [STG/0] STDOUT Security group rules were updated
+2026-05-13T03:13:56.578+0000 [STG/0] STDOUT Cell c839c7b1-088e-41af-b9b7-66256aacd457 successfully created container for instance ce06f7b8-26bf-470f-9cb4-bf2fa98964c0
+2026-05-13T03:13:57.138+0000 [STG/0] STDOUT Downloading app package...
+2026-05-13T03:13:58.684+0000 [STG/0] STDOUT Downloaded app package (24.2M)
+2026-05-13T03:13:58.799+0000 [STG/0] STDOUT -----> Nodejs Buildpack version 1.8.44
+2026-05-13T03:13:59.030+0000 [STG/0] STDOUT -----> Bootstrapping python
+2026-05-13T03:13:59.030+0000 [STG/0] STDOUT -----> Installing python 3.11.14
+2026-05-13T03:13:59.030+0000 [STG/0] STDOUT Copy [/tmp/buildpacks/978cee5ec9c58000/dependencies/b5e0345ae0ae1932e7d56fffaa49a487/python_3.11.14_linux_x64_cflinuxfs4_66f53248.tgz]
+2026-05-13T03:14:03.182+0000 [STG/0] STDOUT -----> Installing binaries
+2026-05-13T03:14:03.182+0000 [STG/0] STDOUT engines.node (package.json): unspecified
+2026-05-13T03:14:03.182+0000 [STG/0] STDOUT engines.npm (package.json): unspecified (use default)
+2026-05-13T03:14:03.183+0000 [STG/0] STDOUT [31;1m**WARNING**[0m Node version not specified in package.json or .nvmrc. See: http://docs.cloudfoundry.org/buildpacks/node/node-tips.html
+2026-05-13T03:14:03.183+0000 [STG/0] STDOUT -----> Installing node 22.22.0
+2026-05-13T03:14:03.183+0000 [STG/0] STDOUT Copy [/tmp/buildpacks/978cee5ec9c58000/dependencies/65c50d3a8311e7796847437aebc5aebd/node_22.22.0_linux_x64_cflinuxfs4_a73ffe6d.tgz]
+2026-05-13T03:14:05.740+0000 [STG/0] STDOUT Using default npm version: 10.9.4
+2026-05-13T03:14:05.740+0000 [STG/0] STDOUT -----> Installing yarn 1.22.22
+2026-05-13T03:14:05.740+0000 [STG/0] STDOUT Copy [/tmp/buildpacks/978cee5ec9c58000/dependencies/e3a39aedd1236924d69cc2d0637a8ed2/yarn_1.22.22_linux_noarch_any-stack_4911d0a6.tgz]
+2026-05-13T03:14:06.095+0000 [STG/0] STDOUT Installed yarn 1.22.22
+2026-05-13T03:14:06.095+0000 [STG/0] STDOUT -----> Creating runtime environment
+2026-05-13T03:14:06.097+0000 [STG/0] STDOUT [34;1mPRO TIP:[0m Warning: package-lock.json not found. The buildpack may reach out to the internet to download module updates, even if they are vendored.
+2026-05-13T03:14:06.097+0000 [STG/0] STDOUT Visit https://docs.cloudfoundry.org/buildpacks/node/index.html#offline_environments
+2026-05-13T03:14:06.097+0000 [STG/0] STDOUT [34;1mPRO TIP:[0m Warning: package-lock.json not found. The buildpack may reach out to the internet to download module updates, even if they are vendored.
+2026-05-13T03:14:06.097+0000 [STG/0] STDOUT Visit https://docs.cloudfoundry.org/buildpacks/node/index.html#offline_environments
+2026-05-13T03:14:06.097+0000 [STG/0] STDOUT NODE_ENV=production
+2026-05-13T03:14:06.098+0000 [STG/0] STDOUT NODE_HOME=/tmp/contents1775805874/deps/0/node
+2026-05-13T03:14:06.098+0000 [STG/0] STDOUT NODE_MODULES_CACHE=true
+2026-05-13T03:14:06.098+0000 [STG/0] STDOUT NODE_VERBOSE=false
+2026-05-13T03:14:06.098+0000 [STG/0] STDOUT NPM_CONFIG_LOGLEVEL=error
+2026-05-13T03:14:06.098+0000 [STG/0] STDOUT NPM_CONFIG_PRODUCTION=true
+2026-05-13T03:14:06.098+0000 [STG/0] STDOUT -----> Building dependencies
+2026-05-13T03:14:06.098+0000 [STG/0] STDOUT Prebuild detected (node_modules already exists)
+2026-05-13T03:14:06.098+0000 [STG/0] STDOUT Rebuilding any native modules
+2026-05-13T03:14:06.857+0000 [STG/0] STDOUT rebuilt dependencies successfully
+2026-05-13T03:14:06.858+0000 [STG/0] STDOUT npm notice
+2026-05-13T03:14:06.858+0000 [STG/0] STDOUT npm notice New major version of npm available! 10.9.4 -> 11.14.1
+2026-05-13T03:14:06.858+0000 [STG/0] STDOUT npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.14.1
+2026-05-13T03:14:06.858+0000 [STG/0] STDOUT npm notice To update run: npm install -g npm@11.14.1
+2026-05-13T03:14:06.858+0000 [STG/0] STDOUT npm notice
+2026-05-13T03:14:06.936+0000 [STG/0] STDOUT Installing any new modules (package.json)
+2026-05-13T03:14:10.082+0000 [STG/0] STDOUT > figaf-manager@1.0.0 postinstall
+2026-05-13T03:14:10.082+0000 [STG/0] STDOUT > node -e "const fs=require('fs');['bin/btp','bin/cf'].forEach(p=>{try{fs.chmodSync(p,'755')}catch(_){}})"
+2026-05-13T03:14:10.130+0000 [STG/0] STDOUT removed 2 packages in 3s
+2026-05-13T03:14:10.130+0000 [STG/0] STDOUT 15 packages are looking for funding
+2026-05-13T03:14:10.131+0000 [STG/0] STDOUT run `npm fund` for details
+2026-05-13T03:14:10.911+0000 [STG/0] STDOUT Contrast Security no credentials found. Will not write environment files.
+2026-05-13T03:14:22.921+0000 [STG/0] STDOUT Exit status 0
+2026-05-13T03:14:22.921+0000 [STG/0] STDOUT Uploading droplet, build artifacts cache...
+2026-05-13T03:14:22.921+0000 [STG/0] STDOUT Uploading build artifacts cache...
+2026-05-13T03:14:22.921+0000 [STG/0] STDOUT Uploading droplet...
+2026-05-13T03:14:22.945+0000 [STG/0] STDOUT Uploaded build artifacts cache (220B)
+2026-05-13T03:14:23.891+0000 [API/23] STDOUT Creating droplet for app with guid 23d29c41-ed93-45a3-8002-e930ab448574
+2026-05-13T03:14:26.971+0000 [STG/0] STDOUT Uploaded droplet (80.7M)
+2026-05-13T03:14:27.003+0000 [STG/0] STDOUT Uploading complete
+2026-05-13T03:14:27.251+0000 [STG/0] STDOUT Cell c839c7b1-088e-41af-b9b7-66256aacd457 stopping instance ce06f7b8-26bf-470f-9cb4-bf2fa98964c0
+2026-05-13T03:14:27.251+0000 [STG/0] STDOUT Cell c839c7b1-088e-41af-b9b7-66256aacd457 destroying container for instance ce06f7b8-26bf-470f-9cb4-bf2fa98964c0
+2026-05-13T03:14:27.302+0000 [API/21] STDOUT Staging complete for build ce06f7b8-26bf-470f-9cb4-bf2fa98964c0
+2026-05-13T03:14:27.484+0000 [API/8] STDOUT Stopping app with guid 23d29c41-ed93-45a3-8002-e930ab448574
+2026-05-13T03:14:27.625+0000 [API/4] STDOUT Updated app with guid 23d29c41-ed93-45a3-8002-e930ab448574 ({:droplet_guid=>"d6befe6a-1b73-415c-a8b8-33fd184a5bd8"})
+2026-05-13T03:14:27.762+0000 [API/14] STDOUT Creating revision for app with guid 23d29c41-ed93-45a3-8002-e930ab448574
+2026-05-13T03:14:27.790+0000 [API/14] STDOUT Starting app with guid 23d29c41-ed93-45a3-8002-e930ab448574
+2026-05-13T03:14:28.080+0000 [CELL/0] STDOUT Cell c839c7b1-088e-41af-b9b7-66256aacd457 creating container for instance e36871da-ce76-4148-4507-3359
+2026-05-13T03:14:29.252+0000 [CELL/0] STDOUT Security group rules were updated
+2026-05-13T03:14:29.394+0000 [CELL/0] STDOUT Cell c839c7b1-088e-41af-b9b7-66256aacd457 successfully created container for instance e36871da-ce76-4148-4507-3359
+2026-05-13T03:14:29.993+0000 [STG/0] STDOUT Cell c839c7b1-088e-41af-b9b7-66256aacd457 successfully destroyed container for instance ce06f7b8-26bf-470f-9cb4-bf2fa98964c0
+2026-05-13T03:14:30.382+0000 [CELL/0] STDOUT Downloading droplet...
+2026-05-13T03:14:34.472+0000 [CELL/0] STDOUT Downloaded droplet (80.7M)
+2026-05-13T03:14:34.472+0000 [CELL/0] STDOUT Starting health monitoring of container
+2026-05-13T03:14:34.613+0000 [APP/PROC/WEB/0] STDOUT Invoking pre-start scripts.
+2026-05-13T03:14:34.820+0000 [APP/PROC/WEB/0] STDOUT Invoking start command.
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR node:internal/modules/cjs/loader:1386
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR throw err;
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR ^
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR Error: Cannot find module '@figaf/core'
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR Require stack:
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR - /home/vcap/app/cloud/server.js
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR at Function._load (node:internal/modules/cjs/loader:1192:37)
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR at Module.require (node:internal/modules/cjs/loader:1463:12)
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR at require (node:internal/modules/helpers:147:16)
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR at Object.<anonymous> (/home/vcap/app/cloud/server.js:8:52)
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR at Module._compile (node:internal/modules/cjs/loader:1706:14) {
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR code: 'MODULE_NOT_FOUND',
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR requireStack: [ '/home/vcap/app/cloud/server.js' ]
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR }
+2026-05-13T03:14:34.976+0000 [APP/PROC/WEB/0] STDERR Node.js v22.22.0
+2026-05-13T03:14:34.996+0000 [APP/PROC/WEB/0] STDOUT Exit status 1
+2026-05-13T03:14:41.507+0000 [CELL/0] STDOUT Cell c839c7b1-088e-41af-b9b7-66256aacd457 stopping instance e36871da-ce76-4148-4507-3359
+2026-05-13T03:14:41.507+0000 [CELL/0] STDOUT Cell c839c7b1-088e-41af-b9b7-66256aacd457 destroying container for instance e36871da-ce76-4148-4507-3359
+2026-05-13T03:14:41.512+0000 [API/4] STDOUT Process has crashed with type: "web"
+2026-05-13T03:14:41.525+0000 [API/4] STDOUT App instance exited with guid 23d29c41-ed93-45a3-8002-e930ab448574 payload: {"instance"=>"e36871da-ce76-4148-4507-3359", "index"=>0, "cell_id"=>"c839c7b1-088e-41af-b9b7-66256aacd457", "reason"=>"CRASHED", "exit_description"=>"APP/PROC/WEB: Exited with status 1", "crash_count"=>1, "crash_timestamp"=>1778642081489503897, "version"=>"38d872c2-ba5b-4730-80b3-1393554e76e4"}
+2026-05-13T03:14:41.627+0000 [CELL/0] STDOUT Cell 684caff8-89cd-492b-be01-b3d0835f1763 creating container for instance 9d97c8cf-8819-4264-4521-8df9
+2026-05-13T03:14:42.391+0000 [PROXY/0] STDOUT Exit status 137
+2026-05-13T03:14:42.406+0000 [CELL/0] STDOUT Security group rules were updated
+2026-05-13T03:14:42.490+0000 [CELL/0] STDOUT Cell 684caff8-89cd-492b-be01-b3d0835f1763 successfully created container for instance 9d97c8cf-8819-4264-4521-8df9
+2026-05-13T03:14:43.279+0000 [CELL/0] STDOUT Downloading droplet...
+2026-05-13T03:14:44.472+0000 [CELL/0] STDOUT Cell c839c7b1-088e-41af-b9b7-66256aacd457 successfully destroyed container for instance e36871da-ce76-4148-4507-3359
+2026-05-13T03:14:48.971+0000 [CELL/0] STDOUT Downloaded droplet (80.7M)
+2026-05-13T03:14:48.972+0000 [CELL/0] STDOUT Starting health monitoring of container
+2026-05-13T03:14:49.101+0000 [APP/PROC/WEB/0] STDOUT Invoking pre-start scripts.
+2026-05-13T03:14:49.326+0000 [APP/PROC/WEB/0] STDOUT Invoking start command.
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR node:internal/modules/cjs/loader:1386
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR throw err;
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR ^
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR Error: Cannot find module '@figaf/core'
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR Require stack:
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR - /home/vcap/app/cloud/server.js
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR at Function._load (node:internal/modules/cjs/loader:1192:37)
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR at Module.require (node:internal/modules/cjs/loader:1463:12)
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR at require (node:internal/modules/helpers:147:16)
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR at Object.<anonymous> (/home/vcap/app/cloud/server.js:8:52)
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR at Module._compile (node:internal/modules/cjs/loader:1706:14) {
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR code: 'MODULE_NOT_FOUND',
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR requireStack: [ '/home/vcap/app/cloud/server.js' ]
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR }
+2026-05-13T03:14:49.491+0000 [APP/PROC/WEB/0] STDERR Node.js v22.22.0
+2026-05-13T03:14:49.509+0000 [APP/PROC/WEB/0] STDOUT Exit status 1
+2026-05-13T03:14:56.314+0000 [API/15] STDOUT Process has crashed with type: "web"
+2026-05-13T03:14:56.316+0000 [CELL/0] STDOUT Cell 684caff8-89cd-492b-be01-b3d0835f1763 stopping instance 9d97c8cf-8819-4264-4521-8df9
+2026-05-13T03:14:56.316+0000 [CELL/0] STDOUT Cell 684caff8-89cd-492b-be01-b3d0835f1763 destroying container for instance 9d97c8cf-8819-4264-4521-8df9
+2026-05-13T03:14:56.326+0000 [API/15] STDOUT App instance exited with guid 23d29c41-ed93-45a3-8002-e930ab448574 payload: {"instance"=>"9d97c8cf-8819-4264-4521-8df9", "index"=>0, "cell_id"=>"684caff8-89cd-492b-be01-b3d0835f1763", "reason"=>"CRASHED", "exit_description"=>"APP/PROC/WEB: Exited with status 1", "crash_count"=>2, "crash_timestamp"=>1778642096287931980, "version"=>"38d872c2-ba5b-4730-80b3-1393554e76e4"}
+2026-05-13T03:14:56.430+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 creating container for instance 0200d3d6-5525-4268-506c-0fb5
+2026-05-13T03:14:56.542+0000 [PROXY/0] STDOUT Exit status 137
+2026-05-13T03:14:57.242+0000 [CELL/0] STDOUT Security group rules were updated
+2026-05-13T03:14:57.342+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 successfully created container for instance 0200d3d6-5525-4268-506c-0fb5
+2026-05-13T03:14:57.944+0000 [CELL/0] STDOUT Downloading droplet...
+2026-05-13T03:14:58.726+0000 [CELL/0] STDOUT Cell 684caff8-89cd-492b-be01-b3d0835f1763 successfully destroyed container for instance 9d97c8cf-8819-4264-4521-8df9
+2026-05-13T03:15:03.366+0000 [CELL/0] STDOUT Downloaded droplet (80.7M)
+2026-05-13T03:15:03.366+0000 [CELL/0] STDOUT Starting health monitoring of container
+2026-05-13T03:15:03.499+0000 [APP/PROC/WEB/0] STDOUT Invoking pre-start scripts.
+2026-05-13T03:15:03.726+0000 [APP/PROC/WEB/0] STDOUT Invoking start command.
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR node:internal/modules/cjs/loader:1386
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR throw err;
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR ^
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR Error: Cannot find module '@figaf/core'
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR Require stack:
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR - /home/vcap/app/cloud/server.js
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR at Function._load (node:internal/modules/cjs/loader:1192:37)
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR at Module.require (node:internal/modules/cjs/loader:1463:12)
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR at require (node:internal/modules/helpers:147:16)
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR at Object.<anonymous> (/home/vcap/app/cloud/server.js:8:52)
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR at Module._compile (node:internal/modules/cjs/loader:1706:14) {
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR code: 'MODULE_NOT_FOUND',
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR requireStack: [ '/home/vcap/app/cloud/server.js' ]
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR }
+2026-05-13T03:15:03.902+0000 [APP/PROC/WEB/0] STDERR Node.js v22.22.0
+2026-05-13T03:15:03.923+0000 [APP/PROC/WEB/0] STDOUT Exit status 1
+2026-05-13T03:15:11.219+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 stopping instance 0200d3d6-5525-4268-506c-0fb5
+2026-05-13T03:15:11.220+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 destroying container for instance 0200d3d6-5525-4268-506c-0fb5
+2026-05-13T03:15:11.236+0000 [API/13] STDOUT Process has crashed with type: "web"
+2026-05-13T03:15:11.249+0000 [API/13] STDOUT App instance exited with guid 23d29c41-ed93-45a3-8002-e930ab448574 payload: {"instance"=>"0200d3d6-5525-4268-506c-0fb5", "index"=>0, "cell_id"=>"77283d80-dfa7-40ba-ba4e-265aef112085", "reason"=>"CRASHED", "exit_description"=>"APP/PROC/WEB: Exited with status 1", "crash_count"=>3, "crash_timestamp"=>1778642111215991498, "version"=>"38d872c2-ba5b-4730-80b3-1393554e76e4"}
+2026-05-13T03:15:11.445+0000 [PROXY/0] STDOUT Exit status 137
+2026-05-13T03:15:15.053+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 successfully destroyed container for instance 0200d3d6-5525-4268-506c-0fb5
+2026-05-13T03:15:58.408+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 creating container for instance a789939e-8876-4294-4973-d9c7
+2026-05-13T03:15:59.254+0000 [CELL/0] STDOUT Security group rules were updated
+2026-05-13T03:15:59.350+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 successfully created container for instance a789939e-8876-4294-4973-d9c7

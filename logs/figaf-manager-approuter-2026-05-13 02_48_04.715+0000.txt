@@ -1,0 +1,62 @@
+2026-05-13T02:29:57.427+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 creating container for instance ee1b083e-a707-4fe8-4778-ce1b
+2026-05-13T02:29:58.774+0000 [CELL/0] STDOUT Security group rules were updated
+2026-05-13T02:29:58.865+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 successfully created container for instance ee1b083e-a707-4fe8-4778-ce1b
+2026-05-13T02:29:59.066+0000 [CELL/0] STDOUT Downloading droplet...
+2026-05-13T02:30:01.629+0000 [CELL/0] STDOUT Downloaded droplet
+2026-05-13T02:30:01.629+0000 [CELL/0] STDOUT Starting health monitoring of container
+2026-05-13T02:30:01.756+0000 [APP/PROC/WEB/0] STDOUT Invoking pre-start scripts.
+2026-05-13T02:30:02.065+0000 [APP/PROC/WEB/0] STDOUT Invoking start command.
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR node:internal/modules/cjs/loader:1386
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR throw err;
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR ^
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR Error: Cannot find module '/home/vcap/app/cloud/server.js'
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR at Function._load (node:internal/modules/cjs/loader:1192:37)
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR at node:internal/main/run_main_module:36:49 {
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR code: 'MODULE_NOT_FOUND',
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR requireStack: []
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR }
+2026-05-13T02:30:02.110+0000 [APP/PROC/WEB/0] STDERR Node.js v22.22.0
+2026-05-13T02:30:02.131+0000 [APP/PROC/WEB/0] STDOUT Exit status 1
+2026-05-13T02:30:08.541+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 stopping instance ee1b083e-a707-4fe8-4778-ce1b
+2026-05-13T02:30:08.541+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 destroying container for instance ee1b083e-a707-4fe8-4778-ce1b
+2026-05-13T02:30:08.562+0000 [API/6] STDOUT Process has crashed with type: "web"
+2026-05-13T02:30:08.575+0000 [API/6] STDOUT App instance exited with guid 6237132d-4028-4feb-8b29-9b526d10fb93 payload: {"instance"=>"ee1b083e-a707-4fe8-4778-ce1b", "index"=>0, "cell_id"=>"77283d80-dfa7-40ba-ba4e-265aef112085", "reason"=>"CRASHED", "exit_description"=>"APP/PROC/WEB: Exited with status 1", "crash_count"=>7, "crash_timestamp"=>1778639408537528868, "version"=>"5494abb4-fba7-4828-8e27-0fb4545e4121"}
+2026-05-13T02:30:08.758+0000 [PROXY/0] STDOUT Exit status 137
+2026-05-13T02:30:11.192+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 successfully destroyed container for instance ee1b083e-a707-4fe8-4778-ce1b
+2026-05-13T02:38:14.111+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 creating container for instance 17593bd1-bcb4-4bad-5879-e928
+2026-05-13T02:38:14.902+0000 [CELL/0] STDOUT Security group rules were updated
+2026-05-13T02:38:15.001+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 successfully created container for instance 17593bd1-bcb4-4bad-5879-e928
+2026-05-13T02:38:15.558+0000 [CELL/0] STDOUT Downloading droplet...
+2026-05-13T02:38:17.531+0000 [CELL/0] STDOUT Downloaded droplet
+2026-05-13T02:38:17.531+0000 [CELL/0] STDOUT Starting health monitoring of container
+2026-05-13T02:38:17.722+0000 [APP/PROC/WEB/0] STDOUT Invoking pre-start scripts.
+2026-05-13T02:38:18.019+0000 [APP/PROC/WEB/0] STDOUT Invoking start command.
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR node:internal/modules/cjs/loader:1386
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR throw err;
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR ^
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR Error: Cannot find module '/home/vcap/app/cloud/server.js'
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR at Function._load (node:internal/modules/cjs/loader:1192:37)
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR at node:internal/main/run_main_module:36:49 {
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR code: 'MODULE_NOT_FOUND',
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR requireStack: []
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR }
+2026-05-13T02:38:18.080+0000 [APP/PROC/WEB/0] STDERR Node.js v22.22.0
+2026-05-13T02:38:18.103+0000 [APP/PROC/WEB/0] STDOUT Exit status 1
+2026-05-13T02:38:25.256+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 stopping instance 17593bd1-bcb4-4bad-5879-e928
+2026-05-13T02:38:25.256+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 destroying container for instance 17593bd1-bcb4-4bad-5879-e928
+2026-05-13T02:38:25.274+0000 [API/6] STDOUT Process has crashed with type: "web"
+2026-05-13T02:38:25.288+0000 [API/6] STDOUT App instance exited with guid 6237132d-4028-4feb-8b29-9b526d10fb93 payload: {"instance"=>"17593bd1-bcb4-4bad-5879-e928", "index"=>0, "cell_id"=>"77283d80-dfa7-40ba-ba4e-265aef112085", "reason"=>"CRASHED", "exit_description"=>"APP/PROC/WEB: Exited with status 1", "crash_count"=>8, "crash_timestamp"=>1778639905253348601, "version"=>"5494abb4-fba7-4828-8e27-0fb4545e4121"}
+2026-05-13T02:38:25.457+0000 [PROXY/0] STDOUT Exit status 137
+2026-05-13T02:38:28.130+0000 [CELL/0] STDOUT Cell 77283d80-dfa7-40ba-ba4e-265aef112085 successfully destroyed container for instance 17593bd1-bcb4-4bad-5879-e928

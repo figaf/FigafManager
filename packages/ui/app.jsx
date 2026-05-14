@@ -36,7 +36,7 @@ function App() {
       org: "",
       space: "",
     },
-    choice: "deploy",
+    choice: null,
     config: {
       id: "figaf-tool",
       domain: "",
@@ -103,21 +103,23 @@ function App() {
     { id: "done",     label: "Finish",             sub: "Integration Suite setup" },
   ];
 
-  // v2: dedicated branch for the XSUAA upgrade flow. Entered from the Done
-  // screen via ctx.choice === "xsuaa-upgrade", or surfaced automatically on
-  // first wizard load after restage when isXsuaaMode is detected but the
-  // operator hasn't yet self-assigned to the role collection.
+  // v2: dedicated branch for the XSUAA upgrade flow. Entered either from
+  // ScreenChoice (third option, hosted+token mode) or from ScreenDone after
+  // a deploy finishes.
   const xsuaaSteps = [
     { id: "xsuaa-upgrade",     label: "Authentication",  sub: "Create XSUAA + approuter" },
     { id: "xsuaa-assign-role", label: "Role assignment", sub: "Cockpit deep-link" },
     { id: "done",              label: "Finish",          sub: "Persistent SSO live" },
   ];
 
+  // The stepper rail shows only the 3 base steps (Welcome / Sign in / Choose
+  // action) until the operator picks an option on the choice screen. As soon
+  // as ctx.choice flips, STEPS expands to include the chosen branch's tail.
   const STEPS =
     ctx.choice === "deploy"        ? [...baseSteps, ...deploySteps] :
     ctx.choice === "connect"       ? [...baseSteps, ...connectSteps] :
-    ctx.choice === "xsuaa-upgrade" ? xsuaaSteps :
-    [...baseSteps, ...deploySteps];
+    ctx.choice === "xsuaa-upgrade" ? [...baseSteps, ...xsuaaSteps] :
+    baseSteps;
 
   const currentStep = Math.min(step, STEPS.length - 1);
   const setStep = (n) => setStepRaw(Math.max(0, Math.min(STEPS.length - 1, n)));

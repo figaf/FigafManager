@@ -31,6 +31,17 @@
 
   var kicked = false;
   function handleAuthKick(reason, opts) {
+    // Suppression escape hatch for the XSUAA upgrade success state: the
+    // restage phase intentionally tears the dyno down, the WS drops, and a
+    // reconnect attempt gets auth-bounced by the freshly XSUAA-gated server.
+    // We must NOT redirect — the operator is meant to click "Continue to
+    // wizard" themselves so they can read the success copy first. Checked
+    // BEFORE the `kicked` latch so the guard stays reentrant: as long as the
+    // flag remains true, all subsequent kicks during the restage window are
+    // silently dropped. The flag is set by screen-xsuaa.jsx when entering
+    // the success state; it self-clears on Continue (window.location reloads
+    // the page, which re-evaluates the IIFE with a fresh closure).
+    if (typeof window !== "undefined" && window.figafSuppressAuthKick) return;
     if (kicked) return;
     kicked = true;
     var noScope = opts && opts.noScope;
@@ -135,25 +146,25 @@
 
     btp: {
       loginStart:           function ()  { return rpc("btp:loginStart"); },
-      submitChoice:         function (a) { return rpc("btp:submitChoice", a); },
+      submitChoice:         function (choice) { return rpc("btp:submitChoice", { choice: choice }); },
       cancelLogin:          function ()  { return rpc("btp:cancelLogin"); },
-      selectGlobalAccount:  function (a) { return rpc("btp:selectGlobalAccount", a); },
+      selectGlobalAccount:  function (subdomain) { return rpc("btp:selectGlobalAccount", { subdomain: subdomain }); },
       logout:               function ()  { return rpc("btp:logout"); },
       listEnvInstances:     function ()  { return rpc("btp:listEnvInstances"); },
       listUsers:            function ()  { return rpc("btp:listUsers"); },
-      assignRole:           function (a) { return rpc("btp:assignRole", a); },
+      assignRole:           function (user, role) { return rpc("btp:assignRole", { user: user, role: role }); },
     },
 
     cf: {
       loginStart:           function (apiUrl) { return rpc("cf:loginStart", { apiUrl: apiUrl }); },
-      submitPasscode:       function (a) { return rpc("cf:submitPasscode", a); },
+      submitPasscode:       function (code) { return rpc("cf:submitPasscode", { code: code }); },
       logout:               function ()  { return rpc("cf:logout"); },
       targetOrgSpace:       function ()  { return rpc("cf:targetOrgSpace"); },
       domains:              function ()  { return rpc("cf:domains"); },
       marketplacePostgresql:function ()  { return rpc("cf:marketplacePostgresql"); },
       createService:        function (a) { return rpc("cf:createService", a); },
-      service:              function (a) { return rpc("cf:service", a); },
-      pollService:          function (a) { return rpc("cf:pollService", a); },
+      service:              function (name) { return rpc("cf:service", { name: name }); },
+      pollService:          function (name) { return rpc("cf:pollService", { name: name }); },
       push:                 function ()  { return rpc("cf:push"); },
       deleteApp:            function (a) { return rpc("cf:deleteApp", a); },
       // v2 XSUAA upgrade — see auth-gate-implementation-plan.md §2.
@@ -167,6 +178,7 @@
 
     xsuaa: {
       upgradeStatus:                 function ()  { return rpc("xsuaa:upgradeStatus"); },
+      assignRoleCollection:          function (role) { return rpc("xsuaa:assignRoleCollection", { role: role }); },
       assignRoleCollectionPreflight: function ()  { return rpc("xsuaa:assignRoleCollectionPreflight"); },
     },
 

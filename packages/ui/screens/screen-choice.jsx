@@ -5,6 +5,7 @@
 // ═══════════════════════════════════════════════════════════
 function ScreenChoice({ ctx, setCtx, onNext, onBack }) {
   const sel = ctx.choice;
+  const showXsuaaUpgrade = !!(window.figafModeFlags.features && window.figafModeFlags.features.xsuaaUpgrade);
   function pick(v) { setCtx(c => ({ ...c, choice: v })); }
 
   return (
@@ -19,6 +20,22 @@ function ScreenChoice({ ctx, setCtx, onNext, onBack }) {
         </div>
 
         <div className="choice-grid">
+          {showXsuaaUpgrade && (
+            <button
+              className={`choice ${sel === "xsuaa-upgrade" ? "selected" : ""}`}
+              onClick={() => pick("xsuaa-upgrade")}
+            >
+              <div className="choice-icon"><Ico.Shield /></div>
+              <div className="choice-title">
+                Enable persistent SSO login
+                <span className="pill blue">Highly recommended</span>
+              </div>
+              <div className="choice-desc">
+                Replace the one-time cockpit passcode with SAP IAS single sign-on. Provisions XSUAA + a bundled approuter in front of this wizard. Do this first — you can still deploy or connect afterwards.
+              </div>
+            </button>
+          )}
+
           <button
             className={`choice ${sel === "deploy" ? "selected" : ""}`}
             onClick={() => pick("deploy")}
@@ -26,7 +43,6 @@ function ScreenChoice({ ctx, setCtx, onNext, onBack }) {
             <div className="choice-icon"><Ico.Box /></div>
             <div className="choice-title">
               Deploy Figaf Tool
-              <span className="pill blue">Recommended</span>
             </div>
             <div className="choice-desc">
               Push the Figaf Tool to your Cloud Foundry space along with its PostgreSQL and XSUAA services.
@@ -61,7 +77,11 @@ function ScreenChoice({ ctx, setCtx, onNext, onBack }) {
         onBack={onBack}
         onNext={onNext}
         nextDisabled={!sel}
-        nextLabel={sel === "connect" ? "Configure connection" : "Configure deployment"}
+        nextLabel={
+          sel === "connect"       ? "Configure connection" :
+          sel === "xsuaa-upgrade" ? "Begin upgrade" :
+                                    "Configure deployment"
+        }
       />
     </>
   );

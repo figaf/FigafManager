@@ -34,7 +34,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  bridge.register({ ipcMain, getWindow: () => mainWindow });
+  bridge.register({ ipcMain, getWindow: () => mainWindow, app });
   registerWindowControls();
   createWindow();
 

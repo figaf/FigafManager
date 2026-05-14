@@ -147,7 +147,7 @@ async function ensureBinaries() {
 
 // ─── Step 2: Stage a self-contained app tree ──────────────────────────────────
 
-function stage() {
+async function stage() {
   log("[stage] Preparing .staging/…");
   fs.rmSync(STAGE_DIR, { recursive: true, force: true });
   fs.mkdirSync(STAGE_DIR);
@@ -157,23 +157,42 @@ function stage() {
   fs.copyFileSync(path.join(APP_DIR, "host.cloud.js"),    path.join(STAGE_DIR, "host.cloud.js"));
   fs.copyFileSync(path.join(APP_DIR, "manifest.yml"),     path.join(STAGE_DIR, "manifest.yml"));
 
-  // We rewrite @figaf/* dependencies to point to local file paths
-  // so the CF buildpack's npm install natively installs them from the local dir
-  // instead of pruning them.
+  // Staged package.json strategy for @figaf/* workspace packages:
+  //
+  // Problem A: "file:packages/core" / "file:packages/ui" in dependencies causes
+  // npm install on Windows to create absolute-path symlinks pointing to the
+  // Windows build machine path. Those symlinks break on CF's Linux container.
+  //
+  // Problem B (previous fix was wrong): deleting @figaf/* from dependencies
+  // causes the CF nodejs buildpack's own `npm install` (run during CF staging)
+  // to prune them from node_modules/ — because npm prunes packages that are in
+  // node_modules but absent from package.json. Log evidence: "removed 2 packages
+  // in 3s" during CF staging, then MODULE_NOT_FOUND at runtime.
+  //
+  // Correct fix: copy @figaf/* as real directories FIRST, then write a staged
+  // package.json that keeps them in dependencies (with version strings, not
+  // file: paths) AND declares them in bundledDependencies. The bundledDependencies
+  // field tells npm: "these are already present in node_modules/ — do not fetch
+  // from the registry and do not prune them." Both our local npm install and the
+  // CF buildpack's npm install honour this contract.
+
+  log("[stage] Copying @figaf/core and @figaf/ui into node_modules/ as real directories…");
+  const figafNmDir = path.join(STAGE_DIR, "node_modules", "@figaf");
+  fs.mkdirSync(figafNmDir, { recursive: true });
+  copyDir(path.join(WORKSPACE_ROOT, "packages", "core"), path.join(figafNmDir, "core"));
+  copyDir(path.join(WORKSPACE_ROOT, "packages", "ui"),   path.join(figafNmDir, "ui"));
+
+  const corePkgVersion = JSON.parse(fs.readFileSync(path.join(WORKSPACE_ROOT, "packages", "core", "package.json"), "utf8")).version;
+  const uiPkgVersion   = JSON.parse(fs.readFileSync(path.join(WORKSPACE_ROOT, "packages", "ui",   "package.json"), "utf8")).version;
+
   const stagedPkg = JSON.parse(JSON.stringify(pkg));
-  stagedPkg.dependencies["@figaf/core"] = "file:packages/core";
-  stagedPkg.dependencies["@figaf/ui"] = "file:packages/ui";
+  stagedPkg.dependencies["@figaf/core"] = corePkgVersion;
+  stagedPkg.dependencies["@figaf/ui"]   = uiPkgVersion;
+  stagedPkg.bundledDependencies = ["@figaf/core", "@figaf/ui"];
   delete stagedPkg.bundleDependencies;
   fs.writeFileSync(path.join(STAGE_DIR, "package.json"), JSON.stringify(stagedPkg, null, 2));
 
-  // Copy the local packages into the staging dir FIRST
-  const stagedPackagesDir = path.join(STAGE_DIR, "packages");
-  fs.mkdirSync(path.join(stagedPackagesDir, "core"), { recursive: true });
-  fs.mkdirSync(path.join(stagedPackagesDir, "ui"), { recursive: true });
-  copyDir(path.join(WORKSPACE_ROOT, "packages", "core"), path.join(stagedPackagesDir, "core"));
-  copyDir(path.join(WORKSPACE_ROOT, "packages", "ui"),   path.join(stagedPackagesDir, "ui"));
-
-  log("[stage] Running npm install --omit=dev in staging…");
+  log("[stage] Running npm install --omit=dev in staging (public registry deps only)…");
   execSync("npm install --omit=dev --no-package-lock --no-audit --no-fund", {
     cwd: STAGE_DIR,
     stdio: "inherit",
@@ -187,35 +206,63 @@ function stage() {
   // stage it at .staging/manager-approuter/ (sibling of cloud/, NOT under
   // packages/), with its own node_modules/ populated by a separate
   // `npm install --omit=dev` so the buildpack doesn't need to touch it.
-  stageManagerApprouter();
+  await stageManagerApprouter();
 
   log("[stage] Done.");
 }
 
 // v2: stage the wizard-scoped approuter as a payload inside the cloud zip.
-// At runtime the manager's cf:pushManagerApprouter handler copies this dir
-// to a session-local working directory and runs `cf push -p <dir>` against
-// it. node_modules is bundled so the buildpack inside the dyno doesn't have
-// to re-install — important because outbound npm-registry egress from the
-// manager dyno can't be assumed.
-function stageManagerApprouter() {
+// At runtime host.cloud.js#resolveManagerApprouterDir() extracts the tarball
+// once into <app>/manager-approuter/, then cf:pushManagerApprouter runs
+// `cf push -p <extracted-dir>` against it.
+//
+// Why a tarball instead of a plain directory: BTP Cockpit "Deploy Application"
+// caps the upload at 5,000 distinct resources. @sap/approuter alone ships
+// ~6,400 files, so bundling it as a directory blows the cap with a 500-style
+// "Resources array can have at most 5000 resources" error. Collapsing it to a
+// single tarball entry keeps the cockpit-uploadable zip well under the limit.
+// node_modules is bundled (inside the tarball) so the wizard does not depend
+// on outbound npm-registry egress from the manager dyno during the v2 upgrade.
+async function stageManagerApprouter() {
   const src  = path.join(WORKSPACE_ROOT, "packages", "manager-approuter");
   if (!fs.existsSync(src)) {
     log("[stage] manager-approuter not present in workspace — skipping (v2 bundle disabled)");
     return;
   }
-  const dest = path.join(STAGE_DIR, "manager-approuter");
   log("[stage] Bundling manager-approuter (v2 XSUAA bootstrap payload)…");
-  // Copy WITHOUT the workspace's symlinked node_modules — we run a fresh
-  // omit=dev install in the staged copy so the resulting tree is hoist-free
-  // and self-contained.
-  copyDir(src, dest, name => name === "node_modules" || name === "static" || name.endsWith(".test.js"));
 
-  log("[stage] Running npm install --omit=dev in manager-approuter…");
+  // Install into a scratch dir OUTSIDE .staging/ so the 6k+ node_modules
+  // files never enter the cockpit zip's resource enumeration.
+  const scratch = path.join(APP_DIR, ".staging-approuter");
+  fs.rmSync(scratch, { recursive: true, force: true });
+  fs.mkdirSync(scratch, { recursive: true });
+  copyDir(src, scratch, name => name === "node_modules" || name === "static" || name.endsWith(".test.js"));
+
+  log("[stage] Running npm install --omit=dev in manager-approuter scratch…");
   execSync("npm install --omit=dev --no-package-lock --no-audit --no-fund", {
-    cwd: dest,
+    cwd: scratch,
     stdio: "inherit",
   });
+
+  const tarballOut = path.join(STAGE_DIR, "manager-approuter.tar.gz");
+  log("[stage] Compressing manager-approuter → manager-approuter.tar.gz (single entry in zip)…");
+  // Use archiver (already a devDep) rather than the system `tar` binary so the
+  // build is cross-platform. On Windows, spawnSync("tar", ...) with absolute
+  // Windows paths (C:\...) causes POSIX tar to misinterpret the drive letter as
+  // a remote host, producing "Cannot connect to C: resolve failed" and exit 128.
+  await new Promise((resolve, reject) => {
+    const out = fs.createWriteStream(tarballOut);
+    const tgz = archiver("tar", { gzip: true, gzipOptions: { level: 6 } });
+    out.on("close", resolve);
+    tgz.on("error", reject);
+    tgz.pipe(out);
+    tgz.directory(scratch, false);
+    tgz.finalize();
+  });
+  fs.rmSync(scratch, { recursive: true, force: true });
+
+  const mb = (fs.statSync(tarballOut).size / 1024 / 1024).toFixed(1);
+  log(`[stage] manager-approuter.tar.gz staged (${mb} MB, 1 entry)`);
 }
 
 // ─── Step 3: Build zip from staging ───────────────────────────────────────────
@@ -252,7 +299,7 @@ async function buildZip() {
   const skipZip      = process.argv.includes("--skip-zip");
 
   if (!skipBinaries) await ensureBinaries();
-  if (!skipNpm)      stage();
+  if (!skipNpm)      await stage();
   if (!skipZip) {
     await buildZip();
     log("\nBuild complete.");

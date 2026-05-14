@@ -75,10 +75,16 @@ test("POST /setup/claim returns 410 (xsuaa_mode_active) under XSUAA", async () =
   assert.equal(body.error, "xsuaa_mode_active");
 });
 
-test("GET /setup still serves HTML (so stale tabs see a friendly page)", async () => {
+test("GET /setup under XSUAA returns 302 to / (stale tabs bounce home, not to a dead claim page)", async () => {
+  // A pre-upgrade tab whose client.js still has xsuaaMode=false will redirect
+  // the browser to /setup on any auth-kick; once XSUAA is active the manager
+  // must NOT serve setup.html (the claim POST is 410 and the operator can't
+  // satisfy it). The approuter has already gated this request with the
+  // FigafManagerOperator scope, so an unauthenticated browser can't reach
+  // this handler under XSUAA — no risk of an IAS-redirect loop.
   const r = await fetch(baseUrl + "/setup", { redirect: "manual" });
-  assert.equal(r.status, 200);
-  assert.match(r.headers.get("content-type") || "", /^text\/html/);
+  assert.equal(r.status, 302);
+  assert.equal(r.headers.get("location"), "/");
 });
 
 test("GET / without JWT returns 401 (no /setup redirect under XSUAA)", async () => {

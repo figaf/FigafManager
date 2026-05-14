@@ -54,6 +54,12 @@ const MANAGER_INTERNAL_URL =
 
 // Probe manager's /health endpoint and return a normalized status object.
 // We keep this lightweight: a 3 s connect timeout + a 5 s overall budget.
+//
+// The body field carries the manager's JSON response verbatim (parsed) — the
+// wizard's post-upgrade poll needs `mode: "xsuaa"|"token"` to know whether the
+// restage has taken effect. Manager's /health currently emits that field; if
+// the response is non-JSON or empty (older manager builds) we just return ok
+// without a body and the caller can fall back to status-only logic.
 function probeManager() {
   return new Promise((resolve) => {
     if (!MANAGER_INTERNAL_URL) {
@@ -65,8 +71,18 @@ function probeManager() {
 
     const lib = url.protocol === "https:" ? https : http;
     const req = lib.get(url, { timeout: 3000 }, (res) => {
-      res.resume(); // drain
-      resolve({ ok: res.statusCode === 200, status: res.statusCode });
+      let data = "";
+      res.setEncoding("utf8");
+      res.on("data", (c) => { data += c; if (data.length > 4096) { res.destroy(); } });
+      res.on("end", () => {
+        const ok = res.statusCode === 200;
+        let body = null;
+        try { body = JSON.parse(data); } catch { /* leave null */ }
+        resolve(body && typeof body === "object"
+          ? Object.assign({ ok, status: res.statusCode }, body)
+          : { ok, status: res.statusCode });
+      });
+      res.on("error", () => resolve({ ok: false, reason: "stream-error" }));
     });
     req.on("timeout", () => { req.destroy(); resolve({ ok: false, reason: "timeout" }); });
     req.on("error", (e) => resolve({ ok: false, reason: e.code || e.message }));

@@ -6,3 +6,7 @@
 - [Owner prefers tight PRs](feedback_pr_scope.md) — bundle related work, defer P2 hardening to follow-ups
 - [No operator password env var](feedback_no_password_env_var.md) — auth gate is runtime-token-only; never propose FIGAF_INSTALLER_PASSWORD
 - [server.js test seam](project_server_js_test_seam.md) — boot side-effects gated on require.main === module; exports {app,server,wss,...} for node:test
+- [v2 XSUAA upgrade impl state](project_v2_xsuaa_implementation.md) — 8 commits on main; approuter sibling + JWT mode-switch + key invariants/gaps
+- [HostAdapter extensions log](reference_hostadapter_extensions.md) — per-feature index of methods added beyond the v1 contract
+- [Auth-kick suppression](project_auth_kick_suppression.md) — window.figafSuppressAuthKick: what it gates, who sets/reads it, scope boundaries
+- [XSUAA manager activation](project_xsuaa_manager_activation.md) — bind+restage is the only seam; /_manager-health poll gates Continue button; idempotency contract

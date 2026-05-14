@@ -16,7 +16,18 @@
       "Bash(timeout 3 node apps/figaf-manager/cloud/server.js)",
       "Bash(Remove-Item *)",
       "Bash(node --test apps/figaf-manager/cloud/*.test.js)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(npm ls *)",
+      "Bash(node --check packages/manager-approuter/server.js)",
+      "Bash(node *)",
+      "Bash(VCAP_SERVICES='{\"xsuaa\":[{\"credentials\":{\"xsappname\":\"figaf-manager-xsuaa\",\"clientid\":\"x\",\"clientsecret\":\"y\",\"url\":\"https://x.eu10\"}}]}' timeout 3 node cloud/server.js)",
+      "Bash(python -c \"import json; d=json.load\\(open\\('graphify-out/.graphify_chunk_01.json'\\)\\); print\\('nodes:', len\\(d['nodes']\\), 'edges:', len\\(d['edges']\\), 'hyperedges:', len\\(d['hyperedges']\\)\\)\")",
+      "PowerShell(Remove-Item *)",
+      "Bash(npm --workspace apps/figaf-manager test)",
+      "Bash(npm --workspace apps/figaf-manager test --silent)",
+      "Bash(npm test *)",
+      "Bash(npm run *)"
     ]
   }
 }

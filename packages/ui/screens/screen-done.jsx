@@ -13,10 +13,11 @@ function ScreenDone({ ctx, setCtx, setStep, STEPS }) {
 
   function beginXsuaaUpgrade() {
     if (!setCtx || !setStep) return;
-    // Flip the wizard branch to xsuaaSteps and reset to the first step
-    // of that branch (xsuaa-upgrade).
+    // Flip the wizard branch to xsuaaSteps. The new STEPS layout is
+    // [welcome, login, choice, xsuaa-upgrade, xsuaa-assign-role, done];
+    // jump to index 3 (xsuaa-upgrade) — the first xsuaa-branch screen.
     setCtx(c => ({ ...c, choice: "xsuaa-upgrade" }));
-    setStep(0);
+    setStep(3);
   }
 
   const [deleteState, setDeleteState] = React.useState("idle"); // idle | running | done | error

@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld("figaf", {
 
   xsuaa: {
     upgradeStatus:                 () => ipcRenderer.invoke("xsuaa:upgradeStatus"),
+    assignRoleCollection:          (role) => ipcRenderer.invoke("xsuaa:assignRoleCollection", { role }),
     assignRoleCollectionPreflight: () => ipcRenderer.invoke("xsuaa:assignRoleCollectionPreflight"),
   },
 

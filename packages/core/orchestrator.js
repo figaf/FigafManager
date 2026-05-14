@@ -55,7 +55,7 @@ const DEPLOYMENT_ZIP_URL =
  *   XSUAA upgrade flow does not apply to the desktop installer).
  */
 
-function createOrchestrator({ host, send }) {
+function createOrchestrator({ host, send, audit }) {
   const state = {
     landscape: null,
     org: null,
@@ -67,6 +67,17 @@ function createOrchestrator({ host, send }) {
     cfLoginProc: null,
     btpLoginProc: null,
     deployDirResolved: null,
+  };
+
+  // Audit logger is optional — callers that don't pass one get a no-op shim
+  // so the orchestrator stays runnable in test harnesses and from any
+  // host adapter that hasn't been upgraded to v3 yet. See audit-log.js for
+  // the full contract.
+  const noopHandle = { id: null, exit() {}, out() {}, error() {}, end() {} };
+  const auditor = audit || {
+    beginCli: () => noopHandle,
+    beginRpc: () => noopHandle,
+    beginNet: () => noopHandle,
   };
 
   function log(source, type, text) {
@@ -88,6 +99,12 @@ function createOrchestrator({ host, send }) {
       });
       let stdout = "";
       let stderr = "";
+      const auditHandle = auditor.beginCli({
+        cmd,
+        args,
+        cwd: opts.cwd,
+        user: state.user,
+      });
 
       log("cmd", "cmd", `${cmd} ${args.join(" ")}`);
 
@@ -107,9 +124,11 @@ function createOrchestrator({ host, send }) {
       });
       proc.on("error", (err) => {
         log(opts.source || cmd, "err", err.message);
+        auditHandle.exit({ code: -1, stdout, stderr, errorMessage: err.message });
         resolve({ code: -1, stdout, stderr, error: err.message });
       });
       proc.on("close", (code) => {
+        auditHandle.exit({ code: code ?? 0, stdout, stderr });
         resolve({ code: code ?? 0, stdout, stderr });
       });
 
@@ -122,29 +141,40 @@ function createOrchestrator({ host, send }) {
 
   function httpsJson(url) {
     return new Promise((resolve, reject) => {
+      const netHandle = auditor.beginNet({ url, method: "GET" });
       https.get(url, { headers: { "User-Agent": "Figaf-Manager" } }, (res) => {
         let data = "";
         res.on("data", (c) => { data += c; });
         res.on("end", () => {
+          netHandle.end({ status: res.statusCode });
           if (res.statusCode >= 200 && res.statusCode < 300) {
             try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
           } else {
             reject(new Error(`HTTP ${res.statusCode}`));
           }
         });
-      }).on("error", reject);
+      }).on("error", (err) => {
+        netHandle.end({ error: err });
+        reject(err);
+      });
     });
   }
 
   function httpsDownload(url, destPath, onProgress) {
     return new Promise((resolve, reject) => {
+      const netHandle = auditor.beginNet({ url, method: "GET" });
+      let finalStatus = null;
       const handle = (currentUrl, hops = 0) => {
-        if (hops > 5) return reject(new Error("Too many redirects"));
+        if (hops > 5) {
+          netHandle.end({ status: finalStatus, error: "too many redirects" });
+          return reject(new Error("Too many redirects"));
+        }
         const headers = {
           "User-Agent": "Figaf-Manager",
           "Cookie": "eula_3_2_agreed=tools.hana.ondemand.com/developer-license-3_2.txt",
         };
         https.get(currentUrl, { headers }, (res) => {
+          finalStatus = res.statusCode;
           if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
             res.resume();
             const nextUrl = new URL(res.headers.location, currentUrl).href;
@@ -152,6 +182,7 @@ function createOrchestrator({ host, send }) {
           }
           if (res.statusCode !== 200) {
             res.resume();
+            netHandle.end({ status: res.statusCode, error: `HTTP ${res.statusCode}` });
             return reject(new Error(`HTTP ${res.statusCode} fetching ${currentUrl}`));
           }
           const total = Number(res.headers["content-length"]) || 0;
@@ -162,9 +193,18 @@ function createOrchestrator({ host, send }) {
             if (onProgress) onProgress(received, total);
           });
           res.pipe(ws);
-          ws.on("finish", () => ws.close(() => resolve(destPath)));
-          ws.on("error", reject);
-        }).on("error", reject);
+          ws.on("finish", () => ws.close(() => {
+            netHandle.end({ status: 200 });
+            resolve(destPath);
+          }));
+          ws.on("error", (err) => {
+            netHandle.end({ status: 200, error: err });
+            reject(err);
+          });
+        }).on("error", (err) => {
+          netHandle.end({ status: finalStatus, error: err });
+          reject(err);
+        });
       };
       handle(url);
     });
@@ -995,6 +1035,22 @@ function createOrchestrator({ host, send }) {
      * Phase 1.3-1.6 — push, bind, start the manager-approuter app.
      * Reads the bundled approuter dir, materializes a synthetic manifest
      * with the wizard's route info, then runs cf push.
+     *
+     * Destination wiring (the reason this handler does more than just push):
+     * @sap/approuter validates xs-app.json at boot — every route that names
+     * a `destination` must have a matching entry in either a bound destination
+     * service or the `destinations` env var. The wizard's xs-app.json forwards
+     * every non-/_health request to a destination named `figaf-manager-internal`.
+     * We don't bind a CF destination service (it would be one more service to
+     * provision and clean up); we wire the destination via env var instead.
+     *
+     * The destination URL must outlive the public-route swap in Phase 2: after
+     * `cf unmap-route figaf-manager <public>` the manager has no public route
+     * left, so we map an additional `<hostname>-internal` route to figaf-manager
+     * here, BEFORE the approuter starts, and point the destination at that URL.
+     * This mirrors the pattern in `packages/deploy-templates/manifest.yml` where
+     * the Figaf Tool sits behind a `-internal` hostname and its approuter
+     * forwards via a `destinations` env var.
      */
     async "cf:pushManagerApprouter"() {
       if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
@@ -1002,6 +1058,31 @@ function createOrchestrator({ host, send }) {
       if (!approuterDir || !fs.existsSync(approuterDir)) {
         return { ok: false, error: "manager-approuter not bundled in this build; redeploy with v2 zip" };
       }
+
+      // Read the manager's own current route(s) from VCAP_APPLICATION (set on
+      // every CF dyno). We need both the hostname (to derive an internal
+      // sibling) and the domain (to map the internal route on the same
+      // landscape apps domain). On a retry after Phase 2.3 the only remaining
+      // uri will already be the -internal hostname; in that case strip the
+      // suffix back to the canonical hostname so we don't double-suffix.
+      let managerHostname, managerDomain;
+      try {
+        const va = JSON.parse(process.env.VCAP_APPLICATION || "{}");
+        const uri = (va.uris && va.uris[0]) || "";
+        const dot = uri.indexOf(".");
+        if (dot > 0) {
+          let host = uri.slice(0, dot);
+          if (host.endsWith("-internal")) host = host.slice(0, -"-internal".length);
+          managerHostname = host;
+          managerDomain   = uri.slice(dot + 1);
+        }
+      } catch { /* leave undefined */ }
+      if (!managerHostname || !managerDomain) {
+        return { ok: false, error: "could not derive manager route from VCAP_APPLICATION" };
+      }
+      const internalHostname = `${managerHostname}-internal`;
+      const internalUrl      = `https://${internalHostname}.${managerDomain}`;
+
       send("xsuaa:upgradePhase", { phase: "push-approuter", state: "running" });
 
       // We push with --no-route --no-start so phase 2 can map the route
@@ -1014,6 +1095,7 @@ function createOrchestrator({ host, send }) {
         "-k", "256M",
         "--no-route",
         "--no-start",
+        "--no-manifest",
       ];
       const r = await run(resolveCf(), pushArgs, { source: "cf" });
       if (r.code !== 0) {
@@ -1026,6 +1108,41 @@ function createOrchestrator({ host, send }) {
         send("xsuaa:upgradePhase", { phase: "push-approuter", state: "failed", error: b.stderr });
         return { ok: false, error: b.stderr || "bind-service failed" };
       }
+
+      // 1.5b — map the internal route to figaf-manager. Idempotent: cf
+      // map-route returns 0 on a fresh map and a recognizable message on a
+      // pre-existing one. We accept both (a re-run of the upgrade flow must
+      // not blow up here).
+      const mr = await run(resolveCf(), ["map-route", "figaf-manager", managerDomain, "--hostname", internalHostname], { source: "cf" });
+      const alreadyMapped = /already exists|already mapped/i.test(mr.stdout + mr.stderr);
+      if (mr.code !== 0 && !alreadyMapped) {
+        send("xsuaa:upgradePhase", { phase: "push-approuter", state: "failed", error: mr.stderr });
+        return { ok: false, error: mr.stderr || "map-route (internal) failed" };
+      }
+
+      // 1.5c — declare the figaf-manager-internal destination on the approuter
+      // before first start, so @sap/approuter's JsonValidator finds it when it
+      // loads xs-app.json. forwardAuthToken=true is essential: the manager's
+      // @sap/xssec middleware needs the JWT the approuter validated.
+      const destinations = JSON.stringify([{
+        name: "figaf-manager-internal",
+        url: internalUrl,
+        forwardAuthToken: true,
+        timeout: 86400000,
+      }]);
+      const se1 = await run(resolveCf(), ["set-env", "figaf-manager-approuter", "destinations", destinations], { source: "cf" });
+      if (se1.code !== 0) {
+        send("xsuaa:upgradePhase", { phase: "push-approuter", state: "failed", error: se1.stderr });
+        return { ok: false, error: se1.stderr || "set-env destinations failed" };
+      }
+      // server.js (the approuter's own custom wrapper) reads this convenience
+      // env var to probe the manager's /health from /_manager-health.
+      const se2 = await run(resolveCf(), ["set-env", "figaf-manager-approuter", "destinations_figaf_manager_internal_url", internalUrl], { source: "cf" });
+      if (se2.code !== 0) {
+        send("xsuaa:upgradePhase", { phase: "push-approuter", state: "failed", error: se2.stderr });
+        return { ok: false, error: se2.stderr || "set-env destinations_figaf_manager_internal_url failed" };
+      }
+
       // 1.6 start
       const s = await run(resolveCf(), ["start", "figaf-manager-approuter"], { source: "cf" });
       if (s.code !== 0) {
@@ -1033,7 +1150,7 @@ function createOrchestrator({ host, send }) {
         return { ok: false, error: s.stderr || "cf start failed" };
       }
       send("xsuaa:upgradePhase", { phase: "push-approuter", state: "done" });
-      return { ok: true };
+      return { ok: true, internalUrl };
     },
 
     async "cf:mapRoute"({ app, domain, hostname }) {
@@ -1063,10 +1180,77 @@ function createOrchestrator({ host, send }) {
      * die in the next ~30-90s and the response would never reach the
      * browser otherwise. The UI polls via the approuter's /_manager-health
      * to detect when the manager is back.
+     *
+     * Args:
+     *   app          — defaults to figaf-manager
+     *   bindXsuaa    — when true, runs `cf bind-service <app> figaf-manager-xsuaa`
+     *                  before the restage. Idempotent: "already bound" is treated
+     *                  as success.
+     *   skipIfBound  — when true, probes the v3 service_credential_bindings
+     *                  endpoint and short-circuits the entire bind+restage if
+     *                  the binding already exists. Used by the upgrade flow to
+     *                  avoid an unnecessary 30-90s restage on re-runs.
+     *   unmapRoute   — { domain, hostname }. When supplied, runs
+     *                  `cf unmap-route <app> <domain> --hostname <hostname>` as
+     *                  the first step of the cutover, BEFORE the bind. The
+     *                  XSUAA upgrade splits the public route off the manager
+     *                  onto the approuter — if the wizard fires the unmap as a
+     *                  separate browser RPC, the next request (this restage)
+     *                  arrives after the gorouter has switched the hostname
+     *                  to the approuter, which 401s before the manager is ever
+     *                  reached. Bundling the unmap server-side keeps the whole
+     *                  cutover on one TCP connection: the RPC arrives while
+     *                  the manager still serves the route, and the response
+     *                  flows back over the already-open socket. Idempotent:
+     *                  "not mapped / does not exist" is treated as success
+     *                  so re-runs of the upgrade flow don't bail here.
+     *
+     * Observability: every cf call run here emits a cli:line cmd event before
+     * execution. This is important during the upgrade: the restage spawn would
+     * otherwise be invisible in the terminal drawer because spawn() doesn't go
+     * through run(). When the bind step's frame is the last frame the browser
+     * receives before the dyno bounces, operators can at least see that the
+     * bind happened and the restage was initiated.
      */
-    async "cf:restage"({ app, bindXsuaa }) {
+    async "cf:restage"({ app, bindXsuaa, skipIfBound, unmapRoute } = {}) {
       if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
       const appName = app || "figaf-manager";
+
+      // Short-circuit: if the caller asked us to be conservative AND the
+      // binding already exists, do nothing. The manager is already (or will
+      // be on next natural boot) in XSUAA mode. The phase-running/done events
+      // are still emitted so the UI's phase row resolves either way.
+      if (skipIfBound) {
+        const probe = await run(
+          resolveCf(),
+          ["curl", `/v3/service_credential_bindings?service_instance_names=figaf-manager-xsuaa&app_names=${appName}`],
+          { source: "cf" }
+        );
+        if (probe.code === 0) {
+          try {
+            const parsed = JSON.parse(probe.stdout);
+            if (Array.isArray(parsed.resources) && parsed.resources.length > 0) {
+              send("xsuaa:upgradePhase", { phase: "restage", state: "done" });
+              return { ok: true, alreadyBound: true, message: "manager already bound to figaf-manager-xsuaa; bind+restage skipped" };
+            }
+          } catch { /* fall through to the real bind path */ }
+        }
+      }
+
+      // Optional cutover step: unmap the public route off this app BEFORE
+      // bind/restage. See the JSDoc above for why this has to be bundled
+      // into the same RPC as the restage rather than fired separately.
+      if (unmapRoute && unmapRoute.domain && unmapRoute.hostname) {
+        const u = await run(
+          resolveCf(),
+          ["unmap-route", appName, unmapRoute.domain, "--hostname", unmapRoute.hostname],
+          { source: "cf" }
+        );
+        if (u.code !== 0 && !/not mapped|does not exist/i.test(u.stdout + u.stderr)) {
+          return { ok: false, error: u.stderr || "unmap-route failed" };
+        }
+      }
+
       if (bindXsuaa) {
         const b = await run(resolveCf(), ["bind-service", appName, "figaf-manager-xsuaa"], { source: "cf" });
         if (b.code !== 0 && !/already bound/i.test(b.stdout + b.stderr)) {
@@ -1077,12 +1261,85 @@ function createOrchestrator({ host, send }) {
       // Fire-and-forget: spawn cf restage in the background so we can
       // return success to the browser before the dyno dies.
       const cfBin = resolveCf();
+      // Log the command line ourselves — spawn() bypasses run()'s cmd-emit.
+      // Without this the only signal that the restage was initiated is a
+      // potentially-undelivered "Restaging app ..." stdout frame from cf.
+      log("cmd", "cmd", `${cfBin} restage ${appName}`);
+      const restageAudit = auditor.beginCli({ cmd: cfBin, args: ["restage", appName], user: state.user });
+      let restageStdout = "";
+      let restageStderr = "";
       const proc = spawn(cfBin, ["restage", appName], { shell: false, windowsHide: true, detached: false });
-      proc.stdout.on("data", (b) => log("cf", "line", b.toString()));
-      proc.stderr.on("data", (b) => log("cf", "err", b.toString()));
-      // No proc.on("close") wiring — by the time it would fire, this process
-      // is most likely already terminated by CF.
+      proc.stdout.on("data", (b) => { const s = b.toString(); restageStdout += s; log("cf", "line", s); });
+      proc.stderr.on("data", (b) => { const s = b.toString(); restageStderr += s; log("cf", "err", s); });
+      // proc.on("error") is rare here (cf binary is bundled + resolveCf was
+      // already called for the bind step) but a missing/unexecutable binary
+      // would otherwise produce a silent failure. We log and don't reject —
+      // the HTTP response is already in flight by the time this fires. The
+      // audit log might still flush before the dyno bounces if the failure
+      // is fast (e.g., missing binary), so we record what we can.
+      proc.on("error", (err) => {
+        log("cf", "err", "cf restage spawn failed: " + (err && err.message));
+        restageAudit.exit({ code: -1, stdout: restageStdout, stderr: restageStderr, errorMessage: err && err.message });
+      });
+      // close handler is best-effort: most of the time the dyno is gone
+      // before cf restage returns, but in re-run scenarios (where the
+      // dyno survives) we still want the cli.exit record.
+      proc.on("close", (code) => {
+        restageAudit.exit({ code: code ?? 0, stdout: restageStdout, stderr: restageStderr });
+      });
       return { ok: true, message: "restage initiated; manager will be unavailable for 30-90s" };
+    },
+
+    /**
+     * Self-assign the operator to a manager role collection via the btp CLI.
+     * Used by ScreenXsuaaUpgrade's "Assign me FigafManagerAdmin after upgrade"
+     * checkbox (default on). Operates against the subaccount captured during
+     * btp:listEnvInstances; the user identity is the BTP/IAS email reported
+     * by `cf target` (state.user).
+     *
+     * Default role is FigafManagerAdmin because the Admin role-template's
+     * scope-references include FigafManagerOperator (xs-security.json), so a
+     * single assignment covers both. The role parameter is plumbed through
+     * to make swapping to FigafManagerOperator a one-line change at the
+     * caller, no contract change here.
+     *
+     * NOT shell-concatenated: spawn() with an args array via run(). No user
+     * input ever lands in shell syntax. The user/subaccount values come from
+     * trusted internal state (CF target output + btp env-instance JSON).
+     *
+     * Identity provider: we deliberately do NOT pass `--of-idp ORIGIN`. The
+     * btp CLI defaults to the subaccount's primary IDP, which on standard
+     * BTP/IAS setups is exactly what the wizard authenticates against. For
+     * subaccounts with multiple IDPs the operator can re-run via the cockpit
+     * fallback screen (ScreenXsuaaAssignRole) to pick the right origin.
+     *
+     * Failure handling: surfaces the stderr verbatim. The wizard treats this
+     * as non-fatal — the XSUAA upgrade itself stays committed; the operator
+     * just has to assign the role collection manually in the cockpit before
+     * the new scope appears in their next JWT.
+     */
+    async "xsuaa:assignRoleCollection"({ role } = {}) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      const rc = role || "FigafManagerAdmin";
+      const user = state.user;
+      const sub = state.subaccount;
+      if (!user) return { ok: false, error: "current user not captured (cf target has not run); assign manually in the cockpit" };
+      if (!sub)  return { ok: false, error: "subaccount GUID not captured (btp:listEnvInstances has not run); assign manually in the cockpit" };
+
+      send("xsuaa:upgradePhase", { phase: "assign-role", state: "running" });
+      const args = ["assign", "security/role-collection", rc, "--to-user", user, "--subaccount", sub];
+      const r = await run(resolveBtp(), args, { source: "btp" });
+      // btp CLI returns 0 on a fresh assignment AND on a re-assignment (it
+      // prints "already assigned" but exits 0). Treat any 0-exit as success.
+      // If non-zero, capture both stdout (sometimes carries the error line)
+      // and stderr so the UI has a meaningful message to display.
+      if (r.code !== 0) {
+        const detail = (r.stderr || r.stdout || "").trim().split(/\r?\n/).filter(Boolean).slice(-3).join(" / ");
+        send("xsuaa:upgradePhase", { phase: "assign-role", state: "failed", error: detail || "btp assign failed" });
+        return { ok: false, error: detail || "btp assign failed", role: rc, user, subaccount: sub };
+      }
+      send("xsuaa:upgradePhase", { phase: "assign-role", state: "done" });
+      return { ok: true, role: rc, user, subaccount: sub };
     },
 
     /**

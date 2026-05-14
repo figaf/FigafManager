@@ -11,9 +11,19 @@ applications:
     random-route: true
     env:
       NODE_ENV: production
+      FIGAF_LOG_LEVEL: cli
+      # FIGAF_LOG_LEVEL controls the verbosity of logs emitted by the wizard.
+      #│ off   │ nothing (no-op fast path)                                     │
+      #├───────┼───────────────────────────────────────────────────────────────┤
+      #│ cli   │ every external process: cf, btp, npm, etc.                    │
+      #├───────┼───────────────────────────────────────────────────────────────┤
+      #│ ipc   │ cli + every window.figaf handler call (channel, args, result) │
+      #├───────┼───────────────────────────────────────────────────────────────┤
+      #│ net   │ ipc + every httpsDownload / httpsJson / httpsGet              │
+    
       # Optional: pin deployment template source (defaults to GitHub btp-users branch tip)
       # FIGAF_DEPLOYMENT_ZIP_URL: https://your-mirror.example.com/btp-users.zip
-      #
+      FIGAF_MANAGER_MAINTENANCE: 1
       # v2 idle-self-destruct (V4 in auth-gate-implementation-plan.md §2.10).
       # When set to a positive integer, the wizard tears ITSELF down after
       # that many hours without authenticated traffic. Bounds the exposure

@@ -5,7 +5,7 @@ const { WebSocketServer } = require("ws");
 const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
-const { createOrchestrator, DEPLOYMENT_ZIP_URL } = require("@figaf/core");
+const { createOrchestrator, DEPLOYMENT_ZIP_URL, createAuditLogger } = require("@figaf/core");
 const { createHost } = require("../host.cloud");
 const auth = require("./auth");
 // v2: XSUAA mode-switch (auth-gate-implementation-plan.md §2.7).
@@ -19,6 +19,21 @@ const PORT = process.env.PORT || 8080;
 // Random per-boot secret — all sessions invalidate on container restart (acceptable for wizard use-case).
 const SESSION_SECRET = crypto.randomBytes(32).toString("hex");
 const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour idle expiry
+
+// ─── Audit log ─────────────────────────────────────────────────────────────
+// JSON Lines to stdout; CF's log drain captures it alongside [SETUP] / [INFO]
+// boot lines. FIGAF_LOG_LEVEL (set in manifest.yml) controls verbosity:
+//   off | cli (default) | ipc | net
+// FIGAF_LOG_TAIL_BYTES — override the per-side stdout/stderr cap (default 2 KB).
+//
+// This is the parent logger; per-session loggers stamp sessionId via
+// withContext() in newSession(). User identity is stamped per RPC because
+// state.user is only populated after `cf login`, not at session creation.
+const auditParent = createAuditLogger({
+  level: process.env.FIGAF_LOG_LEVEL || "cli",
+  tailBytes: Number(process.env.FIGAF_LOG_TAIL_BYTES) || undefined,
+  sink: (line) => process.stdout.write(line + "\n"),
+});
 
 // ─── Session store ─────────────────────────────────────────────────────────────
 
@@ -47,8 +62,9 @@ function newSession(sessionId) {
   }
 
   const host = createHost({ sessionId });
-  const { handlers, dispose } = createOrchestrator({ host, send });
-  const sess = { handlers, dispose, wsClients, lastSeen: Date.now() };
+  const audit = auditParent.withContext({ sessionId });
+  const { handlers, dispose } = createOrchestrator({ host, send, audit });
+  const sess = { handlers, dispose, wsClients, lastSeen: Date.now(), audit };
   sessions.set(sessionId, sess);
   return sess;
 }
@@ -203,14 +219,20 @@ app.get("/cloud/client.js", (_req, res) => {
 // that would lock the wizard out.
 
 app.get("/setup", (req, res) => {
-  // v2: token-claim flow is meaningless under XSUAA. Serve the static page
-  // anyway so an operator who hits a stale bookmark sees a clean explanation;
-  // the form's POST returns 410 below (see /setup/claim handler).
+  // v2: under XSUAA the token-claim page is dormant AND actively harmful — a
+  // stale pre-upgrade tab whose client.js still has xsuaaMode=false will
+  // redirect the browser here on any auth-kick (see cloud/client.js line 44),
+  // and post-IAS the operator lands on a setup-token prompt they cannot
+  // satisfy (the secret hash was wiped at first claim; the POST returns 410).
+  //
+  // The approuter's catch-all xsuaa route already enforced auth+scope before
+  // this handler ran, so an unauthenticated browser cannot reach here under
+  // XSUAA — no IAS-loop risk. Bounce to / unconditionally; the wizard root
+  // will render with figafXsuaaMode=true and the operator picks up where the
+  // upgrade flow left off.
   if (XSUAA_ACTIVE) {
-    // Soft-fail: still 200 with the HTML, but the claim post will 410.
-    // We don't redirect to / here because (a) the approuter handles auth
-    // upstream of this and (b) redirecting could create a loop in an
-    // operator's stale tab.
+    res.redirect(302, "/");
+    return;
   }
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
@@ -275,13 +297,22 @@ app.post("/rpc/:channel", requireAuth, async (req, res) => {
   const { channel } = req.params;
   const sess = getOrCreateSession(req.sessionId);
   const handler = sess.handlers[channel];
+  // User identity for the audit record: XSUAA mode has it on the JWT-decorated
+  // request (xsuaa-auth sets req.figafUser); v1 has no per-user identity, just
+  // the session cookie.
+  const user = (req.figafUser && (req.figafUser.email || req.figafUser.name)) || null;
+  const rpcHandle = sess.audit.beginRpc({ channel, args: req.body || {}, user, source: "http" });
   if (!handler) {
+    rpcHandle.out({ ok: false, error: `Unknown channel: ${channel}` });
     return res.status(404).json({ ok: false, error: `Unknown channel: ${channel}` });
   }
   try {
     const result = await handler(req.body || {});
-    res.json(result !== undefined ? result : { ok: true });
+    const out = result !== undefined ? result : { ok: true };
+    rpcHandle.out(out);
+    res.json(out);
   } catch (err) {
+    rpcHandle.error(err);
     console.error(`[rpc] ${channel} error:`, err.message);
     res.status(500).json({ ok: false, error: err.message });
   }

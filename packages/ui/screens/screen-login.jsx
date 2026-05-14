@@ -129,7 +129,15 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     if (!api) return;
     if (!login.passcode || login.passcode.length < 4) return;
     setLogin({ cfStatus: "running" });
-    await api.cf.submitPasscode(login.passcode);
+    // Success path: cf process closes → cf:loggedIn / cf:loginFailed events flip
+    // cfStatus. If the handler itself reports failure (e.g. cf already exited,
+    // bad shim wiring) we have to flip back here — otherwise the button is
+    // stuck on "Authenticating…" forever.
+    const r = await api.cf.submitPasscode(login.passcode);
+    if (r && r.ok === false) {
+      appendLog([{ type: "err", text: r.error || "Failed to submit passcode" }]);
+      setLogin({ cfStatus: "error" });
+    }
   }
 
   async function pastePasscode() {

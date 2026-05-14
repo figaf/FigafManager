@@ -12,6 +12,7 @@
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const { spawnSync } = require("child_process");
 
 function createHost({ sessionId }) {
   return {
@@ -40,16 +41,30 @@ function createHost({ sessionId }) {
 
     /**
      * v2 XSUAA upgrade: bundled manager-approuter directory. In the cloud
-     * zip the build-zip pipeline stages it at /app/manager-approuter/
-     * (sibling of /app/cloud/). __dirname here is /app/ (host.cloud.js
-     * is at the app root). Returns null if the v2 payload is absent —
-     * the orchestrator handlers surface "redeploy with v2 zip" in that
-     * case so an operator running v1-era zip on the new server.js sees
-     * a friendly error rather than a confusing path failure.
+     * zip the build-zip pipeline stages it as a single tarball entry
+     * (manager-approuter.tar.gz, sibling of host.cloud.js) so the cockpit
+     * upload stays under its 5,000-resource cap. On first access we extract
+     * the tarball into /app/manager-approuter/ and cache the extraction;
+     * subsequent calls short-circuit. Returns null when no v2 payload is
+     * present — orchestrator handlers surface "redeploy with v2 zip" so an
+     * operator running a v1-era zip on a v2 server.js sees a friendly
+     * error rather than a confusing path failure.
      */
     resolveManagerApprouterDir() {
-      const candidate = path.join(__dirname, "manager-approuter");
-      if (fs.existsSync(candidate)) return candidate;
+      const extracted = path.join(__dirname, "manager-approuter");
+      if (fs.existsSync(extracted)) return extracted;
+
+      const tarball = path.join(__dirname, "manager-approuter.tar.gz");
+      if (fs.existsSync(tarball)) {
+        fs.mkdirSync(extracted, { recursive: true });
+        const r = spawnSync("tar", ["-xzf", tarball, "-C", extracted], { stdio: "inherit" });
+        if (r.status !== 0) {
+          try { fs.rmSync(extracted, { recursive: true, force: true }); } catch {}
+          return null;
+        }
+        return extracted;
+      }
+
       // Dev fallback: workspace-root packages/manager-approuter when this
       // file is run via `node cloud/server.js` from a checkout.
       const devCandidate = path.join(__dirname, "..", "..", "packages", "manager-approuter");
