@@ -52,6 +52,34 @@ const MANAGER_INTERNAL_URL =
   process.env.destinations_figaf_manager_internal_url ||
   "";
 
+// Ensure @sap/approuter has the correct destinations env var set before it
+// reads it. `cf set-env` quoting of JSON strings can sometimes lead to
+// stripped quotes in the cloud environment, causing the approuter to see an
+// invalid JSON array and omit the destination. By conditionally injecting /
+// overriding it here, we guarantee it sees the correct parsed shape.
+if (MANAGER_INTERNAL_URL) {
+  try {
+    const existing = process.env.destinations ? JSON.parse(process.env.destinations) : [];
+    const hasInternal = existing.some(d => d.name === "figaf-manager-internal");
+    if (!hasInternal) {
+      existing.push({
+        name: "figaf-manager-internal",
+        url: MANAGER_INTERNAL_URL,
+        forwardAuthToken: true,
+        timeout: 86400000
+      });
+      process.env.destinations = JSON.stringify(existing);
+    }
+  } catch (e) {
+    process.env.destinations = JSON.stringify([{
+      name: "figaf-manager-internal",
+      url: MANAGER_INTERNAL_URL,
+      forwardAuthToken: true,
+      timeout: 86400000
+    }]);
+  }
+}
+
 // Probe manager's /health endpoint and return a normalized status object.
 // We keep this lightweight: a 3 s connect timeout + a 5 s overall budget.
 //

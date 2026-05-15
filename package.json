@@ -12,5 +12,8 @@
     "start:manager": "npm --workspace apps/figaf-manager start",
     "build:local": "npm --workspace apps/figaf-local run build:win",
     "build:manager": "npm --workspace apps/figaf-manager run build-zip"
+  },
+  "dependencies": {
+    "@sap/approuter": "^16.9.0"
   }
 }

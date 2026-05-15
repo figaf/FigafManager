@@ -73,32 +73,51 @@ function defaultVerifier(binding) {
       return Promise.resolve({ ok: false, code: "NO_XSSEC", reason: "@sap/xssec module unavailable" });
     };
   }
-  return function verify(jwt) {
-    return new Promise((resolve) => {
-      xssec.createSecurityContext(jwt, binding.credentials, function (err, ctx) {
-        if (err || !ctx) {
-          return resolve({ ok: false, code: "INVALID", reason: err && err.message ? err.message : "createSecurityContext failed" });
-        }
-        try {
-          // ctx.checkLocalScope(name) — name is appended to xsappname. We
-          // pass just "FigafManagerOperator" so the lib resolves to
-          // <xsappname>.FigafManagerOperator regardless of the actual app.
-          const hasOperator = ctx.checkLocalScope("FigafManagerOperator");
-          if (!hasOperator) {
-            return resolve({ ok: false, code: "NO_SCOPE", reason: "missing FigafManagerOperator scope" });
-          }
-        } catch (e) {
-          return resolve({ ok: false, code: "INVALID", reason: e.message });
-        }
-        // Extract identity for audit/log lines. None of these are trusted
-        // beyond the JWT itself — they're convenience accessors only.
-        let user = null;
-        try { user = ctx.getLogonName ? ctx.getLogonName() : null; } catch {}
-        let email = null;
-        try { email = ctx.getEmail ? ctx.getEmail() : null; } catch {}
-        return resolve({ ok: true, user, email, ctx });
-      });
-    });
+
+  // @sap/xssec v4 dropped the v3 callback API:
+  //   v3: xssec.createSecurityContext(jwt, credentials, cb)
+  //   v4: await xssec.createSecurityContext(service, { token: jwt })
+  // Build the XsuaaService once at boot so we don't re-parse credentials on
+  // every request. Construction failure (bad credentials) is a fail-closed
+  // verifier — any subsequent verify() returns NO_XSSEC rather than crashing.
+  let service;
+  try {
+    service = new xssec.XsuaaService(binding.credentials);
+  } catch (e) {
+    return function () {
+      return Promise.resolve({ ok: false, code: "NO_XSSEC", reason: "XsuaaService init failed: " + (e && e.message) });
+    };
+  }
+
+  return async function verify(jwt) {
+    let ctx;
+    try {
+      ctx = await xssec.createSecurityContext(service, { token: jwt });
+    } catch (e) {
+      // Any v4 error (MissingJwtError, InvalidJwtError, NetworkError, etc.)
+      // lands here. We collapse to INVALID rather than crashing the process.
+      return { ok: false, code: "INVALID", reason: e && e.message ? e.message : "createSecurityContext failed" };
+    }
+    if (!ctx) {
+      return { ok: false, code: "INVALID", reason: "createSecurityContext returned no context" };
+    }
+    try {
+      // ctx.checkLocalScope(name) — name is appended to xsappname. We
+      // pass just "FigafManagerOperator" so the lib resolves to
+      // <xsappname>.FigafManagerOperator regardless of the actual app.
+      if (!ctx.checkLocalScope("FigafManagerOperator")) {
+        return { ok: false, code: "NO_SCOPE", reason: "missing FigafManagerOperator scope" };
+      }
+    } catch (e) {
+      return { ok: false, code: "INVALID", reason: e.message };
+    }
+    // Extract identity for audit/log lines. None of these are trusted
+    // beyond the JWT itself — they're convenience accessors only.
+    let user = null;
+    try { user = ctx.getLogonName ? ctx.getLogonName() : null; } catch {}
+    let email = null;
+    try { email = ctx.getEmail ? ctx.getEmail() : null; } catch {}
+    return { ok: true, user, email, ctx };
   };
 }
 

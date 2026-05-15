@@ -174,7 +174,11 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack }) {
       const fullRoute = pre && pre.route;
       if (fullRoute) {
         const dot = fullRoute.indexOf(".");
-        if (dot > 0) { mapHost = fullRoute.slice(0, dot); mapDomain = fullRoute.slice(dot + 1); }
+        if (dot > 0) { 
+          mapHost = fullRoute.slice(0, dot); 
+          if (mapHost.endsWith("-internal")) mapHost = mapHost.slice(0, -"-internal".length);
+          mapDomain = fullRoute.slice(dot + 1); 
+        }
       }
       if (!mapHost || !mapDomain) {
         setError("Could not determine the manager's public route. Inspect cf app figaf-manager in cockpit.");

@@ -197,3 +197,60 @@ test("operatorScopeFor: defaults to figaf-manager-xsuaa when binding empty", () 
   assert.equal(xa.operatorScopeFor(null), "figaf-manager-xsuaa.FigafManagerOperator");
   assert.equal(xa.operatorScopeFor({}), "figaf-manager-xsuaa.FigafManagerOperator");
 });
+
+// ─── Regression: defaultVerifier must never crash the process ──────────────
+// Regression for the @sap/xssec v4 API mismatch that returned 502s after the
+// XSUAA upgrade: the verifier called the v3 callback signature on an async
+// v4 function, dropped the returned rejected Promise, and crashed the dyno
+// via Node's unhandled-rejection-throw policy. These tests exercise the
+// REAL defaultVerifier (no __setVerifier seam) so any regression in the
+// v3/v4 wiring trips them.
+
+test("defaultVerifier: returns {ok:false,INVALID} for garbage JWT without throwing", async () => {
+  process.env.VCAP_SERVICES = JSON.stringify({
+    xsuaa: [{
+      credentials: {
+        xsappname: "figaf-manager-xsuaa",
+        clientid: "sb-figaf-manager-xsuaa",
+        clientsecret: "secret",
+        url: "https://example.authentication.eu10.hana.ondemand.com",
+        uaadomain: "authentication.eu10.hana.ondemand.com",
+      },
+    }],
+  });
+  const r = await xa.verifyWsUpgrade({ headers: { authorization: "Bearer not.a.real.jwt" } });
+  assert.equal(r.ok, false);
+  assert.notEqual(r.code, "NO_JWT"); // verifier ran — extractJwt found a token
+  assert.ok(r.wsClose === 4003 || r.wsClose === 4004, "must close with auth code, not crash");
+});
+
+test("defaultVerifier: malformed Bearer through requireJwt returns 401 (never 5xx, never throw)", async () => {
+  process.env.VCAP_SERVICES = JSON.stringify({
+    xsuaa: [{
+      credentials: {
+        xsappname: "figaf-manager-xsuaa",
+        clientid: "sb-figaf-manager-xsuaa",
+        clientsecret: "secret",
+        url: "https://example.authentication.eu10.hana.ondemand.com",
+        uaadomain: "authentication.eu10.hana.ondemand.com",
+      },
+    }],
+  });
+  const { req, res, getStatus, getBody } = fakeReqRes({ jwt: "not.a.real.jwt" });
+  await new Promise((resolve) => {
+    xa.requireJwt(req, res, () => resolve());
+    // The verifier may finish via response.status() instead of next() — poll
+    // for that path too, capped to a few ticks so the test fails fast on hang.
+    let ticks = 0;
+    const settled = setInterval(() => {
+      if (getStatus() !== 200 || ++ticks > 50) {
+        clearInterval(settled);
+        resolve();
+      }
+    }, 10);
+  });
+  // 401 (INVALID) is the contract. A 200, 500, or unhandled throw all fail
+  // this test — exactly the failure modes the production bug exhibited.
+  assert.equal(getStatus(), 401);
+  assert.equal(getBody().error, "unauthenticated");
+});

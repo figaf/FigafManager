@@ -500,6 +500,19 @@ if (require.main === module) {
     console.log(`DEPLOYMENT_ZIP_URL: ${DEPLOYMENT_ZIP_URL}`);
   });
 
+  // A single missed Promise rejection (e.g. an auth library throwing inside
+  // an executor we don't await) used to take the entire wizard down — see the
+  // v4.13 @sap/xssec API mismatch that returned 502s after XSUAA upgrade.
+  // Auth failures must respond 401/403; verifier bugs must respond 500; the
+  // dyno must never EOF mid-request just because a Promise was orphaned.
+  process.on("unhandledRejection", (reason) => {
+    const msg = reason && reason.stack ? reason.stack : String(reason);
+    console.error("[FATAL-IGNORED] unhandledRejection: " + msg);
+  });
+  process.on("uncaughtException", (err) => {
+    console.error("[FATAL-IGNORED] uncaughtException: " + (err && err.stack ? err.stack : String(err)));
+  });
+
   // ─── Graceful shutdown (CF SIGTERM) ──────────────────────────────────────
   process.on("SIGTERM", () => {
     for (const sess of sessions.values()) {

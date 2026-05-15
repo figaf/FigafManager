@@ -27,7 +27,8 @@
       "Bash(npm --workspace apps/figaf-manager test)",
       "Bash(npm --workspace apps/figaf-manager test --silent)",
       "Bash(npm test *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(awk '/RTR/0|RTR/1/' \"C:\\\\Figaf-installer\\\\logs\\\\figaf-manager-approuter-2026-05-14 13_47_19.534+0000.txt\")"
     ]
   }
 }

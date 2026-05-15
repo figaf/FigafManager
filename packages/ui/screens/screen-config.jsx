@@ -2,6 +2,87 @@
 
 const fg = () => (typeof window !== "undefined" && window.figaf) || null;
 
+function DockerVersionCombo({ value, onChange, tags }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+
+  React.useEffect(() => {
+    function onDown(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position: "relative", display: "flex" }}>
+      <input
+        className="input is-mono"
+        style={{ flex: 1, borderRadius: "6px 0 0 6px", borderRight: "none" }}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="2403-btp"
+        onFocus={() => tags.length && setOpen(true)}
+      />
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          flexShrink: 0,
+          width: 32,
+          background: "var(--surface)",
+          border: "1px solid var(--border-strong)",
+          borderLeft: "none",
+          borderRadius: "0 6px 6px 0",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "var(--ink-3)",
+        }}
+        tabIndex={-1}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 5l3 3 3-3"/>
+        </svg>
+      </button>
+      {open && tags.length > 0 && (
+        <div style={{
+          position: "absolute",
+          top: "calc(100% + 2px)",
+          left: 0,
+          right: 0,
+          background: "var(--surface)",
+          border: "1px solid var(--border-strong)",
+          borderRadius: 6,
+          zIndex: 200,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+          overflow: "hidden",
+        }}>
+          {tags.map((tag) => (
+            <div
+              key={tag}
+              onMouseDown={() => { onChange(tag); setOpen(false); }}
+              style={{
+                padding: "7px 12px",
+                cursor: "pointer",
+                fontSize: 12.5,
+                fontFamily: "var(--font-mono)",
+                color: "var(--ink-0)",
+                background: tag === value ? "var(--fg-blue-soft)" : "transparent",
+              }}
+              onMouseEnter={(e) => { if (tag !== value) e.currentTarget.style.background = "var(--surface-2)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = tag === value ? "var(--fg-blue-soft)" : "transparent"; }}
+            >
+              {tag}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════
 // 4. Deploy config
 // ═══════════════════════════════════════════════════════════
@@ -134,18 +215,11 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
             <label className="field-label">
               Docker image version <span className="field-required">*</span>
             </label>
-            <input
-              list="dockerVersionsList"
-              className="select is-mono"
+            <DockerVersionCombo
               value={cfg.dockerVersion || ""}
-              onChange={(e) => setCfg({ dockerVersion: e.target.value })}
-              placeholder="2403-btp"
+              onChange={(v) => setCfg({ dockerVersion: v })}
+              tags={dockerTags}
             />
-            <datalist id="dockerVersionsList">
-              {dockerTags.map((tag) => (
-                <option key={tag} value={tag} />
-              ))}
-            </datalist>
             <div className="field-hint">Latest Figaf image tag from Docker Hub (auto-detected). Select from dropdown or enter manually.</div>
           </div>
         </div>
