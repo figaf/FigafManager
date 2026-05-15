@@ -149,6 +149,7 @@
       submitChoice:         function (choice) { return rpc("btp:submitChoice", { choice: choice }); },
       cancelLogin:          function ()  { return rpc("btp:cancelLogin"); },
       selectGlobalAccount:  function (subdomain) { return rpc("btp:selectGlobalAccount", { subdomain: subdomain }); },
+      selectSubaccount:     function (guid) { return rpc("btp:selectSubaccount", { guid: guid }); },
       logout:               function ()  { return rpc("btp:logout"); },
       listEnvInstances:     function ()  { return rpc("btp:listEnvInstances"); },
       listUsers:            function ()  { return rpc("btp:listUsers"); },

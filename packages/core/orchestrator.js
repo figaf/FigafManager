@@ -64,10 +64,24 @@ function createOrchestrator({ host, send, audit }) {
     subaccount: null,
     globalAccountSubdomain: null,
     btpLoginWaitingForChoice: false,
+    subaccountWaitingForChoice: false,
+    subaccountList: null,
     cfLoginProc: null,
     btpLoginProc: null,
     deployDirResolved: null,
   };
+
+  // SAP BTP region → hyperscaler mapping. Suffix tells you the provider for
+  // every region we've seen so far (*10/11/12 = AWS, *20/21 = Azure, *30/31 = GCP),
+  // Unknown regions fall through to null so the UI just hides the chip.
+  function providerFromRegion(region) {
+    if (!region) return null;
+    const r = String(region).toLowerCase();
+    if (/1\d$/.test(r)) return "AWS";
+    if (/2\d$/.test(r)) return "Microsoft Azure";
+    if (/3\d$/.test(r)) return "Google Cloud Platform";
+    return null;
+  }
 
   // Audit logger is optional — callers that don't pass one get a no-op shim
   // so the orchestrator stays runnable in test harnesses and from any
@@ -317,6 +331,29 @@ function createOrchestrator({ host, send, audit }) {
     }
 
     return state.deployDirResolved;
+  }
+
+  // Commit an enumerated subaccount entry as the active target: runs
+  // `btp target --subaccount <guid>` so the CLI's notion of the target stays
+  // in sync with our state, then writes state.landscape/subaccount/org and
+  // returns the env payload shape that callers feed into `btp:loggedIn`.
+  async function applySubaccountSelection(entry) {
+    const t = await run(resolveBtp(), ["target", "--subaccount", entry.guid], { source: "btp" });
+    if (t.code !== 0) {
+      return { ok: false, error: t.stderr || "Failed to target subaccount" };
+    }
+    state.landscape = entry.landscape;
+    state.subaccount = entry.guid;
+    state.org = entry.org;
+    return {
+      ok: true,
+      landscape: entry.landscape,
+      apiUrl: `https://api.${entry.landscape.replace(/^cf-/, "cf.")}.hana.ondemand.com`,
+      org: entry.org,
+      subaccount: entry.guid,
+      subaccountName: entry.displayName,
+      subdomain: state.globalAccountSubdomain,
+    };
   }
 
   // ─── handlers ─────────────────────────────────────────────────────────────
@@ -629,7 +666,9 @@ function createOrchestrator({ host, send, audit }) {
             }
           }
           const env = await handlers["btp:listEnvInstances"]();
-          send("btp:loggedIn", { ...env, subdomain: state.globalAccountSubdomain });
+          if (!env.choicePending) {
+            send("btp:loggedIn", { ...env, subdomain: state.globalAccountSubdomain });
+          }
         } else {
           send("btp:loginFailed", { code, signal });
         }
@@ -665,8 +704,13 @@ function createOrchestrator({ host, send, audit }) {
         return { ok: false, error: r.stderr || "Failed to target global account" };
       }
       state.globalAccountSubdomain = subdomain;
+      // GA switch invalidates the previous subaccount enumeration.
+      state.subaccountList = null;
+      state.subaccountWaitingForChoice = false;
       const env = await handlers["btp:listEnvInstances"]();
-      send("btp:loggedIn", { ...env, subdomain });
+      if (!env.choicePending) {
+        send("btp:loggedIn", { ...env, subdomain });
+      }
       return { ok: true };
     },
 
@@ -679,9 +723,22 @@ function createOrchestrator({ host, send, audit }) {
       state.org = null;
       state.space = null;
       state.user = null;
+      state.subaccountList = null;
+      state.subaccountWaitingForChoice = false;
       return { ok: true };
     },
 
+    // Enumerate every subaccount in the targeted GA and probe each for a
+    // Cloud Foundry environment instance. Outcomes:
+    //   0 CF-enabled  → return error (today's behavior)
+    //   1 CF-enabled  → silent auto-pick, target it, return env payload
+    //   >1 CF-enabled → cache the list, emit `btp:subaccountChoice`, return
+    //                   { ok: true, choicePending: true } — callers must NOT
+    //                   emit `btp:loggedIn` until the user picks via
+    //                   `btp:selectSubaccount`.
+    // Non-CF subaccounts are still returned in the choice payload (with
+    // cfEnabled:false) so the picker can render them as disabled — gives users
+    // visibility into the full GA, mirroring `btp target`'s output.
     async "btp:listEnvInstances"() {
       const subRes = await run(resolveBtp(), ["--format", "json", "list", "accounts/subaccount"], { source: "btp" });
       if (subRes.code !== 0) return { ok: false, error: subRes.stderr || "Failed to list subaccounts" };
@@ -696,41 +753,75 @@ function createOrchestrator({ host, send, audit }) {
       }
       if (!subaccounts.length) return { ok: false, error: "No subaccounts found in current global account" };
 
+      const enumerated = [];
       for (const sa of subaccounts) {
         const said = sa.guid || sa.subaccountGUID || sa.id;
         if (!said) continue;
-        const r = await run(resolveBtp(), ["--format", "json", "list", "accounts/environment-instance", "--subaccount", said], { source: "btp" });
-        if (r.code !== 0) continue;
-
-        let parsed;
-        try {
-          const jsonStart = r.stdout.indexOf("{");
-          parsed = jsonStart >= 0 ? JSON.parse(r.stdout.slice(jsonStart)) : null;
-        } catch { continue; }
-        if (!parsed) continue;
-
-        const cf = (parsed.environmentInstances || []).find((e) => e.environmentType === "cloudfoundry");
-        if (!cf) continue;
-
-        state.landscape = cf.landscapeLabel;
-        state.subaccount = cf.subaccountGUID || said;
-        let org = null;
-        try {
-          const labels = typeof cf.labels === "string" ? JSON.parse(cf.labels) : cf.labels;
-          org = labels?.["Org Name"] || null;
-        } catch {}
-        state.org = org;
-        return {
-          ok: true,
-          landscape: cf.landscapeLabel,
-          apiUrl: `https://api.${cf.landscapeLabel.replace(/^cf-/, "cf.")}.hana.ondemand.com`,
-          org,
-          subaccount: state.subaccount,
-          subaccountName: sa.displayName || sa.name || null,
-          subdomain: state.globalAccountSubdomain,
+        const entry = {
+          guid: said,
+          displayName: sa.displayName || sa.name || said,
+          subdomain: sa.subdomain || null,
+          region: sa.region || null,
+          provider: providerFromRegion(sa.region),
+          state: sa.state || null,
+          cfEnabled: false,
+          landscape: null,
+          org: null,
         };
+
+        const r = await run(resolveBtp(), ["--format", "json", "list", "accounts/environment-instance", "--subaccount", said], { source: "btp" });
+        if (r.code === 0) {
+          let parsed = null;
+          try {
+            const jsonStart = r.stdout.indexOf("{");
+            parsed = jsonStart >= 0 ? JSON.parse(r.stdout.slice(jsonStart)) : null;
+          } catch {}
+          const cf = parsed && (parsed.environmentInstances || []).find((e) => e.environmentType === "cloudfoundry");
+          if (cf) {
+            entry.cfEnabled = true;
+            entry.landscape = cf.landscapeLabel;
+            entry.guid = cf.subaccountGUID || said;
+            try {
+              const labels = typeof cf.labels === "string" ? JSON.parse(cf.labels) : cf.labels;
+              entry.org = labels?.["Org Name"] || null;
+            } catch {}
+          }
+        }
+        enumerated.push(entry);
       }
-      return { ok: false, error: "No Cloud Foundry environment found in any subaccount" };
+
+      state.subaccountList = enumerated;
+      const cfList = enumerated.filter((e) => e.cfEnabled);
+
+      if (cfList.length === 0) {
+        return { ok: false, error: "No Cloud Foundry environment found in any subaccount" };
+      }
+      if (cfList.length === 1) {
+        return await applySubaccountSelection(cfList[0]);
+      }
+
+      state.subaccountWaitingForChoice = true;
+      send("btp:subaccountChoice", {
+        subaccounts: enumerated.map((e) => ({
+          guid: e.guid,
+          displayName: e.displayName,
+          subdomain: e.subdomain,
+          region: e.region,
+          provider: e.provider,
+          cfEnabled: e.cfEnabled,
+        })),
+      });
+      return { ok: true, choicePending: true };
+    },
+
+    async "btp:selectSubaccount"({ guid }) {
+      const entry = (state.subaccountList || []).find((e) => e.guid === guid);
+      if (!entry) return { ok: false, error: "Unknown subaccount" };
+      if (!entry.cfEnabled) return { ok: false, error: "Subaccount has no Cloud Foundry environment" };
+      state.subaccountWaitingForChoice = false;
+      const env = await applySubaccountSelection(entry);
+      send("btp:loggedIn", { ...env, subdomain: state.globalAccountSubdomain });
+      return env;
     },
 
     async "btp:listUsers"() {

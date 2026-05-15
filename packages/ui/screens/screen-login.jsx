@@ -9,6 +9,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
   const { login } = ctx;
   const setLogin = (patch) => setCtx(c => ({ ...c, login: { ...c.login, ...patch } }));
   const [gaChoice, setGaChoice] = React.useState(null);
+  const [subaccountChoice, setSubaccountChoice] = React.useState(null);
 
   const btpLoggedIn = login.btpStatus === "done";
   const cfLoggedIn = login.cfStatus === "done";
@@ -29,8 +30,12 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     const offGaChoice = api.on("btp:gaChoice", (p) => {
       setGaChoice(p);
     });
+    const offSubChoice = api.on("btp:subaccountChoice", (p) => {
+      setSubaccountChoice(p);
+    });
     const offBtpOk = api.on("btp:loggedIn", (env) => {
       setGaChoice(null);
+      setSubaccountChoice(null);
       if (env && env.ok) {
         setLogin({
           btpStatus: "done",
@@ -47,6 +52,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     });
     const offBtpFail = api.on("btp:loginFailed", () => {
       setGaChoice(null);
+      setSubaccountChoice(null);
       setLogin({ btpStatus: "error" });
     });
     const offBtpSso = api.on("btp:ssoUrl", ({ url }) => {
@@ -57,6 +63,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
       offCf1 && offCf1();
       offCf2 && offCf2();
       offGaChoice && offGaChoice();
+      offSubChoice && offSubChoice();
       offBtpOk && offBtpOk();
       offBtpFail && offBtpFail();
       offBtpSso && offBtpSso();
@@ -68,6 +75,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     const api = fg();
     if (!api) return;
     setGaChoice(null);
+    setSubaccountChoice(null);
     setLogin({ btpStatus: "running" });
     await api.btp.loginStart();
   }
@@ -76,14 +84,28 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     const api = fg();
     if (!api) return;
     setGaChoice(null);
+    setSubaccountChoice(null);
     await api.btp.cancelLogin();
     setLogin({ btpStatus: "idle" });
+  }
+
+  async function selectSubaccount(guid) {
+    const api = fg();
+    if (!api) return;
+    setSubaccountChoice(null);
+    setLogin({ btpStatus: "running" });
+    const r = await api.btp.selectSubaccount(guid);
+    if (r && r.ok === false) {
+      appendLog([{ type: "err", text: r.error || "Failed to target subaccount" }]);
+      setLogin({ btpStatus: "error" });
+    }
   }
 
   async function selectGa(val) {
     const api = fg();
     if (!api) return;
     setGaChoice(null);
+    setSubaccountChoice(null);
     setLogin({ btpStatus: "running" });
     if (typeof val === "number") {
       // Interactive mode: write the choice index to the live btp login stdin
@@ -185,7 +207,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
         </div>
 
         <div className="card" style={{ marginBottom: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: (btpLoggedIn || gaChoice) ? 10 : 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: (btpLoggedIn || gaChoice || subaccountChoice) ? 10 : 14 }}>
             <div style={{ width: 36, height: 36, borderRadius: 8, background: "var(--fg-blue-soft)", color: "var(--fg-blue)", display: "grid", placeItems: "center" }}>
               <Ico.Cloud />
             </div>
@@ -199,10 +221,10 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                 Sign out
               </button>
             )}
-            {!btpLoggedIn && login.btpStatus === "running" && gaChoice && (
+            {!btpLoggedIn && login.btpStatus === "running" && (gaChoice || subaccountChoice) && (
               <span className="pill blue">Awaiting selection</span>
             )}
-            {!btpLoggedIn && login.btpStatus === "running" && !gaChoice && (
+            {!btpLoggedIn && login.btpStatus === "running" && !gaChoice && !subaccountChoice && (
               <span className="pill blue"><Ico.Spinner /> Connecting…</span>
             )}
             {login.btpStatus === "idle" && (
@@ -263,6 +285,68 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                         )}
                       </div>
                       <Ico.ArrowRight />
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+                <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={cancelBtpLogin}>
+                  Cancel sign-in
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!btpLoggedIn && subaccountChoice && subaccountChoice.subaccounts && subaccountChoice.subaccounts.length > 0 && (
+            <div className="slide-in" style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 4 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 4 }}>
+                Choose a subaccount
+              </div>
+              <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 10 }}>
+                This global account has multiple subaccounts. Pick the one you want to deploy to.
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {subaccountChoice.subaccounts.map((sa, i) => {
+                  const region = sa.region;
+                  const provider = sa.provider;
+                  const meta = [
+                    region && `region: ${region}`,
+                    provider && `provider: ${provider}`,
+                    sa.subdomain && `subdomain: ${sa.subdomain}`,
+                  ].filter(Boolean);
+                  const disabled = !sa.cfEnabled;
+                  return (
+                    <button
+                      key={sa.guid || i}
+                      className="choice"
+                      disabled={disabled}
+                      title={disabled ? "No Cloud Foundry environment in this subaccount" : undefined}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        padding: "12px 14px",
+                        gap: 14,
+                        textAlign: "left",
+                        opacity: disabled ? 0.5 : 1,
+                        cursor: disabled ? "not-allowed" : "pointer",
+                      }}
+                      onClick={() => { if (!disabled) selectSubaccount(sa.guid); }}
+                    >
+                      <div style={{ width: 28, height: 28, borderRadius: 6, background: "var(--fg-blue-soft)", color: "var(--fg-blue)", display: "grid", placeItems: "center", flexShrink: 0, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-mono)" }}>
+                        {i + 1}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-0)", display: "flex", alignItems: "center", gap: 8 }}>
+                          {sa.displayName || sa.guid || `Subaccount ${i + 1}`}
+                          {disabled && <span className="pill gray" style={{ fontSize: 10 }}>No CF</span>}
+                        </div>
+                        {meta.length > 0 && (
+                          <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 2, fontFamily: "var(--font-mono)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {meta.join(" · ")}
+                          </div>
+                        )}
+                      </div>
+                      {!disabled && <Ico.ArrowRight />}
                     </button>
                   );
                 })}

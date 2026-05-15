@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("figaf", {
     submitChoice: (choice) => ipcRenderer.invoke("btp:submitChoice", { choice }),
     cancelLogin: () => ipcRenderer.invoke("btp:cancelLogin"),
     selectGlobalAccount: (subdomain) => ipcRenderer.invoke("btp:selectGlobalAccount", { subdomain }),
+    selectSubaccount: (guid) => ipcRenderer.invoke("btp:selectSubaccount", { guid }),
     logout: () => ipcRenderer.invoke("btp:logout"),
     listEnvInstances: () => ipcRenderer.invoke("btp:listEnvInstances"),
     listUsers: () => ipcRenderer.invoke("btp:listUsers"),
