@@ -79,6 +79,9 @@ contextBridge.exposeInMainWorld("figaf", {
     dockerHubBtpTags: () => ipcRenderer.invoke("config:dockerHubBtpTags"),
     readVars: () => ipcRenderer.invoke("config:readVars"),
     writeVars: (vars) => ipcRenderer.invoke("config:writeVars", vars),
+    readDbConfig: () => ipcRenderer.invoke("config:readDbConfig"),
+    writeDbConfig: (payload) => ipcRenderer.invoke("config:writeDbConfig", payload),
+    dbSchema: (payload) => ipcRenderer.invoke("config:dbSchema", payload),
     deployDir: () => ipcRenderer.invoke("config:deployDir"),
   },
 

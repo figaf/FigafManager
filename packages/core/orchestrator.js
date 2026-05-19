@@ -5,6 +5,7 @@ const fsp = fs.promises;
 const os = require("os");
 const { spawn } = require("child_process");
 const https = require("https");
+const dbSchemas = require("./db-schemas");
 
 const DEPLOYMENT_ZIP_URL =
   process.env.FIGAF_DEPLOYMENT_ZIP_URL ||
@@ -62,6 +63,7 @@ function createOrchestrator({ host, send, audit }) {
     space: null,
     user: null,
     subaccount: null,
+    provider: null,
     globalAccountSubdomain: null,
     btpLoginWaitingForChoice: false,
     subaccountWaitingForChoice: false,
@@ -345,6 +347,7 @@ function createOrchestrator({ host, send, audit }) {
     state.landscape = entry.landscape;
     state.subaccount = entry.guid;
     state.org = entry.org;
+    state.provider = entry.provider || null;
     return {
       ok: true,
       landscape: entry.landscape,
@@ -353,6 +356,7 @@ function createOrchestrator({ host, send, audit }) {
       subaccount: entry.guid,
       subaccountName: entry.displayName,
       subdomain: state.globalAccountSubdomain,
+      provider: entry.provider || null,
     };
   }
 
@@ -707,6 +711,7 @@ function createOrchestrator({ host, send, audit }) {
       // GA switch invalidates the previous subaccount enumeration.
       state.subaccountList = null;
       state.subaccountWaitingForChoice = false;
+      state.provider = null;
       const env = await handlers["btp:listEnvInstances"]();
       if (!env.choicePending) {
         send("btp:loggedIn", { ...env, subdomain });
@@ -723,6 +728,7 @@ function createOrchestrator({ host, send, audit }) {
       state.org = null;
       state.space = null;
       state.user = null;
+      state.provider = null;
       state.subaccountList = null;
       state.subaccountWaitingForChoice = false;
       return { ok: true };
@@ -1038,6 +1044,51 @@ function createOrchestrator({ host, send, audit }) {
       }
       await fsp.writeFile(file, text, "utf8");
       return { ok: true, path: file };
+    },
+
+    /**
+     * Read the current db.json verbatim. Used by the UI to seed the
+     * PostgreSQL parameters form (and to keep parity with config:readVars).
+     */
+    async "config:readDbConfig"() {
+      const deployDir = await resolveDeployDir();
+      const file = path.join(deployDir, "db.json");
+      try {
+        const text = await fsp.readFile(file, "utf8");
+        return { ok: true, text, path: file };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    },
+
+    /**
+     * Write <deployDir>/db.json from a structured input. The renderer sends:
+     *   { trial: boolean, provider: "AWS"|"Microsoft Azure"|"Google Cloud Platform"|null,
+     *     fields: { engine_version, locale, storage, memory, ... } }
+     * The orchestrator owns the schema map (packages/core/db-schemas.js); the
+     * renderer cannot inject arbitrary keys. Trial schema is the limited
+     * { engine_version, locale } the broker accepts on trial subaccounts;
+     * hyperscaler schema is the full per-provider shape and includes the
+     * Figaf-required postgresql_extensions list.
+     */
+    async "config:writeDbConfig"({ trial, provider, fields } = {}) {
+      const built = dbSchemas.buildDbConfig({ trial: !!trial, provider, fields: fields || {} });
+      if (!built.ok) return built;
+      const deployDir = await resolveDeployDir();
+      const file = path.join(deployDir, "db.json");
+      await fsp.writeFile(file, JSON.stringify(built.json, null, 4) + "\n", "utf8");
+      return { ok: true, path: file, json: built.json };
+    },
+
+    /**
+     * Inspect the schema metadata (defaults + allowed UI fields) for a
+     * (trial, provider) pair. Lets the renderer render a sane form without
+     * embedding SAP-side schema knowledge.
+     */
+    async "config:dbSchema"({ trial, provider } = {}) {
+      const defaults = dbSchemas.defaultsFor(!!trial, provider);
+      const fields = dbSchemas.allowedFields(!!trial, provider);
+      return { ok: !!defaults, defaults: defaults || null, fields };
     },
 
     // XSUAA upgrade (v2) ──────────────────────────────────────────────────────

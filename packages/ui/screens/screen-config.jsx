@@ -86,15 +86,84 @@ function DockerVersionCombo({ value, onChange, tags }) {
 // ═══════════════════════════════════════════════════════════
 // 4. Deploy config
 // ═══════════════════════════════════════════════════════════
+
+// Field descriptors for the PostgreSQL parameters section. Trial mode shows
+// only the limited pair the broker accepts; hyperscaler mode shows the
+// commonly-tuned subset (storage, memory, retention, HA/access). The full
+// schema (audit_log_level, maintenance_window, db_parameters, …) is written
+// from orchestrator defaults — no UI affordance to keep "two-click deploy".
+const PG_FIELDS_TRIAL = [
+  { key: "engine_version", label: "Engine version", placeholder: "16", hint: "PostgreSQL major version." },
+  { key: "locale",         label: "Locale",         placeholder: "en_US", hint: "Database locale." },
+];
+const PG_FIELDS_HYPERSCALER_COMMON = [
+  { key: "engine_version",          label: "Engine version",            placeholder: "16",    hint: "PostgreSQL major version." },
+  { key: "locale",                  label: "Locale",                    placeholder: "en_US", hint: "Database locale." },
+  { key: "storage",                 label: "Storage (GB)",              placeholder: "20",    hint: "Disk size in gigabytes.", type: "number" },
+  { key: "memory",                  label: "Memory (GB)",               placeholder: "2",     hint: "Instance memory in gigabytes.", type: "number" },
+  { key: "backup_retention_period", label: "Backup retention (days)",   placeholder: "14",    hint: "How long backups are kept.", type: "number" },
+  { key: "public_access",           label: "Public access",             type: "boolean",      hint: "Expose the DB to the public internet." },
+];
+const PG_FIELD_MULTI_AZ           = { key: "multi_az",            label: "Multi-AZ",          type: "boolean", hint: "Replicate across availability zones (paid plans only)." };
+const PG_FIELD_CROSS_REGION_BACKUP = { key: "cross_region_backup", label: "Cross-region backup", type: "boolean", hint: "Replicate backups to a second region (GCP only)." };
+
+function pgFieldsFor(trial, provider) {
+  if (trial) return PG_FIELDS_TRIAL;
+  const p = (provider || "").toLowerCase();
+  const fields = PG_FIELDS_HYPERSCALER_COMMON.slice();
+  if (p.includes("google") || p.includes("gcp")) {
+    fields.push(PG_FIELD_CROSS_REGION_BACKUP);
+  } else {
+    fields.push(PG_FIELD_MULTI_AZ);
+  }
+  return fields;
+}
+
+function defaultsFor(trial, provider) {
+  if (trial) return { engine_version: "16", locale: "en_US" };
+  const p = (provider || "").toLowerCase();
+  if (p.includes("aws") || p.includes("amazon")) {
+    return { engine_version: "16", locale: "en_US", storage: 20, memory: 2, backup_retention_period: 14, multi_az: false, public_access: false };
+  }
+  if (p.includes("azure") || p.includes("microsoft")) {
+    return { engine_version: "16", locale: "en_US", storage: 20, memory: 2, backup_retention_period: 14, multi_az: false, public_access: false };
+  }
+  if (p.includes("google") || p.includes("gcp")) {
+    return { engine_version: "16", locale: "en_US", storage: 20, memory: 2, backup_retention_period: 7, public_access: false, cross_region_backup: true };
+  }
+  return { engine_version: "16", locale: "en_US" };
+}
+
 function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
   const cfg = ctx.config;
   const setCfg = (patch) => setCtx(c => ({ ...c, config: { ...c.config, ...patch } }));
+  const setDbParam = (key, value) =>
+    setCtx(c => ({ ...c, config: { ...c.config, dbParams: { ...(c.config.dbParams || {}), [key]: value } } }));
   const [domains, setDomains] = React.useState([]);
   const [plans, setPlans] = React.useState(ctx.dbPlans);
   const [dockerTags, setDockerTags] = React.useState([]);
   const [writing, setWriting] = React.useState(false);
 
-  const valid = cfg.id && cfg.domain && cfg.dbPlan && cfg.dockerVersion;
+  // Trial autodetection: the global account subdomain contains "trial" for
+  // trial tenants (e.g. "12345trial-ga"). Seed lazily on mount so user
+  // overrides of trialPg survive a re-render. Real-tenant override is the
+  // checkbox at the top of the PG section.
+  React.useEffect(() => {
+    if (cfg.trialPg !== undefined) return;
+    const sub = (ctx.login && ctx.login.subdomain) || "";
+    const trial = /trial/i.test(sub);
+    setCfg({ trialPg: trial });
+    // eslint-disable-next-line
+  }, [ctx.login && ctx.login.subdomain]);
+
+  const trialPg = cfg.trialPg === true;
+  const provider = (ctx.login && ctx.login.provider) || "";
+  const pgFields = pgFieldsFor(trialPg, provider);
+  const pgDefaults = defaultsFor(trialPg, provider);
+  const dbParams = cfg.dbParams || {};
+  const providerKnown = trialPg || !!provider;
+
+  const valid = cfg.id && cfg.domain && cfg.dbPlan && cfg.dockerVersion && providerKnown;
 
   React.useEffect(() => {
     const api = fg();
@@ -145,8 +214,15 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
       useCloudConnectorForSmtpIntegration: cfg.useCloudConnectorForSmtpIntegration,
       cloudConnectorDestinationNameForSmtpIntegration: cfg.cloudConnectorDestinationNameForSmtpIntegration,
     });
+    if (!r || !r.ok) { setWriting(false); return; }
+    const r2 = await api.config.writeDbConfig({
+      trial: trialPg,
+      provider,
+      fields: dbParams,
+    });
     setWriting(false);
-    if (r && r.ok) onNext();
+    if (r2 && r2.ok) onNext();
+    else if (appendLog && r2 && r2.error) appendLog([{ type: "err", text: r2.error }]);
   }
 
   return (
@@ -376,6 +452,81 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="divider" />
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "0 0 12px" }}>
+          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)" }}>PostgreSQL parameters</div>
+          <span className="pill gray">
+            {trialPg
+              ? "trial schema · limited"
+              : (provider ? `${provider} schema` : "select subaccount first")}
+          </span>
+        </div>
+
+        <div className="field" style={{ marginBottom: 12 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={trialPg}
+              onChange={(e) => setCfg({ trialPg: e.target.checked })}
+              style={{ cursor: "pointer" }}
+            />
+            <span><strong>Trial subaccount</strong> — write the limited <span className="kbd">db.json</span> schema</span>
+          </label>
+          <div className="field-hint" style={{ marginLeft: 24 }}>
+            Trial subaccounts only accept <span className="kbd">engine_version</span> and <span className="kbd">locale</span>.
+            Auto-detected from the global account subdomain
+            {ctx.login && ctx.login.subdomain ? <> (<span className="kbd">{ctx.login.subdomain}</span>)</> : null}.
+          </div>
+        </div>
+
+        {!trialPg && !provider && (
+          <div style={{ padding: "10px 12px", borderRadius: 6, background: "rgba(234,179,8,0.1)", border: "1px solid rgba(234,179,8,0.3)", fontSize: 12, color: "var(--ink-2)", marginBottom: 12 }}>
+            Provider (AWS / Azure / GCP) couldn't be detected from the subaccount region.
+            Either tick "Trial subaccount" above, or go back to the sign-in step and pick a subaccount with a known landscape.
+          </div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          {pgFields.map((f) => {
+            const current = dbParams[f.key];
+            const def = pgDefaults[f.key];
+            if (f.type === "boolean") {
+              const checked = current === undefined ? !!def : current === true;
+              return (
+                <div key={f.key} className="field">
+                  <label className="field-label">{f.label}</label>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "10px 0" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13 }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => setDbParam(f.key, e.target.checked)}
+                        style={{ cursor: "pointer" }}
+                      />
+                      {f.hint}
+                    </label>
+                  </div>
+                </div>
+              );
+            }
+            const value = current === undefined ? (def == null ? "" : String(def)) : current;
+            return (
+              <div key={f.key} className="field">
+                <label className="field-label">{f.label}</label>
+                <input
+                  className="input is-mono"
+                  type={f.type === "number" ? "number" : "text"}
+                  value={value}
+                  onChange={(e) => setDbParam(f.key, e.target.value)}
+                  placeholder={f.placeholder}
+                />
+                <div className="field-hint">{f.hint}</div>
+              </div>
+            );
+          })}
         </div>
       </div>
 

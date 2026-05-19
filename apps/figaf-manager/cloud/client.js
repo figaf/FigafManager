@@ -189,6 +189,9 @@
       deployDir:            function ()  { return rpc("config:deployDir"); },
       readVars:             function ()  { return rpc("config:readVars"); },
       writeVars:            function (a) { return rpc("config:writeVars", a); },
+      readDbConfig:         function ()  { return rpc("config:readDbConfig"); },
+      writeDbConfig:        function (a) { return rpc("config:writeDbConfig", a); },
+      dbSchema:             function (a) { return rpc("config:dbSchema", a); },
     },
 
     shell: {

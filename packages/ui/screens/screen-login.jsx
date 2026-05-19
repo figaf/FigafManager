@@ -43,6 +43,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
           subaccount: env.subaccount || "",
           subaccountName: env.subaccountName || "",
           subdomain: env.subdomain || "",
+          provider: env.provider || "",
           org: env.org || "",
           apiUrl: env.apiUrl,
         });
@@ -122,9 +123,12 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     await api.btp.logout();
     setLogin({
       btpStatus: "idle", cfStatus: "idle",
-      landscape: "", subaccount: "", subaccountName: "", subdomain: "", org: "", space: "", user: "", apiUrl: "",
+      landscape: "", subaccount: "", subaccountName: "", subdomain: "", provider: "", org: "", space: "", user: "", apiUrl: "",
       passcode: "", passcodeRequested: false,
     });
+    // Clear PostgreSQL auto-detection so the next login re-seeds it from the
+    // new global account's subdomain (trial vs real tenant can differ).
+    setCtx(c => ({ ...c, config: { ...c.config, trialPg: undefined, dbParams: {} } }));
   }
 
   async function handleCfLogout() {

@@ -33,6 +33,8 @@ function App() {
       landscape: "",
       apiUrl: "",
       subaccount: "",
+      subdomain: "",
+      provider: "",
       org: "",
       space: "",
     },
@@ -49,6 +51,11 @@ function App() {
       enableInstanceMonitoring: true,
       useCloudConnectorForSmtpIntegration: false,
       cloudConnectorDestinationNameForSmtpIntegration: "",
+      // PostgreSQL service params (db.json). trialPg is undefined until
+      // ScreenConfig seeds it from the login subdomain; dbParams collects the
+      // per-field overrides the operator types into the form.
+      trialPg: undefined,
+      dbParams: {},
     },
     dbPlans: [
       { name: "trial",       description: "Trial PostgreSQL service offering",              free: true,  size: "shared" },
