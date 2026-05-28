@@ -28,7 +28,7 @@ function ScreenChoice({ ctx, setCtx, onNext, onBack }) {
               <div className="choice-icon"><Ico.Shield /></div>
               <div className="choice-title">
                 Enable persistent SSO login
-                <span className="pill blue">Highly recommended</span>
+                <span className="pill blue">Recommended</span>
               </div>
               <div className="choice-desc">
                 Replace the one-time cockpit passcode with SAP IAS single sign-on. Provisions XSUAA + a bundled approuter in front of this wizard. Do this first — you can still deploy or connect afterwards.

@@ -1,0 +1,10 @@
+{
+    "roles": [
+        "ESBMessaging.send"
+    ],
+    "grant-types": [
+        "client_credentials"
+    ],
+    "redirect-uris": [],
+    "token-validity": 3600
+}

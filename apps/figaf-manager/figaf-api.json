@@ -1,0 +1,13 @@
+{
+    "roles": [
+        "AccessAllAccessPoliciesArtifacts",
+        "AuthGroup_Administrator",
+        "AuthGroup_BusinessExpert",
+        "AuthGroup_IntegrationDeveloper"
+    ],
+    "grant-types": [
+        "client_credentials"
+    ],
+    "redirect-uris": [],
+    "token-validity": 43200
+}

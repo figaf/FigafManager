@@ -1,0 +1,33 @@
+/* Overrides applied when the installer runs inside a browser tab (hosted mode).
+   The design's "window on a desktop background" card fills the viewport so the
+   wizard isn't a small 900x650 card floating in the middle of the page. */
+
+html, body {
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+body {
+  padding: 0;
+}
+
+.desktop-bg { display: none !important; }
+
+.win {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  margin: 0 !important;
+}
+
+.win-body {
+  height: calc(100vh - 32px);
+  min-height: 0;
+}
