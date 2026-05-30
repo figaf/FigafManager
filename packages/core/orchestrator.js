@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const fsp = fs.promises;
 const os = require("os");
+const crypto = require("crypto");
 const { spawn } = require("child_process");
 const https = require("https");
 const dbSchemas = require("./db-schemas");
@@ -299,12 +300,24 @@ function createOrchestrator({ host, send, audit }) {
   // Electron: copies the bundled snapshot to userData/deploy/ on first use.
   // Hosted:   downloads the GitHub archive into $HOME/deploy/ on first use
   //           and caches for the container lifetime.
+  //
+  // {force:true} wipes both the in-memory cache and the on-disk extraction
+  // before falling through to the normal first-use path. Used by the Update
+  // flow to guarantee the operator gets the live GitHub HEAD and not whatever
+  // template was downloaded during the original install.
 
-  async function resolveDeployDir() {
-    if (state.deployDirResolved) return state.deployDirResolved;
+  async function resolveDeployDir(opts) {
+    const force = !!(opts && opts.force);
+    if (state.deployDirResolved && !force) return state.deployDirResolved;
 
     const tmpl = host.resolveDeployTemplate();
     const userDir = host.getUserDataDir();
+
+    if (force && tmpl.kind === "github") {
+      const extracted = path.join(userDir, "Figaf-BTP-Deployment-btp-users");
+      try { fs.rmSync(extracted, { recursive: true, force: true }); } catch {}
+      state.deployDirResolved = null;
+    }
 
     if (tmpl.kind === "bundle") {
       const dest = path.join(userDir, "deploy");
@@ -314,7 +327,6 @@ function createOrchestrator({ host, send, audit }) {
       }
       state.deployDirResolved = dest;
     } else {
-      // GitHub zip: extracts to <userDir>/Figaf-BTP-Deployment-btp-users/
       fs.mkdirSync(userDir, { recursive: true });
       const zipPath = path.join(userDir, "btp-users.zip");
       log("deploy", "line", "Downloading deployment template…");
@@ -333,6 +345,51 @@ function createOrchestrator({ host, send, audit }) {
     }
 
     return state.deployDirResolved;
+  }
+
+  // ─── update-state.json helpers ────────────────────────────────────────────
+  // Persisted under <userDataDir>/figaf-tool-update/update-state.json. Each
+  // phase handler in the Update flow reads it on entry (to short-circuit
+  // already-completed phases on resume) and writes back its own phase marker
+  // on success. The file is intentionally scoped to the session dir — a fresh
+  // dyno gets a fresh state, which is the correct "resume window" boundary.
+
+  function updateStateDir() {
+    return path.join(host.getUserDataDir(), "figaf-tool-update");
+  }
+  function updateStatePath() {
+    return path.join(updateStateDir(), "update-state.json");
+  }
+
+  function readUpdateState() {
+    try {
+      const text = fs.readFileSync(updateStatePath(), "utf8");
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+
+  function writeUpdateState(patch) {
+    const dir = updateStateDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const prev = readUpdateState() || {};
+    const next = { ...prev, ...patch, updatedAt: new Date().toISOString() };
+    fs.writeFileSync(updateStatePath(), JSON.stringify(next, null, 2) + "\n", "utf8");
+    return next;
+  }
+
+  function clearUpdateState() {
+    try { fs.rmSync(updateStateDir(), { recursive: true, force: true }); } catch {}
+  }
+
+  function sha256OfFile(p) {
+    try {
+      const buf = fs.readFileSync(p);
+      return crypto.createHash("sha256").update(buf).digest("hex");
+    } catch {
+      return null;
+    }
   }
 
   // Commit an enumerated subaccount entry as the active target: runs

@@ -11,3 +11,4 @@
 - [Auth-kick suppression](project_auth_kick_suppression.md) — window.figafSuppressAuthKick: what it gates, who sets/reads it, scope boundaries
 - [XSUAA manager activation](project_xsuaa_manager_activation.md) — bind+restage is the only seam; /_manager-health poll gates Continue button; idempotency contract
 - [DB config design](project_db_config_design.md) — per-hyperscaler db.json configurability with trial autodetection; structured-input handler; provider plumbing path
+- [Rolling push over delete](feedback_rolling_push_over_delete.md) — Figaf Tool updates use `cf push --strategy rolling`, not stop+delete; when delete is still correct
