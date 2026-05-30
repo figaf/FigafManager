@@ -1795,6 +1795,81 @@ function createOrchestrator({ host, send, audit }) {
       return { ok: false, error: "timeout polling figaf-xsuaa" };
     },
 
+    // Rolling push of <deployId>-<role>. The manifest names both apps
+    // (<id>-app via the figaf-app block, <id>-router via the approuter
+    // block) using ((ID)) from vars.yml, so a single -f manifest.yml + the
+    // already-rewritten vars.yml suffices. --strategy rolling keeps the
+    // old instance serving until the new one is healthy (plan D2).
+    async "update:pushApp"({ deployId, role } = {}) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      if (!deployId) return { ok: false, error: "deployId required" };
+      if (role !== "app" && role !== "router") return { ok: false, error: "role must be 'app' or 'router'" };
+      const name = `${deployId}-${role}`;
+      const phase = role === "app" ? "push-app" : "push-router";
+      const deployDir = await resolveDeployDir();
+      send("update:phase", { phase, state: "running" });
+      const args = ["push", name, "--strategy", "rolling", "--vars-file", "vars.yml", "-f", "manifest.yml"];
+      const r = await run(resolveCf(), args, { source: "cf", cwd: deployDir });
+      if (r.code !== 0) {
+        const errText = r.stderr || `cf push ${name} failed`;
+        send("update:phase", { phase, state: "failed", error: errText });
+        writeUpdateState({ lastError: errText, lastFailedPhase: phase });
+        return { ok: false, name, error: errText };
+      }
+      writeUpdateState({ phase: role === "app" ? "app-pushed" : "router-pushed" });
+      send("update:phase", { phase, state: "done" });
+      return { ok: true, name, strategy: "rolling" };
+    },
+
+    async "update:verify"({ deployId } = {}) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      if (!deployId) return { ok: false, error: "deployId required" };
+      const appName = `${deployId}-app`;
+      const routerName = `${deployId}-router`;
+      const phase = "verify";
+      send("update:phase", { phase, state: "running" });
+
+      const g = await run(resolveCf(), ["app", "--guid", appName], { source: "cf" });
+      const guid = g.code === 0 ? g.stdout.trim().split(/\r?\n/).filter(Boolean).pop() : null;
+      let appImage = null;
+      if (guid) {
+        const d = await run(resolveCf(), ["curl", `/v3/apps/${guid}/droplets/current`], { source: "cf" });
+        if (d.code === 0) {
+          try { appImage = (JSON.parse(d.stdout).image) || null; } catch {}
+        }
+      }
+
+      const r = await run(resolveCf(), ["app", routerName], { source: "cf" });
+      const routerHealthy = r.code === 0 && /running|started/i.test(r.stdout);
+      // Public route comes from the router's "routes" line in cf app output.
+      // The exact text varies across cf versions, so we match a broad URL
+      // shape rather than a fragile header keyword.
+      let route = null;
+      const urlMatch = /(https?:\/\/[^\s,]+)/i.exec(r.stdout);
+      if (urlMatch) route = urlMatch[1].replace(/^https?:\/\//, "");
+      if (!route) {
+        const lineMatch = /^routes:\s+(\S+)/im.exec(r.stdout);
+        if (lineMatch) route = lineMatch[1];
+      }
+
+      const state = readUpdateState() || {};
+      const targetTag = state.targetImageTag;
+      const tagMatches = !targetTag || (appImage && appImage.endsWith(`:${targetTag}`));
+
+      if (!appImage || !routerHealthy || !tagMatches) {
+        const detail = !appImage ? "could not read app image"
+          : !tagMatches ? `image tag mismatch (got ${appImage}, expected ${targetTag})`
+          : "router not in running state";
+        send("update:phase", { phase, state: "failed", error: detail });
+        writeUpdateState({ lastError: detail });
+        return { ok: false, appImage, routerHealth: routerHealthy ? "running" : "unhealthy", route, error: detail };
+      }
+
+      writeUpdateState({ phase: "verified", completedAt: new Date().toISOString(), lastError: null });
+      send("update:phase", { phase, state: "done" });
+      return { ok: true, appImage, routerHealth: "running", route };
+    },
+
     // shell ───────────────────────────────────────────────────────────────────
     // In hosted mode these are implemented client-side in cloud/client.js via
     // window.open / navigator.clipboard — the server handlers are never invoked.
