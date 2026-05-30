@@ -6,6 +6,9 @@ const fg = () => (typeof window !== "undefined" && window.figaf) || null;
 // 7. Completion
 // ═══════════════════════════════════════════════════════════
 function ScreenDone({ ctx, setCtx, setStep, STEPS }) {
+  const isUpdate = ctx.choice === "update";
+  if (isUpdate) return <ScreenDoneUpdate ctx={ctx} setCtx={setCtx} setStep={setStep} STEPS={STEPS} />;
+
   const appUrl = `https://${ctx.config.id || "figaf-tool"}.${ctx.config.domain || `cfapps.${ctx.login.landscape.replace(/^cf-/, '')}.hana.ondemand.com`}`;
   const open = () => fg()?.shell.openExternal(appUrl);
   const isHosted = window.figafModeFlags.isHosted;
@@ -91,6 +94,71 @@ function ScreenDone({ ctx, setCtx, setStep, STEPS }) {
         <button className="btn btn-primary" onClick={open}>
           Open Figaf Tool <Ico.External />
         </button>
+      </div>
+    </>
+  );
+}
+
+function ScreenDoneUpdate({ ctx, setCtx, setStep }) {
+  const upd = ctx.update || {};
+  const verify = upd.verify || {};
+  const previousImage = upd.previousImage || "(unknown)";
+  const currentImage = verify.appImage || (upd.targetTag ? `figaf/app:${upd.targetTag}` : "(unknown)");
+  const route = verify.route;
+  const url = route ? (route.startsWith("http") ? route : `https://${route}`) : null;
+  const [clearing, setClearing] = React.useState(false);
+
+  function openRoute() {
+    if (url) fg()?.shell.openExternal(url);
+  }
+
+  async function clearAndReset() {
+    setClearing(true);
+    try { await fg()?.update?.clear?.(); } catch {}
+    setClearing(false);
+    setCtx(c => ({
+      ...c,
+      choice: null,
+      update: { deployId: "figaf-tool", detection: null, availableTags: [], targetTag: "", skipXsuaa: false, resumeState: null, previousImage: null, verify: null },
+    }));
+    if (setStep) setStep(2);
+  }
+
+  return (
+    <>
+      <div className="pane-body">
+        <div className="success-splash">
+          <div className="success-ring">
+            <div className="sr-inner">
+              <Ico.Check style={{ width: 24, height: 24, strokeWidth: 2.5 }} />
+            </div>
+          </div>
+          <h1 className="pane-title" style={{ textAlign: "center" }}>Update complete.</h1>
+          <p className="pane-desc" style={{ textAlign: "center", maxWidth: "52ch" }}>
+            Figaf Tool is now running the new image. Rolling push kept the old instance serving until the new one passed its health check — no downtime.
+          </p>
+        </div>
+
+        <div className="summary-grid" style={{ marginBottom: 18 }}>
+          <div className="cell"><div className="k">Deployment ID</div><div className="v">{upd.deployId}</div></div>
+          <div className="cell"><div className="k">App URL</div><div className="v" style={{ color: "var(--fg-blue)" }}>{url || "—"}</div></div>
+          <div className="cell"><div className="k">Previous image</div><div className="v">{previousImage}</div></div>
+          <div className="cell"><div className="k">Current image</div><div className="v">{currentImage}</div></div>
+          <div className="cell"><div className="k">Router</div><div className="v">{verify.routerHealth || "—"}</div></div>
+          <div className="cell"><div className="k">Org / Space</div><div className="v">{ctx.login.org || "—"} / {ctx.login.space || "—"}</div></div>
+        </div>
+      </div>
+
+      <div className="pane-foot">
+        <button className="btn" onClick={clearAndReset} disabled={clearing}>
+          <Ico.Refresh /> {clearing ? "Clearing…" : "Start another action"}
+        </button>
+        <div className="spacer" />
+        {url && (
+          <button className="btn btn-primary" onClick={openRoute}>
+            Open Figaf Tool <Ico.External />
+          </button>
+        )}
       </div>
     </>
   );

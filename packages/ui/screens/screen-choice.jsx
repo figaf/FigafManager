@@ -6,6 +6,7 @@
 function ScreenChoice({ ctx, setCtx, onNext, onBack }) {
   const sel = ctx.choice;
   const showXsuaaUpgrade = !!(window.figafModeFlags.features && window.figafModeFlags.features.xsuaaUpgrade);
+  const showUpdate = !!(window.figafModeFlags.features && window.figafModeFlags.features.updateFigafTool);
   function pick(v) { setCtx(c => ({ ...c, choice: v })); }
 
   return (
@@ -49,6 +50,21 @@ function ScreenChoice({ ctx, setCtx, onNext, onBack }) {
             </div>
           </button>
 
+          {showUpdate && (
+            <button
+              className={`choice ${sel === "update" ? "selected" : ""}`}
+              onClick={() => pick("update")}
+            >
+              <div className="choice-icon"><Ico.Refresh /></div>
+              <div className="choice-title">
+                Update Figaf Tool
+              </div>
+              <div className="choice-desc">
+                Refresh an existing deployment to the latest Docker image. Rolling push — no downtime — and pulls the latest deploy templates from GitHub.
+              </div>
+            </button>
+          )}
+
           <button
             className={`choice ${sel === "connect" ? "selected" : ""}`}
             onClick={() => pick("connect")}
@@ -80,6 +96,7 @@ function ScreenChoice({ ctx, setCtx, onNext, onBack }) {
         nextLabel={
           sel === "connect"       ? "Configure connection" :
           sel === "xsuaa-upgrade" ? "Begin upgrade" :
+          sel === "update"        ? "Configure update" :
                                     "Configure deployment"
         }
       />

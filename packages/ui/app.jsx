@@ -1,7 +1,8 @@
 /* global React, ReactDOM,
    WinFrame, StepperRail, WizardFooter, TerminalDrawer,
    ScreenWelcome, ScreenLogin, ScreenChoice, ScreenConfig, ScreenProgress, ScreenDeploy, ScreenDone,
-   ScreenXsuaaUpgrade, ScreenXsuaaAssignRole */
+   ScreenXsuaaUpgrade, ScreenXsuaaAssignRole,
+   ScreenUpdateConfig, ScreenUpdateProgress */
 
 function App() {
   const [step, setStepRaw] = React.useState(0);
@@ -70,6 +71,18 @@ function App() {
     ],
     pushStatus: "idle",
     pushStarted: false,
+    // Populated by ScreenUpdateConfig + ScreenUpdateProgress when the
+    // operator picks the "Update Figaf Tool" branch on the choice screen.
+    update: {
+      deployId: "figaf-tool",
+      detection: null,
+      availableTags: [],
+      targetTag: "",
+      skipXsuaa: false,
+      resumeState: null,
+      previousImage: null,
+      verify: null,
+    },
   });
 
   const [logs, setLogs] = React.useState([
@@ -119,6 +132,12 @@ function App() {
     { id: "done",              label: "Finish",          sub: "Persistent SSO live" },
   ];
 
+  const updateSteps = [
+    { id: "updateConfig",   label: "Configure update", sub: "Target tag · advanced vars" },
+    { id: "updateProgress", label: "Apply update",     sub: "XSUAA · rolling push · verify" },
+    { id: "done",           label: "Finish",           sub: "New image live" },
+  ];
+
   // The stepper rail shows only the 3 base steps (Welcome / Sign in / Choose
   // action) until the operator picks an option on the choice screen. As soon
   // as ctx.choice flips, STEPS expands to include the chosen branch's tail.
@@ -126,6 +145,7 @@ function App() {
     ctx.choice === "deploy"        ? [...baseSteps, ...deploySteps] :
     ctx.choice === "connect"       ? [...baseSteps, ...connectSteps] :
     ctx.choice === "xsuaa-upgrade" ? [...baseSteps, ...xsuaaSteps] :
+    ctx.choice === "update"        ? [...baseSteps, ...updateSteps] :
     baseSteps;
 
   const currentStep = Math.min(step, STEPS.length - 1);
@@ -147,6 +167,8 @@ function App() {
     case "deploy":            Screen = <ScreenDeploy ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
     case "xsuaa-upgrade":     Screen = <ScreenXsuaaUpgrade ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
     case "xsuaa-assign-role": Screen = <ScreenXsuaaAssignRole ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
+    case "updateConfig":      Screen = <ScreenUpdateConfig ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
+    case "updateProgress":    Screen = <ScreenUpdateProgress ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
     case "done":              Screen = <ScreenDone ctx={ctx} setCtx={setCtx} setStep={setStepRaw} STEPS={STEPS} />; break;
     default: Screen = null;
   }

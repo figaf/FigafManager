@@ -29,6 +29,10 @@
       // mode the upgrade is already done — flag is false. In Electron the
       // wizard doesn't deploy itself, so the entire concept is N/A.
       xsuaaUpgrade:  hosted && !xsuaaMode,
+      // Update Figaf Tool branch — hosted only. Desktop operators just
+      // re-run the installer; only the cloud manager needs an in-place
+      // rolling-update flow.
+      updateFigafTool: hosted,
     },
   };
 })();
