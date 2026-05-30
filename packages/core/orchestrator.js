@@ -1713,6 +1713,88 @@ function createOrchestrator({ host, send, audit }) {
       return { ok: true };
     },
 
+    // Rewrite vars.yml with the operator's chosen ID + Docker tag (and any
+    // additional overrides). Reuses config:writeVars' mutation logic but
+    // forces ID + DOCKER_IMAGE_VERSION from the Update flow inputs so the
+    // operator can't accidentally drop them by leaving the advanced form
+    // blank. Persists the chosen tag into update-state.json for downstream
+    // hash-skip + verify steps.
+    async "update:writeVars"({ deployId, dockerTag, vars } = {}) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      if (!deployId) return { ok: false, error: "deployId required" };
+      if (!dockerTag) return { ok: false, error: "dockerTag required" };
+      const deployDir = await resolveDeployDir();
+      const file = path.join(deployDir, "vars.yml");
+      const merged = {
+        ...(vars || {}),
+        id: deployId,
+        dockerVersion: dockerTag,
+      };
+      const r = await handlers["config:writeVars"](merged);
+      if (!r.ok) return r;
+      writeUpdateState({ deployId, targetImageTag: dockerTag, phase: "vars-written" });
+      return { ok: true, path: file };
+    },
+
+    async "update:updateXsuaa"({ deployId, skip } = {}) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      if (!deployId) return { ok: false, error: "deployId required" };
+      const phase = "update-xsuaa";
+      if (skip) {
+        send("update:phase", { phase, state: "done", detail: "skipped by operator" });
+        writeUpdateState({ phase: "xsuaa-updated", xsuaaSkipped: true });
+        return { ok: true, skipped: true };
+      }
+      const deployDir = await resolveDeployDir();
+      const xsPath = path.join(deployDir, "xs-security.json");
+      if (!fs.existsSync(xsPath)) {
+        send("update:phase", { phase, state: "failed", error: "xs-security.json missing" });
+        return { ok: false, error: `xs-security.json not found at ${xsPath}` };
+      }
+      const hash = sha256OfFile(xsPath);
+      const prev = readUpdateState() || {};
+      // Plan D8: skip update-service when the refreshed template hashes
+      // identically to the one we applied on a previous successful run.
+      // First-run-after-deployment has no prior hash → always update.
+      if (hash && prev["xs-security-hash"] === hash) {
+        send("update:phase", { phase, state: "done", detail: "unchanged (hash match)" });
+        writeUpdateState({ phase: "xsuaa-updated" });
+        return { ok: true, skipped: true, reason: "hash-match" };
+      }
+      send("update:phase", { phase, state: "running" });
+      const upd = await run(resolveCf(), ["update-service", "figaf-xsuaa", "-c", xsPath], { source: "cf" });
+      if (upd.code !== 0) {
+        const errText = upd.stderr || "update-service failed";
+        send("update:phase", { phase, state: "failed", error: errText });
+        writeUpdateState({ lastError: errText });
+        return { ok: false, error: errText };
+      }
+      // Poll until the broker reports update succeeded/failed. 10-minute
+      // timeout matches the cf:pollService shape; XSUAA updates are usually
+      // sub-minute but the broker can be sluggish during landscape events.
+      const start = Date.now();
+      const timeoutMs = 10 * 60 * 1000;
+      while (Date.now() - start < timeoutMs) {
+        const s = await run(resolveCf(), ["service", "figaf-xsuaa"], { source: "cf" });
+        const line = /status:\s+(.+)/i.exec(s.stdout)?.[1]?.trim() || "unknown";
+        send("cf:serviceStatus", { name: "figaf-xsuaa", status: line });
+        if (/update succeeded|create succeeded|succeeded/i.test(line)) {
+          send("update:phase", { phase, state: "done" });
+          writeUpdateState({ phase: "xsuaa-updated", "xs-security-hash": hash });
+          return { ok: true, status: line };
+        }
+        if (/failed/i.test(line)) {
+          send("update:phase", { phase, state: "failed", error: line });
+          writeUpdateState({ lastError: line });
+          return { ok: false, error: line };
+        }
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+      send("update:phase", { phase, state: "failed", error: "timeout" });
+      writeUpdateState({ lastError: "timeout polling figaf-xsuaa" });
+      return { ok: false, error: "timeout polling figaf-xsuaa" };
+    },
+
     // shell ───────────────────────────────────────────────────────────────────
     // In hosted mode these are implemented client-side in cloud/client.js via
     // window.open / navigator.clipboard — the server handlers are never invoked.

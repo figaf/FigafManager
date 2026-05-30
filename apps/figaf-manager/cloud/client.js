@@ -188,6 +188,8 @@
       detectDeployment: function (a) { return rpc("update:detectDeployment", a || {}); },
       begin:            function (a) { return rpc("update:begin", a || {}); },
       clear:            function ()  { return rpc("update:clear"); },
+      writeVars:        function (a) { return rpc("update:writeVars", a || {}); },
+      updateXsuaa:      function (a) { return rpc("update:updateXsuaa", a || {}); },
     },
 
     config: {
