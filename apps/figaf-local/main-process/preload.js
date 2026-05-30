@@ -74,6 +74,16 @@ contextBridge.exposeInMainWorld("figaf", {
     assignRoleCollectionPreflight: () => ipcRenderer.invoke("xsuaa:assignRoleCollectionPreflight"),
   },
 
+  // Update Figaf Tool — hosted-only flow. Handlers gate on host.isHosted and
+  // return a safe error in desktop mode; surface is exposed here for shape
+  // parity with the cloud client.
+  update: {
+    resumeStatus:     () => ipcRenderer.invoke("update:resumeStatus"),
+    detectDeployment: (a) => ipcRenderer.invoke("update:detectDeployment", a || {}),
+    begin:            (a) => ipcRenderer.invoke("update:begin", a || {}),
+    clear:            () => ipcRenderer.invoke("update:clear"),
+  },
+
   config: {
     dockerHubLatestBtpTag: () => ipcRenderer.invoke("config:dockerHubLatestBtpTag"),
     dockerHubBtpTags: () => ipcRenderer.invoke("config:dockerHubBtpTags"),

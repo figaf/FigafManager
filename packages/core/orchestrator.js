@@ -1600,6 +1600,119 @@ function createOrchestrator({ host, send, audit }) {
       return { ok: true, message: "Uninstall in progress. Page will go offline in ~30s." };
     },
 
+    // Update Figaf Tool (hosted-only) ─────────────────────────────────────────
+    // See update-figaf-tool-plan.md. The flow detects an existing
+    // <ID>-app / <ID>-router deployment, force-refreshes the GitHub deploy
+    // templates, optionally updates the figaf-xsuaa service, and rolling-
+    // pushes the two apps to the operator's chosen Docker tag. State is
+    // persisted under <userDataDir>/figaf-tool-update/update-state.json
+    // so a mid-flow dyno restart can pick up where it left off.
+
+    async "update:resumeStatus"() {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      const s = readUpdateState();
+      if (!s) return { ok: true, hasInFlight: false };
+      const terminal = s.phase === "verified" || s.phase === "failed";
+      return { ok: true, hasInFlight: !terminal, state: s };
+    },
+
+    async "update:clear"() {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      clearUpdateState();
+      return { ok: true };
+    },
+
+    async "update:detectDeployment"({ deployId } = {}) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+
+      // Helper: read current image tag for a Docker app via the v3 droplets
+      // endpoint. cf curl-only; cf app's text output is too brittle here.
+      async function readImage(appName) {
+        const g = await run(resolveCf(), ["app", "--guid", appName], { source: "cf" });
+        if (g.code !== 0) return null;
+        const guid = g.stdout.trim().split(/\r?\n/).filter(Boolean).pop();
+        if (!guid) return null;
+        const d = await run(resolveCf(), ["curl", `/v3/apps/${guid}/droplets/current`], { source: "cf" });
+        if (d.code !== 0) return null;
+        try {
+          const parsed = JSON.parse(d.stdout);
+          return parsed.image || null;
+        } catch {
+          return null;
+        }
+      }
+
+      if (deployId) {
+        const appName = `${deployId}-app`;
+        const routerName = `${deployId}-router`;
+        const a = await run(resolveCf(), ["app", appName], { source: "cf" });
+        const r = await run(resolveCf(), ["app", routerName], { source: "cf" });
+        const foundApp = a.code === 0;
+        const foundRouter = r.code === 0;
+        if (!foundApp && !foundRouter) {
+          return { ok: true, found: false, deployId, app: null, router: null, candidates: [] };
+        }
+        const image = foundApp ? await readImage(appName) : null;
+        return {
+          ok: true,
+          found: true,
+          deployId,
+          app:    foundApp    ? { name: appName,    image, exists: true }  : { name: appName,    image: null, exists: false },
+          router: foundRouter ? { name: routerName, exists: true }          : { name: routerName, exists: false },
+        };
+      }
+
+      // No deployId provided — try to enumerate candidates in the current
+      // space. The space GUID is read via cf curl /v3/organizations/.../spaces
+      // chains is too long; the simpler "cf app --guid" lookup is per-app, so
+      // we list apps in the targeted space and post-filter by name regex plus
+      // docker image prefix.
+      const list = await run(resolveCf(), ["curl", "/v3/apps?per_page=500"], { source: "cf" });
+      if (list.code !== 0) {
+        return { ok: true, found: false, deployId: null, candidates: [], error: "cf curl /v3/apps failed" };
+      }
+      let resources = [];
+      try { resources = (JSON.parse(list.stdout).resources) || []; } catch {}
+      const byId = new Map();
+      for (const app of resources) {
+        const m = /^(.+)-(app|router)$/.exec(app.name || "");
+        if (!m) continue;
+        const id = m[1];
+        const role = m[2];
+        if (!byId.has(id)) byId.set(id, { id, app: null, router: null });
+        byId.get(id)[role] = { name: app.name, guid: app.guid };
+      }
+      const candidates = [];
+      for (const [id, pair] of byId) {
+        if (!pair.app) continue;
+        const image = await readImage(pair.app.name);
+        if (!image || !/^figaf\/app:/i.test(image)) continue;
+        candidates.push({ id, app: pair.app.name, router: pair.router ? pair.router.name : null, image });
+      }
+      return { ok: true, found: false, deployId: null, candidates };
+    },
+
+    async "update:begin"({ deployId, targetImageTag } = {}) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      if (!deployId) return { ok: false, error: "deployId required" };
+      send("update:phase", { phase: "refresh-templates", state: "running" });
+      try {
+        await resolveDeployDir({ force: true });
+      } catch (e) {
+        send("update:phase", { phase: "refresh-templates", state: "failed", error: e.message });
+        return { ok: false, error: e.message };
+      }
+      writeUpdateState({
+        deployId,
+        targetImageTag: targetImageTag || null,
+        phase: "starting",
+        startedAt: new Date().toISOString(),
+        lastError: null,
+      });
+      send("update:phase", { phase: "refresh-templates", state: "done" });
+      return { ok: true };
+    },
+
     // shell ───────────────────────────────────────────────────────────────────
     // In hosted mode these are implemented client-side in cloud/client.js via
     // window.open / navigator.clipboard — the server handlers are never invoked.

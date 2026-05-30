@@ -183,6 +183,13 @@
       assignRoleCollectionPreflight: function ()  { return rpc("xsuaa:assignRoleCollectionPreflight"); },
     },
 
+    update: {
+      resumeStatus:     function ()  { return rpc("update:resumeStatus"); },
+      detectDeployment: function (a) { return rpc("update:detectDeployment", a || {}); },
+      begin:            function (a) { return rpc("update:begin", a || {}); },
+      clear:            function ()  { return rpc("update:clear"); },
+    },
+
     config: {
       dockerHubLatestBtpTag:function ()  { return rpc("config:dockerHubLatestBtpTag"); },
       dockerHubBtpTags:     function ()  { return rpc("config:dockerHubBtpTags"); },
