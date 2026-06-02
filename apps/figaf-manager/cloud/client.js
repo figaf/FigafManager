@@ -193,6 +193,7 @@
       clear:            function ()  { return rpc("update:clear"); },
       writeVars:        function (a) { return rpc("update:writeVars", a || {}); },
       updateXsuaa:      function (a) { return rpc("update:updateXsuaa", a || {}); },
+      deleteApps:       function (a) { return rpc("update:deleteApps", a || {}); },
       pushApp:          function (a) { return rpc("update:pushApp", a || {}); },
       verify:           function (a) { return rpc("update:verify", a || {}); },
     },

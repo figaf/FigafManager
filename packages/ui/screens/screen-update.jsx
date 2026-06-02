@@ -27,8 +27,9 @@ const fg = () => (typeof window !== "undefined" && window.figaf) || null;
 const UPDATE_PHASES = [
   { id: "refresh-templates", label: "Refresh deploy templates",  sub: "github.com/figaf/Figaf-BTP-Deployment · btp-users" },
   { id: "update-xsuaa",      label: "Update XSUAA service",      sub: "cf update-service figaf-xsuaa -c xs-security.json" },
-  { id: "push-app",          label: "Rolling push of app",       sub: "cf push <id>-app --strategy rolling" },
-  { id: "push-router",       label: "Rolling push of router",    sub: "cf push <id>-router --strategy rolling" },
+  { id: "delete-apps",       label: "Delete current apps",       sub: "cf delete <id>-router/-app -f (recreate only)" },
+  { id: "push-app",          label: "Push app",                  sub: "cf push <id>-app" },
+  { id: "push-router",       label: "Push router",               sub: "cf push <id>-router" },
   { id: "verify",            label: "Verify deployment",         sub: "/v3/apps/<id>-app/droplets/current + route check" },
 ];
 
@@ -42,7 +43,7 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
   const [skipXsuaa, setSkipXsuaa] = React.useState(!!upd.skipXsuaa);
   const [vars, setVars] = React.useState(upd.vars || {});
   const [varsPartial, setVarsPartial] = React.useState(false);
-  const [strategy, setStrategy] = React.useState(upd.strategy || "rolling");
+  const [strategy, setStrategy] = React.useState(upd.strategy || "recreate");
   const [resume, setResume] = React.useState(null);
   const [beginning, setBeginning] = React.useState(false);
   const [error, setError] = React.useState(null);
@@ -189,7 +190,7 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
           <div className="pane-eyebrow">Step 4 · Configure update</div>
           <h1 className="pane-title">Update Figaf Tool</h1>
           <p className="pane-desc">
-            Pull the latest deploy templates from GitHub and rolling-push <span className="kbd">{deployId}-app</span> and <span className="kbd">{deployId}-router</span> to a new Docker image. The old instance keeps serving until the new one passes its health check.
+            Pull the latest deploy templates from GitHub and redeploy <span className="kbd">{deployId}-app</span> and <span className="kbd">{deployId}-router</span> on a new Docker image. Choose how the swap happens below — by default the apps are recreated so the update fits within a trial org's memory quota.
           </p>
         </div>
 
@@ -307,20 +308,20 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
           <label className="field-label">Deployment strategy</label>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 6 }}>
             <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
-              <input type="radio" name="upd-strategy" checked={strategy === "rolling"} onChange={() => setStrategy("rolling")} style={{ marginTop: 2 }} />
+              <input type="radio" name="upd-strategy" checked={strategy === "recreate"} onChange={() => setStrategy("recreate")} style={{ marginTop: 2 }} />
               <span>
-                <div style={{ fontSize: 13, color: "var(--ink-0)" }}>Rolling <span className="pill green">zero downtime</span></div>
+                <div style={{ fontSize: 13, color: "var(--ink-0)" }}>Recreate <span className="pill green">works on trial</span></div>
                 <div style={{ fontSize: 11.5, color: "var(--ink-3)" }}>
-                  The new instance starts alongside the old one and takes over once healthy. Needs ~2× the app's memory free during the swap — can hit the org quota on trial accounts.
+                  Deletes <span className="kbd">{deployId}-router</span> and <span className="kbd">{deployId}-app</span>, then pushes the new image fresh. Frees the org's memory before staging, so it works on trial / tight quotas — a brief outage while the app restarts. Your database and its data are untouched. This is the upgrade path Figaf recommends.
                 </div>
               </span>
             </label>
             <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
-              <input type="radio" name="upd-strategy" checked={strategy === "restart"} onChange={() => setStrategy("restart")} style={{ marginTop: 2 }} />
+              <input type="radio" name="upd-strategy" checked={strategy === "rolling"} onChange={() => setStrategy("rolling")} style={{ marginTop: 2 }} />
               <span>
-                <div style={{ fontSize: 13, color: "var(--ink-0)" }}>Restart <span className="pill gray">1× memory</span></div>
+                <div style={{ fontSize: 13, color: "var(--ink-0)" }}>Rolling <span className="pill blue">zero downtime</span></div>
                 <div style={{ fontSize: 11.5, color: "var(--ink-3)" }}>
-                  The old instance stops before the new one starts — a brief outage, but only one instance's worth of memory. Safer on tight quotas.
+                  Pushes over the running app — the new instance starts alongside the old one and takes over once healthy. No downtime, but CF stages the new droplet while the old one is still up, so it needs ~2× the app's memory free and can hit the org quota on trial accounts.
                 </div>
               </span>
             </label>
@@ -435,7 +436,7 @@ function ScreenUpdateProgress({ ctx, setCtx, onNext, onBack }) {
   const targetTag = upd.targetTag || "";
   const skipXsuaa = !!upd.skipXsuaa;
   const vars = upd.vars || {};
-  const strategy = upd.strategy || "rolling";
+  const strategy = upd.strategy || "recreate";
 
   const [phases, setPhases] = React.useState(() => UPDATE_PHASES.map(p => ({ ...p, status: "pending" })));
   const [error, setError] = React.useState(null);
@@ -477,6 +478,12 @@ function ScreenUpdateProgress({ ctx, setCtx, onNext, onBack }) {
       const ux = await api.update.updateXsuaa({ deployId, skip: skipXsuaa });
       if (!ux.ok) { setError(ux.error || "updateXsuaa failed"); setRunning(false); return; }
 
+      // Recreate strategy frees the org quota by deleting both apps before the
+      // push; no-op under rolling. Must run before either push so the staging
+      // overlap can't trip the trial memory limit.
+      const da = await api.update.deleteApps({ deployId, strategy });
+      if (!da.ok) { setError(da.error || "deleteApps failed"); setRunning(false); return; }
+
       const pa = await api.update.pushApp({ deployId, role: "app", strategy });
       if (!pa.ok) { setError(pa.error || "pushApp(app) failed"); setRunning(false); return; }
 
@@ -517,7 +524,7 @@ function ScreenUpdateProgress({ ctx, setCtx, onNext, onBack }) {
           </h1>
           <p className="pane-desc">
             {done
-              ? <>Rolling push completed with target tag <span className="kbd">{targetTag}</span>. The new instance is healthy and serving the public route.</>
+              ? <>Update completed with target tag <span className="kbd">{targetTag}</span>. The new instance is healthy and serving the public route.</>
               : error
                 ? "A phase failed. The orchestrator has persisted state under update-state.json — retry resumes from the failed phase."
                 : <>Updating <span className="kbd">{deployId}-app</span> and <span className="kbd">{deployId}-router</span> to <span className="kbd">{targetTag}</span>. Expand the CLI drawer to watch progress.</>}

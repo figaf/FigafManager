@@ -121,26 +121,45 @@ user who never expands it still pushes with the live config (not template defaul
 
 ### 3. Deployment strategy control
 
+> **Revised 2026-06-02 (see Addendum).** The original `rolling` / `restart` pair
+> was replaced with `recreate` / `rolling` after a live trial run proved that even
+> a plain in-place `cf push` (the old "restart") trips the trial memory quota,
+> because CF stages the new droplet *before* stopping the old app.
+
 A visible card on ScreenUpdateConfig (not hidden in Advanced), with two options:
 
-- **Rolling** (default) — zero downtime; warns it needs ~2× the app's memory free
-  during the overlap window.
-- **Restart** — brief downtime; old instance stops before the new one starts, so
-  only 1× memory. Recommended on trial / tight-quota orgs.
+- **Recreate** (default) — deletes `<deployId>-router` then `<deployId>-app`, then
+  pushes the new image fresh. Frees the org's full memory allocation *before* the
+  new droplet stages, so it fits within a trial quota. Brief downtime while the app
+  restarts. `figaf-db` (and its data) and `figaf-xsuaa` are untouched; bindings and
+  routes are recreated from `manifest.yml` on the push. This is Figaf's recommended
+  upgrade path.
+- **Rolling** — zero downtime; the new instance starts alongside the old one and
+  takes over once healthy. Needs ~2× the app's memory free during the overlap *and*
+  during staging, so only suitable on orgs with quota headroom.
 
-Stored as `ctx.update.strategy` (`"rolling"` | `"restart"`).
+Stored as `ctx.update.strategy` (`"recreate"` | `"rolling"`).
 
-### 4. `update:pushApp` — strategy param
+### 4. `update:deleteApps` (NEW) + `update:pushApp` — strategy param
 
-Signature becomes `update:pushApp({ deployId, role, strategy })`.
+New handler `update:deleteApps({ deployId, strategy })` runs as a phase between
+`update:updateXsuaa` and the pushes:
 
-- `strategy === "rolling"` → args include `--strategy rolling` (current behaviour).
-- `strategy === "restart"` (or unset) → omit `--strategy` entirely (CF default:
-  stop-then-start, 1× memory).
+- `strategy === "rolling"` → no-op (emits a `delete-apps` phase `done` with a
+  "skipped (rolling)" detail; the old instances must keep serving).
+- otherwise (`recreate`) → `cf delete <deployId>-router -f` then
+  `cf delete <deployId>-app -f`. `cf delete -f` exits 0 / prints "does not exist"
+  when an app is already gone, so the step is idempotent on retry after a
+  half-finished run. Persists `phase: "apps-deleted"`.
 
-Strategy is persisted to `update-state.json` on `update:begin` (or first push) so a
-resumed run reuses the operator's choice. Both the app push and router push use the
-same strategy.
+`update:pushApp({ deployId, role, strategy })`:
+
+- `strategy === "rolling"` → args include `--strategy rolling`.
+- otherwise (`recreate`, or any legacy/unset value) → plain `cf push` (the app was
+  already deleted by `update:deleteApps`, so this is a fresh push).
+
+Strategy is persisted to `update-state.json` on `update:begin` so a resumed run
+reuses the operator's choice. The delete and both pushes read the same strategy.
 
 ### 5. Data flow
 
@@ -154,12 +173,13 @@ ScreenUpdateConfig
 ScreenUpdateProgress.runFlow()
   update:writeVars({ deployId, dockerTag, vars: ctx.update.vars })   // vars already supported
   update:updateXsuaa(...)                                            // unchanged
+  update:deleteApps({ deployId, strategy })                          // NEW — recreate only
   update:pushApp({ deployId, role: "app",    strategy })             // strategy NEW
   update:pushApp({ deployId, role: "router", strategy })             // strategy NEW
   update:verify(...)                                                 // unchanged
 ```
 
-`ctx.update` additions: `vars` (object), `strategy` (string, default `"rolling"`).
+`ctx.update` additions: `vars` (object), `strategy` (string, default `"recreate"`).
 
 ---
 
@@ -178,23 +198,66 @@ ScreenUpdateProgress.runFlow()
 
 | File | Change |
 |------|--------|
-| `packages/core/orchestrator.js` | New `update:readCurrentConfig` handler; `update:pushApp` gains `strategy`; `update:begin` persists `strategy`. |
-| `apps/figaf-manager/cloud/client.js` | Expose `update.readCurrentConfig`; pass `strategy` through `update.pushApp`/`update.begin`. |
+| `packages/core/orchestrator.js` | New `update:readCurrentConfig` + `update:deleteApps` handlers; `update:pushApp` gains `strategy` (rolling adds `--strategy rolling`, else plain push); `update:begin` persists `strategy` (`recreate`/`rolling`). |
+| `apps/figaf-manager/cloud/client.js` | Expose `update.readCurrentConfig` + `update.deleteApps`; pass `strategy` through `update.pushApp`/`update.begin`. |
 | `apps/figaf-local/main-process/preload.js` | Mirror the surface (desktop returns safe error). |
-| `packages/ui/screens/screen-update.jsx` | Replace Advanced placeholder with live-seeded vars form; add strategy card; seed on detect/pick; thread `vars` + `strategy` through the flow. |
-| `packages/ui/app.jsx` | `ctx.update` defaults gain `vars: {}` and `strategy: "rolling"`. |
+| `packages/ui/screens/screen-update.jsx` | Replace Advanced placeholder with live-seeded vars form; add strategy card (recreate/rolling); add `delete-apps` phase; seed on detect/pick; thread `vars` + `strategy` through the flow. |
+| `packages/ui/app.jsx` | `ctx.update` defaults gain `vars: {}` and `strategy: "recreate"`. |
 
 ## Testing
 
 - Unit-style: `readCurrentConfig` mapping (env map + process memory → vars shape),
   including the domain-strip derivation and boolean coercion; partial-failure path.
 - Manual against the us10-001 trial space: detect `figaf-tool`, confirm the form
-  shows `1500M` / `us10-001` (not `3700M` / `us10`), run a Restart-strategy update
-  to the new tag, confirm no `quota_exceeded` and `verify` passes.
-- Regression: a Rolling update with adequate quota still works unchanged.
+  shows `1500M` / `us10-001` (not `3700M` / `us10`), run a **Recreate**-strategy
+  update to the new tag, confirm the `delete-apps` phase removes both apps, the
+  pushes succeed with no `quota_exceeded`, and `verify` passes. Confirm the DB data
+  survives (the `figaf-db` instance is never touched).
+- Regression: a Rolling update on an org with adequate quota still works unchanged
+  and the `delete-apps` phase shows "skipped (rolling)".
 
 ## Deferred (v2)
 
 - Org-quota auto-detection with automatic strategy fallback.
 - Surfacing/editing PostgreSQL config in the Update flow (would require the flow to
   manage `figaf-db`).
+
+---
+
+## Addendum — 2026-06-02: recreate replaces restart
+
+A live Restart-strategy run on the us10-001 trial space still failed:
+
+```
+cf push figaf-tool-app --vars-file vars.yml -f manifest.yml
+...
+organization's memory limit exceeded: staging requires 1500M memory
+FAILED
+```
+
+**Root cause:** an in-place `cf push` over an existing app *stages the new droplet
+before stopping the old one*. So during staging the org momentarily carries
+`old app (1500M) + new droplet (1500M)` (+ the router) against the trial quota. The
+`restart` toggle only removed the *running* 2× overlap that `--strategy rolling`
+causes; it did nothing about the *staging* overlap, which is present for any
+in-place push.
+
+**Fix:** the reliable upgrade on a tight quota is to free the memory *before*
+staging — delete the apps, then push fresh. This matches Figaf's published upgrade
+procedure (`cf delete pi-figaf-router -f` / `cf delete pi-figaf-app -f`, then
+`cf push`). The service instances (`figaf-db`, `figaf-xsuaa`) and their data are
+untouched; the delete only removes the app and its bindings, which the push
+recreates from `manifest.yml`.
+
+So the strategy options became:
+
+- **Recreate** (new default) — delete both apps, push fresh. Peak memory = 1× (the
+  staging app only). Works on trial. Brief downtime. Downside: if the push fails
+  after the delete, the old app is gone until the retry re-pushes — acceptable and
+  exactly what the official procedure does.
+- **Rolling** — unchanged; zero downtime, needs ~2× memory headroom.
+
+`restart` was dropped: recreate dominates it on peak memory, and rolling dominates
+it on downtime, leaving restart the worst of both. Legacy `strategy:"restart"` in a
+persisted `update-state.json` still behaves as a plain in-place push (no delete, no
+rolling flag), so no migration is needed.

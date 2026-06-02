@@ -83,7 +83,7 @@ function App() {
       // (not the template defaults) so an update never silently changes memory,
       // domain, location, or SMTP settings. strategy picks the cf push mode.
       vars: {},
-      strategy: "rolling",
+      strategy: "recreate",
       resumeState: null,
       previousImage: null,
       verify: null,

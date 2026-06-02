@@ -1874,7 +1874,7 @@ function createOrchestrator({ host, send, audit }) {
       writeUpdateState({
         deployId,
         targetImageTag: targetImageTag || null,
-        strategy: strategy === "restart" ? "restart" : "rolling",
+        strategy: strategy === "rolling" ? "rolling" : "recreate",
         phase: "starting",
         startedAt: new Date().toISOString(),
         lastError: null,
@@ -1965,11 +1965,50 @@ function createOrchestrator({ host, send, audit }) {
       return { ok: false, error: "timeout polling figaf-xsuaa" };
     },
 
-    // Rolling push of <deployId>-<role>. The manifest names both apps
-    // (<id>-app via the figaf-app block, <id>-router via the approuter
-    // block) using ((ID)) from vars.yml, so a single -f manifest.yml + the
-    // already-rewritten vars.yml suffices. --strategy rolling keeps the
-    // old instance serving until the new one is healthy (plan D2).
+    // Recreate strategy: delete <deployId>-router and <deployId>-app before
+    // pushing, so the org quota is freed *before* CF stages the new droplet.
+    // An in-place `cf push` (even without --strategy rolling) stages the new
+    // droplet while the old app still holds its memory — on a trial org that
+    // overlap trips "organization's memory limit exceeded: staging requires
+    // NNNNM". Deleting first is Figaf's recommended upgrade path: figaf-db
+    // (and its data) and figaf-xsuaa are service instances untouched by the
+    // delete, and the bindings + routes are recreated from manifest.yml on the
+    // subsequent push. Router is deleted before app to match the docs' order.
+    // No-op under the "rolling" strategy (old instances must keep serving).
+    // `cf delete -f` exits 0 and prints "does not exist" when the app is
+    // already gone, so this is idempotent on retry after a half-finished run.
+    async "update:deleteApps"({ deployId, strategy } = {}) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      if (!deployId) return { ok: false, error: "deployId required" };
+      const phase = "delete-apps";
+      const st = strategy || (readUpdateState() || {}).strategy || "recreate";
+      if (st === "rolling") {
+        send("update:phase", { phase, state: "done", detail: "skipped (rolling — in-place)" });
+        return { ok: true, skipped: true };
+      }
+      send("update:phase", { phase, state: "running" });
+      for (const role of ["router", "app"]) {
+        const name = `${deployId}-${role}`;
+        const r = await run(resolveCf(), ["delete", name, "-f"], { source: "cf" });
+        if (r.code !== 0 && !/does not exist|not found/i.test(`${r.stdout}\n${r.stderr}`)) {
+          const errText = r.stderr || `cf delete ${name} failed`;
+          send("update:phase", { phase, state: "failed", error: errText });
+          writeUpdateState({ lastError: errText, lastFailedPhase: phase });
+          return { ok: false, error: errText };
+        }
+      }
+      writeUpdateState({ phase: "apps-deleted" });
+      send("update:phase", { phase, state: "done" });
+      return { ok: true };
+    },
+
+    // Push <deployId>-<role>. The manifest names both apps (<id>-app via the
+    // figaf-app block, <id>-router via the approuter block) using ((ID)) from
+    // vars.yml, so a single -f manifest.yml + the already-rewritten vars.yml
+    // suffices. Under "rolling" we add --strategy rolling (old instance keeps
+    // serving until the new one is healthy, ~2x memory during overlap); under
+    // "recreate" the app was already deleted by update:deleteApps so this is a
+    // plain fresh push.
     async "update:pushApp"({ deployId, role, strategy } = {}) {
       if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
       if (!deployId) return { ok: false, error: "deployId required" };
@@ -1978,13 +2017,12 @@ function createOrchestrator({ host, send, audit }) {
       const phase = role === "app" ? "push-app" : "push-router";
       const deployDir = await resolveDeployDir();
       send("update:phase", { phase, state: "running" });
-      // strategy: "rolling" keeps the old instance serving until the new one is
-      // healthy (~2x memory during overlap); "restart" omits the flag so CF
-      // stops the old instance first (brief downtime, 1x memory). Fall back to
-      // the value persisted at update:begin so a resumed run keeps the choice.
-      const st = strategy || (readUpdateState() || {}).strategy || "rolling";
+      // Fall back to the value persisted at update:begin so a resumed run keeps
+      // the choice. Only "rolling" adds the flag; "recreate" (and any legacy
+      // value) is a plain push.
+      const st = strategy || (readUpdateState() || {}).strategy || "recreate";
       const args = ["push", name];
-      if (st !== "restart") args.push("--strategy", "rolling");
+      if (st === "rolling") args.push("--strategy", "rolling");
       args.push("--vars-file", "vars.yml", "-f", "manifest.yml");
       const r = await run(resolveCf(), args, { source: "cf", cwd: deployDir });
       if (r.code !== 0) {
