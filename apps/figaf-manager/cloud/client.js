@@ -168,6 +168,9 @@
       createService:        function (a) { return rpc("cf:createService", a); },
       service:              function (name) { return rpc("cf:service", { name: name }); },
       pollService:          function (name) { return rpc("cf:pollService", { name: name }); },
+      createServiceKey:     function (a) { return rpc("cf:createServiceKey", a); },
+      serviceKey:           function (a) { return rpc("cf:serviceKey", a); },
+      marketplaceCheck:     function (a) { return rpc("cf:marketplaceCheck", a); },
       push:                 function ()  { return rpc("cf:push"); },
       deleteApp:            function (a) { return rpc("cf:deleteApp", a); },
       // v2 XSUAA upgrade — see auth-gate-implementation-plan.md §2.
@@ -198,6 +201,10 @@
       verify:           function (a) { return rpc("update:verify", a || {}); },
     },
 
+    connect: {
+      templatePath:         function (name) { return rpc("connect:templatePath", { name: name }); },
+    },
+
     config: {
       dockerHubLatestBtpTag:function ()  { return rpc("config:dockerHubLatestBtpTag"); },
       dockerHubBtpTags:     function ()  { return rpc("config:dockerHubBtpTags"); },
@@ -222,6 +229,15 @@
           return navigator.clipboard.readText().then(function (text) { return { ok: true, text: text }; });
         }
         return Promise.resolve({ ok: false, text: "" });
+      },
+      writeClipboard:  function (text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(String(text || "")).then(
+            function () { return { ok: true }; },
+            function (e) { return { ok: false, error: e && e.message }; }
+          );
+        }
+        return Promise.resolve({ ok: false, error: "clipboard API unavailable" });
       },
     },
 
