@@ -450,3 +450,52 @@ In order, each commit independently builds and runs the existing flows:
 - `c:\Figaf-installer\packages\ui\screens\screen-done.jsx`
 - `c:\Figaf-installer\.claude\agent-memory\btp-tech-lead\feedback_rolling_push_over_delete.md`
 - `c:\Figaf-installer\.claude\agent-memory\btp-tech-lead\project_v2_xsuaa_implementation.md`
+
+---
+
+## Implementation status — MVP shipped (2026-05-30)
+
+All five MVP commits landed on `main`. Working tree clean. `build-zip` succeeds and the staged zip includes the new screen + updated client/index files.
+
+### Commits (oldest → newest)
+
+| SHA | Message |
+|-----|---------|
+| `f2875ee` | feat(orchestrator): add force-refresh + update-state helpers for the Update flow |
+| `1ed443b` | feat(update): add detection + resume handlers for the Update flow |
+| `f9ef66d` | feat(update): writeVars + XSUAA update with hash-skip |
+| `4cec782` | feat(update): rolling pushes + verify |
+| `53048e7` | feat(ui): Update Figaf Tool wizard branch |
+
+### Files touched (11 total, 1 new)
+
+- `packages/core/orchestrator.js`
+- `apps/figaf-manager/cloud/client.js`
+- `apps/figaf-manager/cloud/index.html`
+- `apps/figaf-local/main-process/preload.js`
+- `packages/ui/app.jsx`
+- `packages/ui/components.jsx`
+- `packages/ui/index.html`
+- `packages/ui/mode.js`
+- `packages/ui/screens/screen-choice.jsx`
+- `packages/ui/screens/screen-done.jsx`
+- **NEW** `packages/ui/screens/screen-update.jsx`
+
+Per plan: no edits to `packages/deploy-templates/*`, `apps/figaf-manager/Dockerfile`, `apps/figaf-manager/manifest.yml`, `apps/figaf-manager/scripts/build-zip.js`, or `apps/figaf-manager/host.cloud.js`.
+
+### Plan deviations
+
+1. Added a 3-line `Ico.Refresh` SVG to `components.jsx` — the plan implicitly assumed it existed.
+2. Wired `features.updateFigafTool: hosted` (simpler form, same value as `window.figafModeFlags.isHosted`).
+3. Verify treats router status as healthy on either `running` **or** `started` — cf v8 emits "running", older binaries emit "started"; avoids false-negative verify.
+
+### Caveats before live testing against a real CF space
+
+- **Candidate auto-discovery hits `/v3/apps?per_page=500` org-wide** (no `space_guids` filter). Only affects the discovery fallback path — the default operator-confirmed `deployId` flow is unaffected. v2 hardening item.
+- **`update:pushApp` runs `cf push -f manifest.yml`** from the refreshed deploy dir, assuming the live `btp-users` branch still names apps `((ID))-app` and `((ID))-router`. Confirm against the GitHub branch before first run.
+- **First Update after install always runs `cf update-service figaf-xsuaa`** (no stored hash yet) — a one-time 30–60s XSUAA broker no-op. Subsequent runs hash-skip cleanly per D8.
+- `build-zip` engine warnings (`@sap/approuter` wants Node 18/20, host runs 24) are pre-existing and unrelated.
+
+### v2 deferred (not started)
+
+See §"Pragmatic sequencing — MVP vs. v2" above. Recreate-with-downtime affordance, parallel push, pinned-commit templates, pre-flight CF connectivity check, vars/xs-security snapshot for undo, browser/email notifications.

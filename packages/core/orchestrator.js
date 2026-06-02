@@ -70,6 +70,10 @@ function createOrchestrator({ host, send, audit }) {
     subaccountWaitingForChoice: false,
     subaccountList: null,
     cfLoginProc: null,
+    cfOrgList: null,
+    cfSpaceList: null,
+    cfWaitingForOrgChoice: false,
+    cfWaitingForSpaceChoice: false,
     btpLoginProc: null,
     deployDirResolved: null,
   };
@@ -918,11 +922,87 @@ function createOrchestrator({ host, send, audit }) {
       const cfBin = resolveCf();
       const proc = spawn(cfBin, ["login", "-a", target, "--sso"], { shell: false, windowsHide: true });
       state.cfLoginProc = proc;
+      state.cfOrgList = null;
+      state.cfSpaceList = null;
+      state.cfWaitingForOrgChoice = false;
+      state.cfWaitingForSpaceChoice = false;
       log("cmd", "cmd", `${cfBin} login -a ${target} --sso`);
 
+      // Parse cf's interactive picker for "Select an org:" / "Select a space:".
+      // The CLI writes the prompt header, then numbered lines, then "<thing>
+      // (enter to skip):" without a trailing newline. We detect that final
+      // marker (which may straddle a buffer boundary) by scanning the rolling
+      // tail of stdout, surface a choice event, and feed the user's pick back
+      // through stdin via cf:selectOrg / cf:selectSpace.
+      let stdoutTail = "";
+      let collecting = null; // "org" | "space" | null
+      let entries = [];
+      const ENTRY_RE = /^\s*(\d+)\.\s+(.+?)\s*$/;
+
+      function emitChoice(kind) {
+        const list = entries.slice();
+        entries = [];
+        collecting = null;
+        if (kind === "org") {
+          state.cfOrgList = list;
+          state.cfWaitingForOrgChoice = true;
+          send("cf:orgChoice", {
+            orgs: list.map((e) => ({
+              index: e.index,
+              name: e.name,
+              recommended: !!(state.org && e.name === state.org),
+            })),
+          });
+        } else {
+          state.cfSpaceList = list;
+          state.cfWaitingForSpaceChoice = true;
+          send("cf:spaceChoice", {
+            spaces: list.map((e) => ({ index: e.index, name: e.name })),
+          });
+        }
+      }
+
       proc.stdout.on("data", (buf) => {
-        for (const line of buf.toString().split(/\r?\n/)) {
-          if (line.length) log("cf", "line", line);
+        const chunk = buf.toString();
+        // split() always returns a trailing element even when the chunk has no
+        // final newline, so the unterminated "Org (enter to skip):" prompt
+        // shows up here as a regular line. Match it inline rather than via the
+        // stdout tail — the tail-watch below is only a safety net for the rare
+        // case where the prompt straddles a chunk boundary.
+        for (const line of chunk.split(/\r?\n/)) {
+          if (!line.length) continue;
+          log("cf", "line", line);
+          if (/^Select an org:/i.test(line)) {
+            collecting = "org"; entries = []; continue;
+          }
+          if (/^Select a space:/i.test(line)) {
+            collecting = "space"; entries = []; continue;
+          }
+          if (/^\s*Org\s*\(enter to skip\):/i.test(line)) {
+            if (collecting === "org" && entries.length) emitChoice("org");
+            continue;
+          }
+          if (/^\s*Space\s*\(enter to skip\):/i.test(line)) {
+            if (collecting === "space" && entries.length) emitChoice("space");
+            continue;
+          }
+          if (collecting) {
+            const m = ENTRY_RE.exec(line);
+            if (m) {
+              entries.push({ index: Number(m[1]), name: m[2] });
+              continue;
+            }
+            // Non-matching, non-empty line aborts collection (defensive).
+            if (!/^\s*$/.test(line)) collecting = null;
+          }
+        }
+        // Safety net: prompt straddled a chunk boundary so neither half was a
+        // full line. Watch the rolling tail of recent stdout.
+        stdoutTail = (stdoutTail + chunk).slice(-256);
+        if (collecting === "org" && entries.length && /Org\s*\(enter to skip\):\s*$/i.test(stdoutTail)) {
+          stdoutTail = ""; emitChoice("org");
+        } else if (collecting === "space" && entries.length && /Space\s*\(enter to skip\):\s*$/i.test(stdoutTail)) {
+          stdoutTail = ""; emitChoice("space");
         }
       });
       proc.stderr.on("data", (buf) => {
@@ -932,6 +1012,10 @@ function createOrchestrator({ host, send, audit }) {
       });
       proc.on("close", (code) => {
         log("cf", code === 0 ? "ok" : "err", `cf login exited (${code})`);
+        state.cfOrgList = null;
+        state.cfSpaceList = null;
+        state.cfWaitingForOrgChoice = false;
+        state.cfWaitingForSpaceChoice = false;
         if (code === 0) send("cf:loggedIn", {});
         else send("cf:loginFailed", { code });
         state.cfLoginProc = null;
@@ -945,6 +1029,36 @@ function createOrchestrator({ host, send, audit }) {
       try {
         proc.stdin.write(code.trim() + os.EOL);
         return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    },
+
+    async "cf:selectOrg"({ index }) {
+      const proc = state.cfLoginProc;
+      if (!proc || proc.killed) return { ok: false, error: "No active cf login session" };
+      if (!state.cfWaitingForOrgChoice) return { ok: false, error: "cf login is not awaiting an org selection" };
+      const entry = (state.cfOrgList || []).find((e) => e.index === Number(index));
+      if (!entry) return { ok: false, error: "Unknown org index" };
+      try {
+        proc.stdin.write(String(entry.index) + os.EOL);
+        state.cfWaitingForOrgChoice = false;
+        return { ok: true, org: entry.name };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    },
+
+    async "cf:selectSpace"({ index }) {
+      const proc = state.cfLoginProc;
+      if (!proc || proc.killed) return { ok: false, error: "No active cf login session" };
+      if (!state.cfWaitingForSpaceChoice) return { ok: false, error: "cf login is not awaiting a space selection" };
+      const entry = (state.cfSpaceList || []).find((e) => e.index === Number(index));
+      if (!entry) return { ok: false, error: "Unknown space index" };
+      try {
+        proc.stdin.write(String(entry.index) + os.EOL);
+        state.cfWaitingForSpaceChoice = false;
+        return { ok: true, space: entry.name };
       } catch (e) {
         return { ok: false, error: e.message };
       }

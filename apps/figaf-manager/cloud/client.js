@@ -159,6 +159,8 @@
     cf: {
       loginStart:           function (apiUrl) { return rpc("cf:loginStart", { apiUrl: apiUrl }); },
       submitPasscode:       function (code) { return rpc("cf:submitPasscode", { code: code }); },
+      selectOrg:            function (index) { return rpc("cf:selectOrg", { index: index }); },
+      selectSpace:          function (index) { return rpc("cf:selectSpace", { index: index }); },
       logout:               function ()  { return rpc("cf:logout"); },
       targetOrgSpace:       function ()  { return rpc("cf:targetOrgSpace"); },
       domains:              function ()  { return rpc("cf:domains"); },

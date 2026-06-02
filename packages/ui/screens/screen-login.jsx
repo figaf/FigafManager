@@ -10,6 +10,8 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
   const setLogin = (patch) => setCtx(c => ({ ...c, login: { ...c.login, ...patch } }));
   const [gaChoice, setGaChoice] = React.useState(null);
   const [subaccountChoice, setSubaccountChoice] = React.useState(null);
+  const [orgChoice, setOrgChoice] = React.useState(null);
+  const [spaceChoice, setSpaceChoice] = React.useState(null);
 
   const btpLoggedIn = login.btpStatus === "done";
   const cfLoggedIn = login.cfStatus === "done";
@@ -19,13 +21,21 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     const api = fg();
     if (!api) return;
     const offCf1 = api.on("cf:loggedIn", () => {
+      setOrgChoice(null);
+      setSpaceChoice(null);
       setLogin({ cfStatus: "done" });
       (async () => {
         const t = await api.cf.targetOrgSpace();
         if (t && t.ok) setLogin({ org: t.org, space: t.space, user: t.user || login.user });
       })();
     });
-    const offCf2 = api.on("cf:loginFailed", () => setLogin({ cfStatus: "error" }));
+    const offCf2 = api.on("cf:loginFailed", () => {
+      setOrgChoice(null);
+      setSpaceChoice(null);
+      setLogin({ cfStatus: "error" });
+    });
+    const offCfOrgChoice = api.on("cf:orgChoice", (p) => setOrgChoice(p));
+    const offCfSpaceChoice = api.on("cf:spaceChoice", (p) => setSpaceChoice(p));
 
     const offGaChoice = api.on("btp:gaChoice", (p) => {
       setGaChoice(p);
@@ -63,6 +73,8 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     return () => {
       offCf1 && offCf1();
       offCf2 && offCf2();
+      offCfOrgChoice && offCfOrgChoice();
+      offCfSpaceChoice && offCfSpaceChoice();
       offGaChoice && offGaChoice();
       offSubChoice && offSubChoice();
       offBtpOk && offBtpOk();
@@ -135,11 +147,35 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     const api = fg();
     if (!api) return;
     await api.cf.logout();
+    setOrgChoice(null);
+    setSpaceChoice(null);
     setLogin({
       cfStatus: "idle",
       org: "", space: "",
       passcode: "", passcodeRequested: false,
     });
+  }
+
+  async function selectCfOrg(index) {
+    const api = fg();
+    if (!api) return;
+    setOrgChoice(null);
+    const r = await api.cf.selectOrg(index);
+    if (r && r.ok === false) {
+      appendLog([{ type: "err", text: r.error || "Failed to select org" }]);
+      setLogin({ cfStatus: "error" });
+    }
+  }
+
+  async function selectCfSpace(index) {
+    const api = fg();
+    if (!api) return;
+    setSpaceChoice(null);
+    const r = await api.cf.selectSpace(index);
+    if (r && r.ok === false) {
+      appendLog([{ type: "err", text: r.error || "Failed to select space" }]);
+      setLogin({ cfStatus: "error" });
+    }
   }
 
   async function requestPasscode() {
@@ -446,6 +482,69 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {!cfLoggedIn && orgChoice && orgChoice.orgs && orgChoice.orgs.length > 0 && (
+            <div className="slide-in" style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 4 }}>
+                Choose a Cloud Foundry org
+              </div>
+              <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 10 }}>
+                The CLI returned multiple orgs. {orgChoice.orgs.some(o => o.recommended)
+                  ? <>The one matching your BTP subaccount org (<span className="kbd">{login.org}</span>) is recommended.</>
+                  : "None match your BTP subaccount org — pick the one you want to deploy to."}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {orgChoice.orgs.map((o) => (
+                  <button
+                    key={o.index}
+                    className="choice"
+                    style={{ flexDirection: "row", alignItems: "center", padding: "12px 14px", gap: 14, textAlign: "left" }}
+                    onClick={() => selectCfOrg(o.index)}
+                  >
+                    <div style={{ width: 28, height: 28, borderRadius: 6, background: "var(--fg-blue-soft)", color: "var(--fg-blue)", display: "grid", placeItems: "center", flexShrink: 0, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-mono)" }}>
+                      {o.index}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-0)", display: "flex", alignItems: "center", gap: 8 }}>
+                        {o.name}
+                        {o.recommended && <span className="pill green" style={{ fontSize: 10 }}><Ico.Check /> Recommended</span>}
+                      </div>
+                    </div>
+                    <Ico.ArrowRight />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!cfLoggedIn && spaceChoice && spaceChoice.spaces && spaceChoice.spaces.length > 0 && (
+            <div className="slide-in" style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 4 }}>
+                Choose a space
+              </div>
+              <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 10 }}>
+                The selected org has multiple spaces. Pick the one you want to deploy to.
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {spaceChoice.spaces.map((s) => (
+                  <button
+                    key={s.index}
+                    className="choice"
+                    style={{ flexDirection: "row", alignItems: "center", padding: "12px 14px", gap: 14, textAlign: "left" }}
+                    onClick={() => selectCfSpace(s.index)}
+                  >
+                    <div style={{ width: 28, height: 28, borderRadius: 6, background: "var(--fg-blue-soft)", color: "var(--fg-blue)", display: "grid", placeItems: "center", flexShrink: 0, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-mono)" }}>
+                      {s.index}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-0)" }}>{s.name}</div>
+                    </div>
+                    <Ico.ArrowRight />
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 

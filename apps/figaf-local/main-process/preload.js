@@ -49,6 +49,8 @@ contextBridge.exposeInMainWorld("figaf", {
   cf: {
     loginStart: (apiUrl) => ipcRenderer.invoke("cf:loginStart", { apiUrl }),
     submitPasscode: (code) => ipcRenderer.invoke("cf:submitPasscode", { code }),
+    selectOrg: (index) => ipcRenderer.invoke("cf:selectOrg", { index }),
+    selectSpace: (index) => ipcRenderer.invoke("cf:selectSpace", { index }),
     logout: () => ipcRenderer.invoke("cf:logout"),
     targetOrgSpace: () => ipcRenderer.invoke("cf:targetOrgSpace"),
     domains: () => ipcRenderer.invoke("cf:domains"),
