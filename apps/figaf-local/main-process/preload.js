@@ -58,6 +58,9 @@ contextBridge.exposeInMainWorld("figaf", {
     createService: (args) => ipcRenderer.invoke("cf:createService", args),
     service: (name) => ipcRenderer.invoke("cf:service", { name }),
     pollService: (name) => ipcRenderer.invoke("cf:pollService", { name }),
+    createServiceKey: (a) => ipcRenderer.invoke("cf:createServiceKey", a),
+    serviceKey:       (a) => ipcRenderer.invoke("cf:serviceKey", a),
+    marketplaceCheck: (a) => ipcRenderer.invoke("cf:marketplaceCheck", a),
     push: () => ipcRenderer.invoke("cf:push"),
     // v2 XSUAA upgrade (no-ops on desktop — the handlers return
     // "not available in desktop mode" but we expose the surface to keep the
@@ -92,6 +95,10 @@ contextBridge.exposeInMainWorld("figaf", {
     verify:           (a) => ipcRenderer.invoke("update:verify", a || {}),
   },
 
+  connect: {
+    templatePath: (name) => ipcRenderer.invoke("connect:templatePath", { name }),
+  },
+
   config: {
     dockerHubLatestBtpTag: () => ipcRenderer.invoke("config:dockerHubLatestBtpTag"),
     dockerHubBtpTags: () => ipcRenderer.invoke("config:dockerHubBtpTags"),
@@ -107,6 +114,7 @@ contextBridge.exposeInMainWorld("figaf", {
     openPasscodeUrl: (landscape) => ipcRenderer.invoke("shell:openPasscodeUrl", { landscape }),
     openExternal: (url) => ipcRenderer.invoke("shell:openExternal", { url }),
     readClipboard: () => ipcRenderer.invoke("shell:readClipboard"),
+    writeClipboard:  (text) => ipcRenderer.invoke("shell:writeClipboard", { text }),
   },
 
   on,
