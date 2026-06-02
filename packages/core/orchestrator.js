@@ -1183,6 +1183,21 @@ function createOrchestrator({ host, send, audit }) {
       return { path: await resolveDeployDir() };
     },
 
+    // connect ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Return the absolute path to a connect-flow template shipped with
+     * @figaf/core. Whitelisted filenames only — the channel cannot be
+     * coerced into reading arbitrary paths. The UI uses this to feed an
+     * absolute path into cf:createService's -c argument.
+     */
+    async "connect:templatePath"({ name } = {}) {
+      const allowed = new Set(["figaf-api.json", "figaf-iflow.json"]);
+      if (!allowed.has(name)) return { ok: false, error: "unknown template" };
+      const p = path.join(__dirname, "connect-templates", name);
+      return { ok: fs.existsSync(p), path: p };
+    },
+
     async "config:readVars"() {
       const deployDir = await resolveDeployDir();
       const file = path.join(deployDir, "vars.yml");
