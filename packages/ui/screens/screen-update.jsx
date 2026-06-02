@@ -40,10 +40,32 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
   const [tags, setTags] = React.useState(upd.availableTags || []);
   const [targetTag, setTargetTag] = React.useState(upd.targetTag || "");
   const [skipXsuaa, setSkipXsuaa] = React.useState(!!upd.skipXsuaa);
+  const [vars, setVars] = React.useState(upd.vars || {});
+  const [varsPartial, setVarsPartial] = React.useState(false);
+  const [strategy, setStrategy] = React.useState(upd.strategy || "rolling");
   const [resume, setResume] = React.useState(null);
   const [beginning, setBeginning] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [showAdvanced, setShowAdvanced] = React.useState(false);
+  const setVar = (patch) => setVars(v => ({ ...v, ...patch }));
+
+  // Pull the live app's current vars.yml values so the advanced form defaults
+  // to what's actually running (not the template). Returns the merged vars so
+  // callers that also need them synchronously (resume → setCtx) don't race the
+  // async setVars. Best-effort: a partial read just leaves template gaps.
+  async function loadCurrentConfig(id) {
+    const api = fg();
+    if (!api) return {};
+    try {
+      const c = await api.update.readCurrentConfig({ deployId: id });
+      if (c && c.ok) {
+        setVars(v => ({ ...v, ...(c.vars || {}) }));
+        setVarsPartial(!!c.partial);
+        return c.vars || {};
+      }
+    } catch {}
+    return {};
+  }
 
   React.useEffect(() => {
     const api = fg();
@@ -68,9 +90,12 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
     try {
       const r = await api.update.detectDeployment({ deployId });
       setDetection(r);
-      if (r && r.found && r.app && r.app.image && !targetTag) {
-        const colon = r.app.image.indexOf(":");
-        if (colon > 0) setTargetTag(r.app.image.slice(colon + 1));
+      if (r && r.found) {
+        await loadCurrentConfig(deployId);
+        if (r.app && r.app.image && !targetTag) {
+          const colon = r.app.image.indexOf(":");
+          if (colon > 0) setTargetTag(r.app.image.slice(colon + 1));
+        }
       }
     } catch (e) {
       setError(e.message || String(e));
@@ -85,13 +110,14 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
     setResume(null);
   }
 
-  function pickCandidate(c) {
+  async function pickCandidate(c) {
     setDeployId(c.id);
     setDetection({ ok: true, found: true, deployId: c.id, app: { name: c.app, image: c.image, exists: true }, router: { name: c.router, exists: !!c.router } });
     if (c.image) {
       const colon = c.image.indexOf(":");
       if (colon > 0) setTargetTag(c.image.slice(colon + 1));
     }
+    await loadCurrentConfig(c.id);
   }
 
   async function startUpdate() {
@@ -101,7 +127,7 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
     setError(null);
     setBeginning(true);
     const currentImage = detection && detection.app ? detection.app.image : null;
-    const r = await api.update.begin({ deployId, targetImageTag: targetTag });
+    const r = await api.update.begin({ deployId, targetImageTag: targetTag, strategy });
     setBeginning(false);
     if (!r || r.ok === false) {
       setError((r && r.error) || "update:begin failed");
@@ -116,6 +142,8 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
         availableTags: tags,
         targetTag,
         skipXsuaa,
+        vars,
+        strategy,
         resumeState: null,
         previousImage: currentImage,
         verify: null,
@@ -126,14 +154,23 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
 
   async function resumeUpdate() {
     if (!resume) return;
-    setDeployId(resume.deployId || deployId);
+    const id = resume.deployId || deployId;
+    setDeployId(id);
     if (resume.targetImageTag) setTargetTag(resume.targetImageTag);
+    // A resume may follow a dyno restart, in which case in-session vars were
+    // lost. Re-read the live config so writeVars doesn't fall back to template
+    // defaults. Strategy is persisted server-side in update-state.json.
+    const liveVars = await loadCurrentConfig(id);
+    const st = resume.strategy || strategy;
+    setStrategy(st);
     setCtx(c => ({
       ...c,
       update: {
         ...(c.update || {}),
-        deployId: resume.deployId || deployId,
+        deployId: id,
         targetTag: resume.targetImageTag || targetTag,
+        vars: { ...(c.update?.vars || {}), ...liveVars },
+        strategy: st,
         resumeState: resume,
         previousImage: c.update?.previousImage || null,
       },
@@ -266,6 +303,30 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
           </label>
         </div>
 
+        <div className="card" style={{ padding: 18, marginBottom: 14 }}>
+          <label className="field-label">Deployment strategy</label>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 6 }}>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
+              <input type="radio" name="upd-strategy" checked={strategy === "rolling"} onChange={() => setStrategy("rolling")} style={{ marginTop: 2 }} />
+              <span>
+                <div style={{ fontSize: 13, color: "var(--ink-0)" }}>Rolling <span className="pill green">zero downtime</span></div>
+                <div style={{ fontSize: 11.5, color: "var(--ink-3)" }}>
+                  The new instance starts alongside the old one and takes over once healthy. Needs ~2× the app's memory free during the swap — can hit the org quota on trial accounts.
+                </div>
+              </span>
+            </label>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
+              <input type="radio" name="upd-strategy" checked={strategy === "restart"} onChange={() => setStrategy("restart")} style={{ marginTop: 2 }} />
+              <span>
+                <div style={{ fontSize: 13, color: "var(--ink-0)" }}>Restart <span className="pill gray">1× memory</span></div>
+                <div style={{ fontSize: 11.5, color: "var(--ink-3)" }}>
+                  The old instance stops before the new one starts — a brief outage, but only one instance's worth of memory. Safer on tight quotas.
+                </div>
+              </span>
+            </label>
+          </div>
+        </div>
+
         <div style={{ marginBottom: 14 }}>
           <button
             type="button"
@@ -273,12 +334,80 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
             onClick={() => setShowAdvanced(s => !s)}
             style={{ width: "100%", justifyContent: "space-between" }}
           >
-            <span>Advanced (edit vars.yml)</span>
+            <span>Advanced — deployment variables{found ? " (loaded from live app)" : ""}</span>
             <span style={{ color: "var(--ink-3)" }}>{showAdvanced ? "▴" : "▾"}</span>
           </button>
           {showAdvanced && (
-            <div className="card" style={{ padding: 14, marginTop: 8, fontSize: 12, color: "var(--ink-2)" }}>
-              vars.yml is rewritten at run-time with <span className="kbd">id={deployId}</span> and <span className="kbd">DOCKER_IMAGE_VERSION={targetTag || "…"}</span>. Other variables in vars.yml (memory, RAM%, log cap, CC destinations) are preserved from the refreshed template. To override them, edit the Deploy flow's Configuration screen on a future run — the Update flow keeps the vars form minimal.
+            <div className="card" style={{ padding: 18, marginTop: 8 }}>
+              <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginBottom: 14 }}>
+                These default to the values currently running on <span className="kbd">{deployId}-app</span>, so an update won't change them unless you do here. <span className="kbd">ID</span> and <span className="kbd">DOCKER_IMAGE_VERSION</span> are set from the fields above.
+              </div>
+
+              {varsPartial && (
+                <div style={{ padding: "10px 12px", borderRadius: 6, background: "rgba(234,179,8,0.1)", border: "1px solid rgba(234,179,8,0.3)", fontSize: 12, color: "var(--ink-2)", marginBottom: 14 }}>
+                  Some live values couldn't be read — template defaults are shown for those. Review them before continuing.
+                </div>
+              )}
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 10 }}>
+                <div className="field">
+                  <label className="field-label">Landscape apps domain</label>
+                  <input className="input is-mono" value={vars.domain ?? ""} onChange={(e) => setVar({ domain: e.target.value })} placeholder="cfapps.us10-001.hana.ondemand.com" />
+                </div>
+                <div className="field">
+                  <label className="field-label">Location ID</label>
+                  <input className="input is-mono" value={vars.locationId ?? ""} onChange={(e) => setVar({ locationId: e.target.value })} placeholder="(optional)" maxLength={20} />
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 10 }}>
+                <div className="field">
+                  <label className="field-label">Instance memory</label>
+                  <input className="input is-mono" value={vars.instanceMemory ?? ""} onChange={(e) => setVar({ instanceMemory: e.target.value })} placeholder="1500M" />
+                  <div className="field-hint">Units: K, M, G. Defaults to the app's live allocation.</div>
+                </div>
+                <div className="field">
+                  <label className="field-label">Max RAM percentage</label>
+                  <input className="input is-mono" value={vars.maxRamPercentage ?? ""} onChange={(e) => setVar({ maxRamPercentage: e.target.value })} placeholder="50" />
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 10 }}>
+                <div className="field">
+                  <label className="field-label">Logs total size cap</label>
+                  <input className="input is-mono" value={vars.logsTotalSizeCap ?? ""} onChange={(e) => setVar({ logsTotalSizeCap: e.target.value })} placeholder="2GB" />
+                </div>
+                <div className="field">
+                  <label className="field-label">Enable instance monitoring</label>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "10px 0" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13 }}>
+                      <input type="checkbox" checked={vars.enableInstanceMonitoring === true} onChange={(e) => setVar({ enableInstanceMonitoring: e.target.checked })} style={{ cursor: "pointer" }} />
+                      Enable Glowroot monitoring
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="field">
+                <label className="field-label">Use cloud connector for SMTP integration</label>
+                <div style={{ display: "flex", gap: 12, alignItems: "center", padding: "8px 0" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                    <input type="radio" name="upd-smtp" checked={vars.useCloudConnectorForSmtpIntegration !== true} onChange={() => setVar({ useCloudConnectorForSmtpIntegration: false })} style={{ cursor: "pointer" }} />
+                    <span style={{ fontSize: 13 }}>No</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                    <input type="radio" name="upd-smtp" checked={vars.useCloudConnectorForSmtpIntegration === true} onChange={() => setVar({ useCloudConnectorForSmtpIntegration: true })} style={{ cursor: "pointer" }} />
+                    <span style={{ fontSize: 13 }}>Yes</span>
+                  </label>
+                </div>
+              </div>
+
+              {vars.useCloudConnectorForSmtpIntegration === true && (
+                <div className="field" style={{ marginTop: 8 }}>
+                  <label className="field-label">Cloud connector destination name</label>
+                  <input className="input is-mono" value={vars.cloudConnectorDestinationNameForSmtpIntegration ?? ""} onChange={(e) => setVar({ cloudConnectorDestinationNameForSmtpIntegration: e.target.value })} placeholder="smtp-destination" />
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -305,6 +434,8 @@ function ScreenUpdateProgress({ ctx, setCtx, onNext, onBack }) {
   const deployId = upd.deployId || "figaf-tool";
   const targetTag = upd.targetTag || "";
   const skipXsuaa = !!upd.skipXsuaa;
+  const vars = upd.vars || {};
+  const strategy = upd.strategy || "rolling";
 
   const [phases, setPhases] = React.useState(() => UPDATE_PHASES.map(p => ({ ...p, status: "pending" })));
   const [error, setError] = React.useState(null);
@@ -340,16 +471,16 @@ function ScreenUpdateProgress({ ctx, setCtx, onNext, onBack }) {
     setError(null);
 
     try {
-      const wv = await api.update.writeVars({ deployId, dockerTag: targetTag });
+      const wv = await api.update.writeVars({ deployId, dockerTag: targetTag, vars });
       if (!wv.ok) { setError(wv.error || "writeVars failed"); setRunning(false); return; }
 
       const ux = await api.update.updateXsuaa({ deployId, skip: skipXsuaa });
       if (!ux.ok) { setError(ux.error || "updateXsuaa failed"); setRunning(false); return; }
 
-      const pa = await api.update.pushApp({ deployId, role: "app" });
+      const pa = await api.update.pushApp({ deployId, role: "app", strategy });
       if (!pa.ok) { setError(pa.error || "pushApp(app) failed"); setRunning(false); return; }
 
-      const pr = await api.update.pushApp({ deployId, role: "router" });
+      const pr = await api.update.pushApp({ deployId, role: "router", strategy });
       if (!pr.ok) { setError(pr.error || "pushApp(router) failed"); setRunning(false); return; }
 
       const vf = await api.update.verify({ deployId });
@@ -362,7 +493,7 @@ function ScreenUpdateProgress({ ctx, setCtx, onNext, onBack }) {
       setError(e.message || String(e));
       setRunning(false);
     }
-  }, [deployId, targetTag, skipXsuaa, setCtx]);
+  }, [deployId, targetTag, skipXsuaa, vars, strategy, setCtx]);
 
   React.useEffect(() => {
     if (startedRef.current) return;

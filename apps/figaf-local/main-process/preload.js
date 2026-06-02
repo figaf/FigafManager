@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld("figaf", {
   update: {
     resumeStatus:     () => ipcRenderer.invoke("update:resumeStatus"),
     detectDeployment: (a) => ipcRenderer.invoke("update:detectDeployment", a || {}),
+    readCurrentConfig: (a) => ipcRenderer.invoke("update:readCurrentConfig", a || {}),
     begin:            (a) => ipcRenderer.invoke("update:begin", a || {}),
     clear:            () => ipcRenderer.invoke("update:clear"),
     writeVars:        (a) => ipcRenderer.invoke("update:writeVars", a || {}),

@@ -67,7 +67,7 @@ function App() {
       { id: "vars",  status: "pending", title: "Update vars.yml",                     sub: "ID · LANDSCAPE_APPS_DOMAIN · LOCATION_ID · DOCKER_IMAGE_VERSION" },
       { id: "db",    status: "pending", title: "Create PostgreSQL service (figaf-db)", sub: "cf create-service postgresql-db · poll every 10s" },
       { id: "xsuaa", status: "pending", title: "Create XSUAA service (figaf-xsuaa)",   sub: "cf create-service xsuaa application" },
-      { id: "roles", status: "pending", title: "Assign role collection",               sub: "btp assign security/role-collection PI_Administrator" },
+      { id: "roles", status: "pending", title: "Assign role collection",               sub: "btp assign security/role-collection IRTAdmin (after XSUAA)" },
     ],
     pushStatus: "idle",
     pushStarted: false,
@@ -79,6 +79,11 @@ function App() {
       availableTags: [],
       targetTag: "",
       skipXsuaa: false,
+      // vars.yml fields seeded from the LIVE app via update:readCurrentConfig
+      // (not the template defaults) so an update never silently changes memory,
+      // domain, location, or SMTP settings. strategy picks the cf push mode.
+      vars: {},
+      strategy: "rolling",
       resumeState: null,
       previousImage: null,
       verify: null,

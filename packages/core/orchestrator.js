@@ -904,7 +904,7 @@ function createOrchestrator({ host, send, audit }) {
     },
 
     async "btp:assignRole"({ user, role }) {
-      const args = ["assign", "security/role-collection", role || "PI_Administrator", "--to-user", user];
+      const args = ["assign", "security/role-collection", role || "IRTAdmin", "--to-user", user];
       if (state.subaccount) args.push("--subaccount", state.subaccount);
       const r = await run(resolveBtp(), args, { source: "btp" });
       return { ok: r.code === 0, stdout: r.stdout, stderr: r.stderr };
@@ -1806,7 +1806,62 @@ function createOrchestrator({ host, send, audit }) {
       return { ok: true, found: false, deployId: null, candidates };
     },
 
-    async "update:begin"({ deployId, targetImageTag } = {}) {
+    // Read the LIVE <deployId>-app configuration so the Update form can default
+    // to what is actually running, rather than the freshly-downloaded template
+    // defaults (those silently rewrote memory/domain/location and tripped
+    // `memory quota_exceeded`). Returns a `vars` object in the exact shape
+    // config:writeVars consumes. On a partial read failure the affected fields
+    // are simply omitted and partial=true is set, so the UI can warn and let
+    // the template defaults stand in for the gaps.
+    async "update:readCurrentConfig"({ deployId } = {}) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      if (!deployId) return { ok: false, error: "deployId required" };
+      const appName = `${deployId}-app`;
+      const vars = {};
+      let partial = false;
+
+      const g = await run(resolveCf(), ["app", "--guid", appName], { source: "cf" });
+      if (g.code !== 0) return { ok: true, vars: {}, partial: true };
+      const guid = g.stdout.trim().split(/\r?\n/).filter(Boolean).pop();
+      if (!guid) return { ok: true, vars: {}, partial: true };
+
+      // CF stores env values as strings ("true"/"false"); coerce the two booleans.
+      const toBool = (v) => v === true || v === "true";
+
+      const e = await run(resolveCf(), ["curl", `/v3/apps/${guid}/environment_variables`], { source: "cf" });
+      if (e.code === 0) {
+        let env = {};
+        try { env = (JSON.parse(e.stdout).var) || {}; } catch { partial = true; }
+        if (env.LOCATION_ID != null) vars.locationId = env.LOCATION_ID;
+        if (env.MAX_RAM_PERCENTAGE != null) vars.maxRamPercentage = String(env.MAX_RAM_PERCENTAGE);
+        if (env.LOGS_TOTAL_SIZE_CAP != null) vars.logsTotalSizeCap = env.LOGS_TOTAL_SIZE_CAP;
+        if (env.ENABLE_INSTANCE_MONITORING != null) vars.enableInstanceMonitoring = toBool(env.ENABLE_INSTANCE_MONITORING);
+        if (env.USE_CLOUD_CONNECTOR_FOR_SMTP_INTEGRATION != null) vars.useCloudConnectorForSmtpIntegration = toBool(env.USE_CLOUD_CONNECTOR_FOR_SMTP_INTEGRATION);
+        if (env.CLOUD_CONNECTOR_DESTINATION_NAME_FOR_SMTP_INTEGRATION != null) vars.cloudConnectorDestinationNameForSmtpIntegration = env.CLOUD_CONNECTOR_DESTINATION_NAME_FOR_SMTP_INTEGRATION;
+        // LANDSCAPE_APPS_DOMAIN ← strip "https://<deployId>." off BTP_APP_ROUTER_URL.
+        if (env.BTP_APP_ROUTER_URL) {
+          const bare = String(env.BTP_APP_ROUTER_URL).replace(/^https?:\/\//, "");
+          const prefix = `${deployId}.`;
+          vars.domain = bare.startsWith(prefix) ? bare.slice(prefix.length) : bare;
+        }
+      } else {
+        partial = true;
+      }
+
+      const p = await run(resolveCf(), ["curl", `/v3/apps/${guid}/processes/web`], { source: "cf" });
+      if (p.code === 0) {
+        try {
+          const mem = JSON.parse(p.stdout).memory_in_mb;
+          if (mem != null) vars.instanceMemory = `${mem}M`;
+        } catch { partial = true; }
+      } else {
+        partial = true;
+      }
+
+      return { ok: true, vars, partial };
+    },
+
+    async "update:begin"({ deployId, targetImageTag, strategy } = {}) {
       if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
       if (!deployId) return { ok: false, error: "deployId required" };
       send("update:phase", { phase: "refresh-templates", state: "running" });
@@ -1819,6 +1874,7 @@ function createOrchestrator({ host, send, audit }) {
       writeUpdateState({
         deployId,
         targetImageTag: targetImageTag || null,
+        strategy: strategy === "restart" ? "restart" : "rolling",
         phase: "starting",
         startedAt: new Date().toISOString(),
         lastError: null,
@@ -1914,7 +1970,7 @@ function createOrchestrator({ host, send, audit }) {
     // block) using ((ID)) from vars.yml, so a single -f manifest.yml + the
     // already-rewritten vars.yml suffices. --strategy rolling keeps the
     // old instance serving until the new one is healthy (plan D2).
-    async "update:pushApp"({ deployId, role } = {}) {
+    async "update:pushApp"({ deployId, role, strategy } = {}) {
       if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
       if (!deployId) return { ok: false, error: "deployId required" };
       if (role !== "app" && role !== "router") return { ok: false, error: "role must be 'app' or 'router'" };
@@ -1922,7 +1978,14 @@ function createOrchestrator({ host, send, audit }) {
       const phase = role === "app" ? "push-app" : "push-router";
       const deployDir = await resolveDeployDir();
       send("update:phase", { phase, state: "running" });
-      const args = ["push", name, "--strategy", "rolling", "--vars-file", "vars.yml", "-f", "manifest.yml"];
+      // strategy: "rolling" keeps the old instance serving until the new one is
+      // healthy (~2x memory during overlap); "restart" omits the flag so CF
+      // stops the old instance first (brief downtime, 1x memory). Fall back to
+      // the value persisted at update:begin so a resumed run keeps the choice.
+      const st = strategy || (readUpdateState() || {}).strategy || "rolling";
+      const args = ["push", name];
+      if (st !== "restart") args.push("--strategy", "rolling");
+      args.push("--vars-file", "vars.yml", "-f", "manifest.yml");
       const r = await run(resolveCf(), args, { source: "cf", cwd: deployDir });
       if (r.code !== 0) {
         const errText = r.stderr || `cf push ${name} failed`;
@@ -1932,7 +1995,7 @@ function createOrchestrator({ host, send, audit }) {
       }
       writeUpdateState({ phase: role === "app" ? "app-pushed" : "router-pushed" });
       send("update:phase", { phase, state: "done" });
-      return { ok: true, name, strategy: "rolling" };
+      return { ok: true, name, strategy: st };
     },
 
     async "update:verify"({ deployId } = {}) {

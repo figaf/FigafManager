@@ -188,6 +188,7 @@
     update: {
       resumeStatus:     function ()  { return rpc("update:resumeStatus"); },
       detectDeployment: function (a) { return rpc("update:detectDeployment", a || {}); },
+      readCurrentConfig: function (a) { return rpc("update:readCurrentConfig", a || {}); },
       begin:            function (a) { return rpc("update:begin", a || {}); },
       clear:            function ()  { return rpc("update:clear"); },
       writeVars:        function (a) { return rpc("update:writeVars", a || {}); },

@@ -14,6 +14,14 @@ function ScreenDone({ ctx, setCtx, setStep, STEPS }) {
   const isHosted = window.figafModeFlags.isHosted;
   const showXsuaaUpgrade = !!(window.figafModeFlags.features && window.figafModeFlags.features.xsuaaUpgrade);
 
+  function backToChoice() {
+    if (!setCtx || !setStep) return;
+    // Reset the branch so STEPS collapses back to baseSteps, then jump to the
+    // choice screen (index 2: [welcome, login, choice]).
+    setCtx(c => ({ ...c, choice: null }));
+    setStep(2);
+  }
+
   function beginXsuaaUpgrade() {
     if (!setCtx || !setStep) return;
     // Flip the wizard branch to xsuaaSteps. The new STEPS layout is
@@ -91,6 +99,9 @@ function ScreenDone({ ctx, setCtx, setStep, STEPS }) {
           </button>
         )}
         <div className="spacer" />
+        <button className="btn btn-primary" onClick={backToChoice}>
+          <Ico.ArrowLeft /> Back to actions
+        </button>
         <button className="btn btn-primary" onClick={open}>
           Open Figaf Tool <Ico.External />
         </button>

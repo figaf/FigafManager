@@ -22,7 +22,7 @@ function ScreenProgress({ ctx, setCtx, onNext, onBack, appendLog }) {
       // 1. vars.yml — written in config step; just mark done
       mark("vars", { status: "done", sub: "vars.yml updated" });
 
-      // 2. parallel: create db, create xsuaa, list/assign role
+      // 2. db creation runs fully in parallel — no dependency on XSUAA.
       const dbPromise = (async () => {
         mark("db", { status: "running" });
         const c1 = await api.cf.createService({
@@ -33,7 +33,18 @@ function ScreenProgress({ ctx, setCtx, onNext, onBack, appendLog }) {
         mark("db", { status: p1.ok ? "done" : "error", sub: p1.status });
       })();
 
-      const xsPromise = (async () => {
+      // 3. XSUAA creation, THEN role assignment chained off it.
+      //
+      // The IRTAdmin role collection is not a standalone object — it is
+      // materialized in the subaccount by xs-security.json the moment
+      // `cf create-service xsuaa application figaf-xsuaa` reaches
+      // status: succeeded. So the assign MUST wait for that poll to
+      // succeed. Running it in parallel (the old behavior) only ever
+      // worked on subaccounts where a prior deployment had already left
+      // the role collection behind; on a fresh subaccount the assign
+      // raced ahead of materialization and failed with "role collection
+      // not found".
+      const xsRolePromise = (async () => {
         mark("xsuaa", { status: "running" });
         const c2 = await api.cf.createService({
           offering: "xsuaa", plan: "application", name: "figaf-xsuaa", configFile: "xs-security.json",
@@ -41,18 +52,21 @@ function ScreenProgress({ ctx, setCtx, onNext, onBack, appendLog }) {
         if (!c2.ok) { mark("xsuaa", { status: "error", sub: c2.stderr || "create-service failed" }); return; }
         const p2 = await api.cf.pollService("figaf-xsuaa");
         mark("xsuaa", { status: p2.ok ? "done" : "error", sub: p2.status });
-      })();
+        if (!p2.ok) {
+          mark("roles", { status: "error", sub: "skipped — XSUAA not ready" });
+          return;
+        }
 
-      const rolePromise = (async () => {
+        // XSUAA is up and the role collections are now materialized.
         mark("roles", { status: "running" });
         const users = await api.btp.listUsers();
         const who = ctx.login.user || (users.ok && users.users[0]) || "";
         if (!who) { mark("roles", { status: "error", sub: "no user found" }); return; }
-        const r = await api.btp.assignRole(who, "PI_Administrator");
-        mark("roles", { status: r.ok ? "done" : "error", sub: r.ok ? `assigned to ${who}` : (r.stderr || "failed") });
+        const r = await api.btp.assignRole(who, "IRTAdmin");
+        mark("roles", { status: r.ok ? "done" : "error", sub: r.ok ? `assigned IRTAdmin to ${who}` : (r.stderr || "failed") });
       })();
 
-      await Promise.all([dbPromise, xsPromise, rolePromise]);
+      await Promise.all([dbPromise, xsRolePromise]);
     })();
     // eslint-disable-next-line
   }, []);
@@ -67,7 +81,7 @@ function ScreenProgress({ ctx, setCtx, onNext, onBack, appendLog }) {
           </h1>
           <p className="pane-desc">
             {allDone
-              ? "PostgreSQL, XSUAA, and PI_Administrator role are configured. Ready to deploy the app."
+              ? "PostgreSQL, XSUAA, and the IRTAdmin role are configured. Ready to deploy the app."
               : <>Creating services in <span className="kbd">{ctx.login.org || "?"} / {ctx.login.space || "?"}</span> and assigning role collections. Most tasks run in parallel.</>}
           </p>
         </div>
