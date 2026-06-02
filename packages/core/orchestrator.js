@@ -7,6 +7,7 @@ const crypto = require("crypto");
 const { spawn } = require("child_process");
 const https = require("https");
 const dbSchemas = require("./db-schemas");
+const { redactServiceKeyLine } = require("./redact-service-key");
 
 const DEPLOYMENT_ZIP_URL =
   process.env.FIGAF_DEPLOYMENT_ZIP_URL ||
@@ -1145,6 +1146,63 @@ function createOrchestrator({ host, send, audit }) {
       const r = await run(resolveCf(), ["create-service-key", service, key], { source: "cf" });
       const alreadyExists = /already exists/i.test(r.stdout + r.stderr);
       return { ok: r.code === 0 || alreadyExists, alreadyExists, stderr: r.stderr };
+    },
+
+    /**
+     * Read a service key. cf prints a few prefix lines then a pretty-printed
+     * JSON block (the service-key payload). We spawn cf directly (not via
+     * run()) so we can route stdout through redactServiceKeyLine BEFORE the
+     * cli:line frames are emitted — the TerminalDrawer and audit log only
+     * ever see the redacted form. The unredacted JSON travels back to the
+     * UI via this handler's return value so the screen can render +
+     * copy-to-clipboard the real keys.
+     *
+     * Returns: { ok, json, raw } on success, { ok: false, error|stderr|code }
+     * on failure. `raw` is the unredacted JSON substring (not the full
+     * stdout) so the UI can copy a clean payload.
+     */
+    async "cf:serviceKey"({ service, key } = {}) {
+      if (!service || !key) return { ok: false, error: "service and key required" };
+      return new Promise((resolve) => {
+        const cfBin = resolveCf();
+        log("cmd", "cmd", `${cfBin} service-key ${service} ${key}`);
+        const proc = spawn(cfBin, ["service-key", service, key], { shell: false, windowsHide: true });
+        let rawStdout = "";
+        let rawStderr = "";
+        let lineRemainder = "";
+        proc.stdout.on("data", (buf) => {
+          const chunk = buf.toString();
+          rawStdout += chunk;
+          lineRemainder += chunk;
+          const parts = lineRemainder.split(/\r?\n/);
+          lineRemainder = parts.pop();
+          for (const line of parts) log("cf", "line", redactServiceKeyLine(line));
+        });
+        proc.stderr.on("data", (buf) => {
+          const chunk = buf.toString();
+          rawStderr += chunk;
+          for (const line of chunk.split(/\r?\n/)) {
+            if (line) log("cf", "err", redactServiceKeyLine(line));
+          }
+        });
+        proc.on("error", (e) => resolve({ ok: false, error: e.message }));
+        proc.on("close", (code) => {
+          if (lineRemainder) log("cf", "line", redactServiceKeyLine(lineRemainder));
+          if (code !== 0) return resolve({ ok: false, code, stderr: rawStderr });
+          const jsonStart = rawStdout.indexOf("{");
+          const jsonEnd   = rawStdout.lastIndexOf("}");
+          if (jsonStart < 0 || jsonEnd <= jsonStart) {
+            return resolve({ ok: false, error: "could not locate JSON in cf service-key output" });
+          }
+          const slice = rawStdout.slice(jsonStart, jsonEnd + 1);
+          try {
+            const json = JSON.parse(slice);
+            resolve({ ok: true, json, raw: slice });
+          } catch (e) {
+            resolve({ ok: false, error: "JSON parse failed: " + e.message });
+          }
+        });
+      });
     },
 
     async "cf:push"() {
