@@ -1111,6 +1111,17 @@ function createOrchestrator({ host, send, audit }) {
       return { ok: true, plans };
     },
 
+    async "cf:marketplaceCheck"({ offering } = {}) {
+      if (!offering) return { ok: false, error: "offering required" };
+      const r = await run(resolveCf(), ["marketplace", "-e", offering], { source: "cf" });
+      // cf v8 returns code 1 with a "Service offering 'X' not found." stderr
+      // on a missing offering. cf v7 returns 0 with a "No service offerings
+      // found" stdout line. Handle both.
+      const blob = r.stdout + r.stderr;
+      const notFound = /not\s+found|no service offerings found/i.test(blob);
+      return { ok: r.code === 0 && !notFound, offering, stderr: r.stderr };
+    },
+
     async "cf:createService"({ offering, plan, name, configFile }) {
       const deployDir = await resolveDeployDir();
       const args = ["create-service", offering, plan, name];
