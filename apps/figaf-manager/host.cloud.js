@@ -31,6 +31,7 @@ function createHost({ sessionId }) {
     openExternal: () => Promise.resolve(),
     pickFile:     () => Promise.resolve(null),
     readClipboard:() => Promise.resolve(""),
+    writeClipboard:() => Promise.resolve({ ok: false, error: "use browser API" }),
 
     resolveDeployTemplate: () => ({
       kind: "github",

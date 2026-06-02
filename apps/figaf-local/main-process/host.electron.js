@@ -77,6 +77,11 @@ function createHost({ getWindow }) {
       return clipboard.readText() || "";
     },
 
+    async writeClipboard(text) {
+      clipboard.writeText(typeof text === "string" ? text : "");
+      return { ok: true };
+    },
+
     resolveDeployTemplate() {
       return { kind: "bundle", src: deployTemplateSrc() };
     },

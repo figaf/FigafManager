@@ -43,6 +43,12 @@ const DEPLOYMENT_ZIP_URL =
  *   Return the system clipboard contents. Cloud: no-op (the browser shim
  *   uses navigator.clipboard).
  *
+ * @property {(text: string) => Promise<{ ok: boolean, error?: string }>} writeClipboard
+ *   Write `text` to the system clipboard. Electron: clipboard.writeText.
+ *   Cloud: no-op returning { ok: false } — the cloud/client.js browser
+ *   shim calls navigator.clipboard.writeText directly and never reaches
+ *   the server handler.
+ *
  * @property {() => { kind: "bundle"|"github", src: string }} resolveDeployTemplate
  *   Where to materialize the deployment template tree from.
  *   Electron: { kind: "bundle", src: <bundled directory> } — copied to
@@ -2196,6 +2202,17 @@ function createOrchestrator({ host, send, audit }) {
     async "shell:readClipboard"() {
       try {
         return { ok: true, text: (await host.readClipboard()) || "" };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    },
+
+    async "shell:writeClipboard"({ text } = {}) {
+      if (typeof text !== "string") return { ok: false, error: "text must be a string" };
+      try {
+        const r = await host.writeClipboard(text);
+        // host may return undefined for a successful write
+        return r && typeof r === "object" ? r : { ok: true };
       } catch (e) {
         return { ok: false, error: e.message };
       }
