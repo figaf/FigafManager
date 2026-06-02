@@ -1140,6 +1140,13 @@ function createOrchestrator({ host, send, audit }) {
       return { ok: false, status: "timeout" };
     },
 
+    async "cf:createServiceKey"({ service, key } = {}) {
+      if (!service || !key) return { ok: false, error: "service and key required" };
+      const r = await run(resolveCf(), ["create-service-key", service, key], { source: "cf" });
+      const alreadyExists = /already exists/i.test(r.stdout + r.stderr);
+      return { ok: r.code === 0 || alreadyExists, alreadyExists, stderr: r.stderr };
+    },
+
     async "cf:push"() {
       const deployDir = await resolveDeployDir();
       const r = await run(resolveCf(), ["push", "--vars-file", "vars.yml"], { source: "cf", cwd: deployDir });
