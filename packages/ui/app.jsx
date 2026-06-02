@@ -2,7 +2,9 @@
    WinFrame, StepperRail, WizardFooter, TerminalDrawer,
    ScreenWelcome, ScreenLogin, ScreenChoice, ScreenConfig, ScreenProgress, ScreenDeploy, ScreenDone,
    ScreenXsuaaUpgrade, ScreenXsuaaAssignRole,
-   ScreenUpdateConfig, ScreenUpdateProgress */
+   ScreenUpdateConfig, ScreenUpdateProgress,
+   ScreenConnectProvision, ScreenConnectIdp,
+   ScreenConnectIdpSuser, ScreenConnectIdpPassport, ScreenConnectIdpIas, ScreenConnectIdpCustom */
 
 function App() {
   const [step, setStepRaw] = React.useState(0);
@@ -88,6 +90,21 @@ function App() {
       previousImage: null,
       verify: null,
     },
+    // Populated by the Connect-to-Integration-Suite branch (ScreenConnect*).
+    // tasks: 4-row checklist driving ScreenConnectProvision.
+    // keys: parsed service-key JSONs; cleared when the operator backs out.
+    // idpMode: selected on ScreenConnectIdp, drives which stub renders next.
+    connect: {
+      marketplaceOk: null,
+      tasks: [
+        { id: "create-api",   status: "pending", title: "Create it-rt/api service",              sub: "cf create-service it-rt api figaf-api" },
+        { id: "create-iflow", status: "pending", title: "Create it-rt/integration-flow service", sub: "cf create-service it-rt integration-flow figaf-iflow" },
+        { id: "key-api",      status: "pending", title: "Create + fetch API service key",        sub: "cf create-service-key + cf service-key" },
+        { id: "key-iflow",    status: "pending", title: "Create + fetch iFlow service key",      sub: "cf create-service-key + cf service-key" },
+      ],
+      keys: { api: null, iflow: null },
+      idpMode: null,
+    },
   });
 
   const [logs, setLogs] = React.useState([
@@ -125,7 +142,10 @@ function App() {
   ];
 
   const connectSteps = [
-    { id: "done",     label: "Finish",             sub: "Integration Suite setup" },
+    { id: "connect-provision", label: "Provision",   sub: "it-rt · service keys" },
+    { id: "connect-idp",       label: "BTP access",  sub: "Pick auth mode" },
+    { id: "connect-idp-stub",  label: "Configure",   sub: "Mode-specific setup" },
+    { id: "done",              label: "Finish",      sub: "Integration Suite linked" },
   ];
 
   // v2: dedicated branch for the XSUAA upgrade flow. Entered either from
@@ -174,6 +194,17 @@ function App() {
     case "xsuaa-assign-role": Screen = <ScreenXsuaaAssignRole ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
     case "updateConfig":      Screen = <ScreenUpdateConfig ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
     case "updateProgress":    Screen = <ScreenUpdateProgress ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
+    case "connect-provision": Screen = <ScreenConnectProvision ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
+    case "connect-idp":       Screen = <ScreenConnectIdp ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
+    case "connect-idp-stub":
+      switch (ctx.connect && ctx.connect.idpMode) {
+        case "s-user":       Screen = <ScreenConnectIdpSuser    ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
+        case "sap-passport": Screen = <ScreenConnectIdpPassport ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
+        case "ias":          Screen = <ScreenConnectIdpIas      ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
+        case "custom-idp":   Screen = <ScreenConnectIdpCustom   ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
+        default:             Screen = null;
+      }
+      break;
     case "done":              Screen = <ScreenDone ctx={ctx} setCtx={setCtx} setStep={setStepRaw} STEPS={STEPS} />; break;
     default: Screen = null;
   }
