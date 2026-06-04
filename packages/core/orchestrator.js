@@ -1900,16 +1900,15 @@ function createOrchestrator({ host, send, audit }) {
      */
     async "xsuaa:assignRoleCollectionPreflight"() {
       if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
-      const ga = state.globalAccountSubdomain;
+      const gaGuid = state.globalAccountGuid;
       const sub = state.subaccount;
-      if (!ga || !sub) return { ok: false, error: "missing globalAccountSubdomain or subaccount" };
-      // Cockpit URL shape varies by region (eu10, us10, ap20…). Derive from
-      // the cf landscape; fall back to the EMEA cockpit if landscape unknown.
+      if (!gaGuid || !sub) return { ok: false, error: "missing globalAccountGuid or subaccount" };
       // Trial vs productive cockpit base (see saml-connect.cockpitBaseFromLicense).
-      // The previous derivation was a dead ternary that always emitted the
-      // productive host even on trial — fixed here via the shared helper.
+      // The cockpit deep-link fragment uses GUIDs for both GA and subaccount —
+      // matching connect:trustConfigUrl. (The prior code used the GA subdomain
+      // here, which is wrong for the #/globalaccount/<…>/ fragment.)
       const base = cockpitBaseFromLicense(state.licenseType);
-      const url = `${base}#/globalaccount/${encodeURIComponent(ga)}/subaccount/${encodeURIComponent(sub)}/users`;
+      const url = `${base}#/globalaccount/${encodeURIComponent(gaGuid)}/subaccount/${encodeURIComponent(sub)}/users`;
       return { ok: true, url, roleCollection: "FigafManagerOperator" };
     },
 
