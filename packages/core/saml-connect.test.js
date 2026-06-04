@@ -67,8 +67,22 @@ test("regionFromLandscape strips the cf- prefix", () => {
   assert.equal(regionFromLandscape("cf-eu10"), "eu10");
 });
 
+test("regionFromLandscape strips the trailing -NNN CF-cluster discriminator", () => {
+  // The CF landscape label carries a per-cluster suffix (-001, -004) that the
+  // regional XSUAA/IAS *authentication* host does NOT. Drop it for the auth host.
+  assert.equal(regionFromLandscape("cf-us10-001"), "us10");
+  assert.equal(regionFromLandscape("cf-eu10-004"), "eu10");
+});
+
+test("regionFromLandscape preserves a trailing ALPHABETIC suffix (e.g. -canary)", () => {
+  // Canary is part of the regional identity-zone name, not a cluster number —
+  // it must survive. Only a trailing digit-only group is a cluster discriminator.
+  assert.equal(regionFromLandscape("cf-eu10-canary"), "eu10-canary");
+});
+
 test("regionFromLandscape passes through a bare region", () => {
   assert.equal(regionFromLandscape("ap20"), "ap20");
+  assert.equal(regionFromLandscape("ap21"), "ap21");
 });
 
 test("regionFromLandscape returns null on empty", () => {

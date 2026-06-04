@@ -45,10 +45,18 @@ function trustConfigUrl({ licenseType, gaGuid, subGuid }) {
   return `${base}#/globalaccount/${gaGuid}/subaccount/${subGuid}/trustConfiguration`;
 }
 
-// "cf-us10" → "us10"; a bare region passes through; empty → null.
+// Derive the regional XSUAA/IAS *authentication* host segment from a CF
+// landscape label. "cf-us10-001" → "us10"; a bare region passes through; empty
+// → null. The CF landscape label carries a per-cluster discriminator (-001,
+// -004) that the authentication host does NOT — so we drop a trailing
+// digit-only group. Alphabetic suffixes (e.g. "cf-eu10-canary") are part of the
+// region's identity-zone name and are preserved. NOTE: this stripped form is
+// for the auth host ONLY — the CF API host keeps the suffix (api.cf.us10-001…).
 function regionFromLandscape(landscape) {
   if (!landscape) return null;
-  return String(landscape).replace(/^cf-/, "");
+  return String(landscape)
+    .replace(/^cf-/, "")     // drop CF prefix
+    .replace(/-\d+$/, "");   // drop trailing CF-cluster discriminator (-001, -004…)
 }
 
 // Find the trust config whose `name` matches idpName and return its originKey.

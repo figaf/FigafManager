@@ -1410,14 +1410,19 @@ function createOrchestrator({ host, send, audit }) {
         return { ok: false, error: "subaccount subdomain / region not captured (sign in first)" };
       }
       const url = `https://${subdomain}.authentication.${region}.hana.ondemand.com/saml/metadata`;
+      // Subaccounts on a custom UAA / sovereign authentication domain don't
+      // follow <region>.hana.ondemand.com, so the constructed host fails to
+      // resolve/return — surface that explicitly rather than a raw network error.
+      const customDomainHint =
+        " — this subaccount may use a custom authentication domain; open the SAML SP metadata manually and copy the SSO URL.";
       try {
         log("btp", "line", `Fetching SAML metadata: ${url}`);
         const xml = await httpsText(url);
         const { ssoUrl, alias } = parseSsoUrlFromMetadata(xml);
-        if (!ssoUrl) return { ok: false, error: "metadata fetched but no HTTP-POST AssertionConsumerService found" };
+        if (!ssoUrl) return { ok: false, error: `metadata fetched but no HTTP-POST AssertionConsumerService found${customDomainHint}` };
         return { ok: true, ssoUrl, alias };
       } catch (e) {
-        return { ok: false, error: e.message };
+        return { ok: false, error: `could not auto-locate SAML metadata (${e.message})${customDomainHint}` };
       }
     },
 
