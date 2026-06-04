@@ -871,7 +871,16 @@ function createOrchestrator({ host, send, audit }) {
         return { ok: false, error: "No Cloud Foundry environment found in any subaccount" };
       }
       if (cfList.length === 1) {
-        return await applySubaccountSelection(cfList[0]);
+        const only = cfList[0];
+        const skipped = enumerated.length - 1;
+        log(
+          "btp",
+          "line",
+          skipped > 0
+            ? `Auto-selected subaccount '${only.displayName}' — the only one of ${enumerated.length} with a Cloud Foundry environment.`
+            : `Auto-selected the only subaccount '${only.displayName}'.`
+        );
+        return await applySubaccountSelection(only);
       }
 
       state.subaccountWaitingForChoice = true;

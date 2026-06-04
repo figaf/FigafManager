@@ -403,6 +403,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
             <div className="summary-grid slide-in">
               {login.subdomain && <div className="cell"><div className="k">Global account</div><div className="v">{login.subdomain}</div></div>}
               {login.subaccountName && <div className="cell"><div className="k">Subaccount</div><div className="v">{login.subaccountName}</div></div>}
+              {login.subaccount && <div className="cell"><div className="k">Subaccount ID</div><div className="v">{login.subaccount}</div></div>}
               {login.org && <div className="cell"><div className="k">Org</div><div className="v">{login.org}</div></div>}
               <div className="cell"><div className="k">Landscape</div><div className="v">{login.landscape}</div></div>
               <div className="cell"><div className="k">API endpoint</div><div className="v">api.{login.landscape.replace(/^cf-/, 'cf.')}.hana.ondemand.com</div></div>

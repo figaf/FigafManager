@@ -29,7 +29,13 @@
       "Bash(npm test *)",
       "Bash(npm run *)",
       "Bash(awk '/RTR/0|RTR/1/' \"C:\\\\Figaf-installer\\\\logs\\\\figaf-manager-approuter-2026-05-14 13_47_19.534+0000.txt\")",
-      "Bash(npm *)"
+      "Bash(npm *)",
+      "Skill(superpowers:brainstorming)",
+      "Bash(git *)",
+      "Skill(superpowers:writing-plans)",
+      "Skill(superpowers:executing-plans)",
+      "Skill(superpowers:finishing-a-development-branch)",
+      "Bash(echo \"---exit:$?\")"
     ]
   }
 }
