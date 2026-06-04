@@ -31,6 +31,7 @@ function ScreenConnectIdpCustomAssign({ ctx, setCtx, onNext, onBack }) {
 
   async function assignOne(role) {
     const api = fgca();
+    if (!api) { markRole(role, { status: "error", sub: "figaf API not available" }); return; }
     markRole(role, { status: "running", sub: undefined });
     const r = await api.connect.assignPiRole({ role, originKey, group });
     if (r && r.ok) {
@@ -49,6 +50,7 @@ function ScreenConnectIdpCustomAssign({ ctx, setCtx, onNext, onBack }) {
 
   async function fetchSso() {
     const api = fgca();
+    if (!api) { setSso({ status: "error", error: "figaf API not available" }); return; }
     setSso({ status: "running", error: null });
     const r = await api.connect.samlSsoUrl();
     if (r && r.ok) setSso({ status: "done", url: r.ssoUrl, alias: r.alias, error: null });

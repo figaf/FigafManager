@@ -25,7 +25,7 @@ function ScreenConnectIdpCustomTrust({ ctx, setCtx, onNext, onBack }) {
   React.useEffect(() => {
     const api = fgct();
     if (!api) return;
-    api.connect.trustConfigUrl().then((r) => { if (r && r.ok) setUrl(r.url); });
+    api.connect.trustConfigUrl().then((r) => { if (r && r.ok) setUrl(r.url); }).catch(() => {});
   }, []);
 
   function setField(key, value) {
