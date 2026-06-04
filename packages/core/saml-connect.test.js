@@ -136,3 +136,28 @@ test("classifyAssignResult: origin-key error surfaces stderr, not session", () =
   assert.equal(r.sessionExpired, false);
   assert.match(r.stderr, /origin_key/);
 });
+
+test("parseSsoUrlFromMetadata works when Location precedes Binding (attr order)", () => {
+  const reordered = `<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata">
+    <md:SPSSODescriptor>
+      <md:AssertionConsumerService Location="https://x.authentication.us10.hana.ondemand.com/saml/SSO/alias/x.aws-live" Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" index="0"/>
+    </md:SPSSODescriptor>
+  </md:EntityDescriptor>`;
+  const r = parseSsoUrlFromMetadata(reordered);
+  assert.equal(r.ssoUrl, "https://x.authentication.us10.hana.ondemand.com/saml/SSO/alias/x.aws-live");
+  assert.equal(r.alias, "x.aws-live");
+});
+
+test("parseSsoUrlFromMetadata returns null alias when URL ends with /alias/", () => {
+  const trailing = `<md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://x/saml/SSO/alias/"/>`;
+  const r = parseSsoUrlFromMetadata(trailing);
+  assert.equal(r.ssoUrl, "https://x/saml/SSO/alias/");
+  assert.equal(r.alias, null);
+});
+
+test("parseSsoUrlFromMetadata returns null when only a URI-binding ACS exists", () => {
+  const uriOnly = `<md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:URI" Location="https://x/oauth/token/alias/x.aws-live"/>`;
+  const r = parseSsoUrlFromMetadata(uriOnly);
+  assert.equal(r.ssoUrl, null);
+  assert.equal(r.alias, null);
+});

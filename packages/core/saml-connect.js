@@ -11,12 +11,20 @@
 // metadata can't be parsed.
 function parseSsoUrlFromMetadata(xml) {
   const text = typeof xml === "string" ? xml : "";
-  const m = text.match(
-    /<md:AssertionConsumerService[^>]*Binding="[^"]*HTTP-POST"[^>]*Location="([^"]+)"/
-  );
-  const ssoUrl = m ? m[1] : null;
+  // Match each <md:AssertionConsumerService …> element, then pull Binding +
+  // Location out of it independently — XML does not guarantee attribute order,
+  // and SAP's metadata has been seen with either order across landscapes.
+  const acsRe = /<md:AssertionConsumerService\b[^>]*>/g;
+  let ssoUrl = null;
+  let m;
+  while ((m = acsRe.exec(text)) !== null) {
+    const tag = m[0];
+    if (!/\bBinding="[^"]*HTTP-POST"/.test(tag)) continue;
+    const loc = tag.match(/\bLocation="([^"]+)"/);
+    if (loc) { ssoUrl = loc[1]; break; }
+  }
   const alias = ssoUrl && ssoUrl.includes("/alias/")
-    ? ssoUrl.split("/alias/")[1]
+    ? (ssoUrl.split("/alias/")[1] || null)
     : null;
   return { ssoUrl, alias };
 }
