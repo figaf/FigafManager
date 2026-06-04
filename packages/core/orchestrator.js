@@ -209,7 +209,10 @@ function createOrchestrator({ host, send, audit }) {
         https.get(currentUrl, { headers: { "User-Agent": "Figaf-Manager" } }, (res) => {
           if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
             res.resume();
-            return handle(new URL(res.headers.location, currentUrl).href, hops + 1);
+            let nextUrl;
+            try { nextUrl = new URL(res.headers.location, currentUrl).href; }
+            catch (e) { netHandle.end({ error: e }); return reject(new Error("bad redirect location")); }
+            return handle(nextUrl, hops + 1);
           }
           if (res.statusCode !== 200) {
             res.resume();
@@ -219,7 +222,7 @@ function createOrchestrator({ host, send, audit }) {
           let data = "";
           res.on("data", (c) => {
             data += c;
-            if (data.length > 512 * 1024) { res.destroy(); }
+            if (data.length > 512 * 1024) { res.destroy(new Error("response too large (>512 KB)")); }
           });
           res.on("end", () => { netHandle.end({ status: 200 }); resolve(data); });
         }).on("error", (err) => { netHandle.end({ error: err }); reject(err); });
@@ -1362,7 +1365,10 @@ function createOrchestrator({ host, send, audit }) {
       try {
         const arrStart = r.stdout.indexOf("[");
         const objStart = r.stdout.indexOf("{");
-        const js = arrStart >= 0 ? arrStart : objStart;
+        // Pick the earliest real JSON start; findTrustOrigin handles both a bare
+        // array and a { value: [...] } wrapper.
+        const candidates = [arrStart, objStart].filter((i) => i >= 0);
+        const js = candidates.length ? Math.min(...candidates) : -1;
         parsed = js >= 0 ? JSON.parse(r.stdout.slice(js)) : [];
       } catch (e) {
         return { ok: false, error: "could not parse trust list: " + e.message };
@@ -1388,7 +1394,7 @@ function createOrchestrator({ host, send, audit }) {
       const args = ["assign", "security/role-collection", role, "--subaccount", sub, "--of-idp", originKey, "--to-group", group];
       const r = await run(resolveBtp(), args, { source: "btp" });
       const c = classifyAssignResult(r);
-      return { ok: c.ok, alreadyAssigned: c.alreadyAssigned, sessionExpired: c.sessionExpired, stderr: c.stderr, role };
+      return { ok: c.ok || c.alreadyAssigned, alreadyAssigned: c.alreadyAssigned, sessionExpired: c.sessionExpired, stderr: c.stderr, role };
     },
 
     /**
