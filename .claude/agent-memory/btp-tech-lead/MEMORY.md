@@ -12,3 +12,5 @@
 - [XSUAA manager activation](project_xsuaa_manager_activation.md) — bind+restage is the only seam; /_manager-health poll gates Continue button; idempotency contract
 - [DB config design](project_db_config_design.md) — per-hyperscaler db.json configurability with trial autodetection; structured-input handler; provider plumbing path
 - [Rolling push over delete](feedback_rolling_push_over_delete.md) — Figaf Tool updates use `cf push --strategy rolling`, not stop+delete; when delete is still correct
+- [Cockpit URL + auth-region derivation](project_cockpit_url_derivation.md) — saml-connect.js helpers; licenseType trial signal; OPEN: GUID-vs-subdomain fragment mismatch between trustConfigUrl and xsuaa preflight
+- [UI assets must be git-tracked](feedback_ui_asset_must_be_tracked.md) — untracked packages/ui asset passes local build, breaks asar + cloud zip on fresh checkout; git ls-files in review
