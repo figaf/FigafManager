@@ -97,6 +97,10 @@ contextBridge.exposeInMainWorld("figaf", {
 
   connect: {
     templatePath: (name) => ipcRenderer.invoke("connect:templatePath", { name }),
+    trustConfigUrl: () => ipcRenderer.invoke("connect:trustConfigUrl"),
+    resolveIdpOrigin: (idpName) => ipcRenderer.invoke("connect:resolveIdpOrigin", { idpName }),
+    assignPiRole: (a) => ipcRenderer.invoke("connect:assignPiRole", a || {}),
+    samlSsoUrl: () => ipcRenderer.invoke("connect:samlSsoUrl"),
   },
 
   config: {

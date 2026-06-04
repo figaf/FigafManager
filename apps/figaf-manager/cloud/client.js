@@ -203,6 +203,10 @@
 
     connect: {
       templatePath:         function (name) { return rpc("connect:templatePath", { name: name }); },
+      trustConfigUrl:       function ()     { return rpc("connect:trustConfigUrl"); },
+      resolveIdpOrigin:     function (idpName) { return rpc("connect:resolveIdpOrigin", { idpName: idpName }); },
+      assignPiRole:         function (a)    { return rpc("connect:assignPiRole", a || {}); },
+      samlSsoUrl:           function ()     { return rpc("connect:samlSsoUrl"); },
     },
 
     config: {
