@@ -206,6 +206,7 @@ app.use("/installer", express.static(installerDir));
 
 // Static (ungated): logo
 app.get("/figaf-logo.png", (_req, res) => res.sendFile(path.join(installerDir, "figaf-logo.png")));
+app.get("/saml-trust-cockpit.png", (_req, res) => res.sendFile(path.join(installerDir, "saml-trust-cockpit.png")));
 
 // Static (ungated): browser shim
 app.get("/cloud/client.js", (_req, res) => {
