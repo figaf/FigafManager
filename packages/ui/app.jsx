@@ -4,7 +4,8 @@
    ScreenXsuaaUpgrade, ScreenXsuaaAssignRole,
    ScreenUpdateConfig, ScreenUpdateProgress,
    ScreenConnectProvision, ScreenConnectIdp,
-   ScreenConnectIdpSuser, ScreenConnectIdpPassport, ScreenConnectIdpIas, ScreenConnectIdpCustom */
+   ScreenConnectIdpSuser, ScreenConnectIdpPassport, ScreenConnectIdpIas,
+   ScreenConnectIdpCustomTrust, ScreenConnectIdpCustomAssign */
 
 function App() {
   const [step, setStepRaw] = React.useState(0);
@@ -104,6 +105,17 @@ function App() {
       ],
       keys: { api: null, iflow: null },
       idpMode: null,
+      // Custom-IDP branch state.
+      idpName: "figaf-saml",
+      samlGroup: "Admin",
+      originKey: null,
+      trustList: null,
+      piRoles: [
+        { id: "PI_Administrator",         status: "pending" },
+        { id: "PI_Business_Expert",       status: "pending" },
+        { id: "PI_Integration_Developer", status: "pending" },
+      ],
+      sso: { status: "idle", url: null, alias: null, error: null },
     },
   });
 
@@ -141,10 +153,18 @@ function App() {
     { id: "done",     label: "Finish",             sub: "Open Figaf Tool" },
   ];
 
+  const connectTail =
+    ctx.connect.idpMode === "custom-idp"
+      ? [
+          { id: "connect-idp-custom-trust",  label: "Create trust",  sub: "Cockpit SAML config" },
+          { id: "connect-idp-custom-assign", label: "Assign & link", sub: "Roles · SSO URL" },
+        ]
+      : [{ id: "connect-idp-stub", label: "Configure", sub: "Mode-specific setup" }];
+
   const connectSteps = [
     { id: "connect-provision", label: "Provision",   sub: "it-rt · service keys" },
     { id: "connect-idp",       label: "BTP access",  sub: "Pick auth mode" },
-    { id: "connect-idp-stub",  label: "Configure",   sub: "Mode-specific setup" },
+    ...connectTail,
     { id: "done",              label: "Finish",      sub: "Integration Suite linked" },
   ];
 
@@ -201,10 +221,11 @@ function App() {
         case "s-user":       Screen = <ScreenConnectIdpSuser    ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
         case "sap-passport": Screen = <ScreenConnectIdpPassport ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
         case "ias":          Screen = <ScreenConnectIdpIas      ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
-        case "custom-idp":   Screen = <ScreenConnectIdpCustom   ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
         default:             Screen = null;
       }
       break;
+    case "connect-idp-custom-trust":  Screen = <ScreenConnectIdpCustomTrust  ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
+    case "connect-idp-custom-assign": Screen = <ScreenConnectIdpCustomAssign ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
     case "done":              Screen = <ScreenDone ctx={ctx} setCtx={setCtx} setStep={setStepRaw} STEPS={STEPS} />; break;
     default: Screen = null;
   }
