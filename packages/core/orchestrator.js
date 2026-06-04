@@ -83,6 +83,9 @@ function createOrchestrator({ host, send, audit }) {
     cfWaitingForSpaceChoice: false,
     btpLoginProc: null,
     deployDirResolved: null,
+    subaccountSubdomain: null,
+    globalAccountGuid: null,
+    licenseType: null,
   };
 
   // SAP BTP region → hyperscaler mapping. Suffix tells you the provider for
@@ -414,6 +417,7 @@ function createOrchestrator({ host, send, audit }) {
     }
     state.landscape = entry.landscape;
     state.subaccount = entry.guid;
+    state.subaccountSubdomain = entry.subdomain || null;
     state.org = entry.org;
     state.provider = entry.provider || null;
     return {
@@ -731,6 +735,8 @@ function createOrchestrator({ host, send, audit }) {
               if (js >= 0) {
                 const data = JSON.parse(gaInfo.stdout.slice(js));
                 state.globalAccountSubdomain = data.subdomain || null;
+                state.globalAccountGuid = data.guid || null;
+                state.licenseType = data.licenseType || null;
                 log("btp", "line", `Global account subdomain: ${state.globalAccountSubdomain}`);
               }
             } catch (e) {
