@@ -8,6 +8,14 @@ const { spawn } = require("child_process");
 const https = require("https");
 const dbSchemas = require("./db-schemas");
 const { redactServiceKeyLine } = require("./redact-service-key");
+const {
+  parseSsoUrlFromMetadata,
+  cockpitBaseFromLicense,
+  trustConfigUrl,
+  regionFromLandscape,
+  findTrustOrigin,
+  classifyAssignResult,
+} = require("./saml-connect");
 
 const DEPLOYMENT_ZIP_URL =
   process.env.FIGAF_DEPLOYMENT_ZIP_URL ||
@@ -188,6 +196,35 @@ function createOrchestrator({ host, send, audit }) {
         netHandle.end({ error: err });
         reject(err);
       });
+    });
+  }
+
+  // GET a URL and resolve its body as a string (≤512 KB). Follows up to 5
+  // redirects, mirroring httpsDownload. Used to fetch SAML SP metadata.
+  function httpsText(url) {
+    return new Promise((resolve, reject) => {
+      const netHandle = auditor.beginNet({ url, method: "GET" });
+      const handle = (currentUrl, hops = 0) => {
+        if (hops > 5) { netHandle.end({ error: "too many redirects" }); return reject(new Error("Too many redirects")); }
+        https.get(currentUrl, { headers: { "User-Agent": "Figaf-Manager" } }, (res) => {
+          if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
+            res.resume();
+            return handle(new URL(res.headers.location, currentUrl).href, hops + 1);
+          }
+          if (res.statusCode !== 200) {
+            res.resume();
+            netHandle.end({ status: res.statusCode, error: `HTTP ${res.statusCode}` });
+            return reject(new Error(`HTTP ${res.statusCode}`));
+          }
+          let data = "";
+          res.on("data", (c) => {
+            data += c;
+            if (data.length > 512 * 1024) { res.destroy(); }
+          });
+          res.on("end", () => { netHandle.end({ status: 200 }); resolve(data); });
+        }).on("error", (err) => { netHandle.end({ error: err }); reject(err); });
+      };
+      handle(url);
     });
   }
 
@@ -1295,6 +1332,89 @@ function createOrchestrator({ host, send, audit }) {
       return { ok: fs.existsSync(p), path: p };
     },
 
+    /**
+     * Build the cockpit deep-link to this subaccount's Trust Configuration
+     * screen, where the operator manually creates the SAML trust. Trial vs
+     * productive host derived from state.licenseType (see saml-connect.js).
+     */
+    async "connect:trustConfigUrl"() {
+      const gaGuid = state.globalAccountGuid;
+      const subGuid = state.subaccount;
+      if (!gaGuid || !subGuid) {
+        return { ok: false, error: "global account / subaccount not captured yet (sign in first)" };
+      }
+      const url = trustConfigUrl({ licenseType: state.licenseType, gaGuid, subGuid });
+      return { ok: true, url, isTrial: state.licenseType === "TRIAL" };
+    },
+
+    /**
+     * List the subaccount's trust configs and resolve the originKey of the one
+     * named `idpName`. This is the verify-on-submit call from Screen A — the UI
+     * stores the originKey and reuses it on Screen B (does NOT call this again).
+     */
+    async "connect:resolveIdpOrigin"({ idpName } = {}) {
+      const sub = state.subaccount;
+      if (!sub) return { ok: false, error: "subaccount not captured (sign in first)" };
+      if (!idpName) return { ok: false, error: "idpName is required" };
+      const r = await run(resolveBtp(), ["--format", "json", "list", "security/trust", "--subaccount", sub], { source: "btp" });
+      if (r.code !== 0) return { ok: false, error: r.stderr || "list security/trust failed" };
+      let parsed;
+      try {
+        const arrStart = r.stdout.indexOf("[");
+        const objStart = r.stdout.indexOf("{");
+        const js = arrStart >= 0 ? arrStart : objStart;
+        parsed = js >= 0 ? JSON.parse(r.stdout.slice(js)) : [];
+      } catch (e) {
+        return { ok: false, error: "could not parse trust list: " + e.message };
+      }
+      const found = findTrustOrigin(parsed, idpName);
+      if (!found.ok) {
+        return { ok: false, error: `No SAML trust named "${idpName}" found in this subaccount.`, all: found.all };
+      }
+      return { ok: true, originKey: found.originKey, all: found.all };
+    },
+
+    /**
+     * Assign ONE PI role collection to the SAML group for the custom IDP origin.
+     * One role per call so the UI owns the loop + per-row state (mirrors
+     * ScreenConnectProvision + cf:createService). Uses --of-idp <originKey>
+     * --to-group <group> — distinct from xsuaa:assignRoleCollection, which is
+     * --to-user against the default IDP.
+     */
+    async "connect:assignPiRole"({ role, originKey, group } = {}) {
+      const sub = state.subaccount;
+      if (!sub) return { ok: false, error: "subaccount not captured (sign in first)" };
+      if (!role || !originKey || !group) return { ok: false, error: "role, originKey and group are required" };
+      const args = ["assign", "security/role-collection", role, "--subaccount", sub, "--of-idp", originKey, "--to-group", group];
+      const r = await run(resolveBtp(), args, { source: "btp" });
+      const c = classifyAssignResult(r);
+      return { ok: c.ok, alreadyAssigned: c.alreadyAssigned, sessionExpired: c.sessionExpired, stderr: c.stderr, role };
+    },
+
+    /**
+     * Fetch the subaccount's SAML SP metadata and extract the SSO URL (the
+     * AssertionConsumerService HTTP-POST Location). The operator copies this
+     * into the Figaf Tool. The `.aws-live` alias inside the URL is not exposed
+     * by any btp CLI command, which is why we fetch-and-parse rather than build.
+     */
+    async "connect:samlSsoUrl"() {
+      const subdomain = state.subaccountSubdomain;
+      const region = regionFromLandscape(state.landscape);
+      if (!subdomain || !region) {
+        return { ok: false, error: "subaccount subdomain / region not captured (sign in first)" };
+      }
+      const url = `https://${subdomain}.authentication.${region}.hana.ondemand.com/saml/metadata`;
+      try {
+        log("btp", "line", `Fetching SAML metadata: ${url}`);
+        const xml = await httpsText(url);
+        const { ssoUrl, alias } = parseSsoUrlFromMetadata(xml);
+        if (!ssoUrl) return { ok: false, error: "metadata fetched but no HTTP-POST AssertionConsumerService found" };
+        return { ok: true, ssoUrl, alias };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    },
+
     async "config:readVars"() {
       const deployDir = await resolveDeployDir();
       const file = path.join(deployDir, "vars.yml");
@@ -1779,13 +1899,11 @@ function createOrchestrator({ host, send, audit }) {
       if (!ga || !sub) return { ok: false, error: "missing globalAccountSubdomain or subaccount" };
       // Cockpit URL shape varies by region (eu10, us10, ap20…). Derive from
       // the cf landscape; fall back to the EMEA cockpit if landscape unknown.
-      const landscape = state.landscape || "";
-      // landscape values: cf-eu10, cf-us10, cf-ap20 … → region: eu10/us10/ap20
-      const region = landscape.replace(/^cf-/, "");
-      const cockpitHost = region
-        ? `cockpit.btp.cloud.sap`
-        : `cockpit.btp.cloud.sap`;
-      const url = `https://${cockpitHost}/cockpit/?idpId=&globalaccount=${encodeURIComponent(ga)}#/globalaccount/${encodeURIComponent(ga)}/subaccount/${encodeURIComponent(sub)}/users`;
+      // Trial vs productive cockpit base (see saml-connect.cockpitBaseFromLicense).
+      // The previous derivation was a dead ternary that always emitted the
+      // productive host even on trial — fixed here via the shared helper.
+      const base = cockpitBaseFromLicense(state.licenseType);
+      const url = `${base}#/globalaccount/${encodeURIComponent(ga)}/subaccount/${encodeURIComponent(sub)}/users`;
       return { ok: true, url, roleCollection: "FigafManagerOperator" };
     },
 
