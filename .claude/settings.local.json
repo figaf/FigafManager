@@ -35,7 +35,8 @@
       "Skill(superpowers:writing-plans)",
       "Skill(superpowers:executing-plans)",
       "Skill(superpowers:finishing-a-development-branch)",
-      "Bash(echo \"---exit:$?\")"
+      "Bash(echo \"---exit:$?\")",
+      "Bash(not exist *)"
     ]
   }
 }
