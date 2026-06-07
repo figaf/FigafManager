@@ -190,7 +190,8 @@ function ScreenConnectProvision({ ctx, setCtx, onNext, onBack }) {
 function KeyCard({ label, keyData }) {
   const [copied, setCopied] = React.useState(false);
   if (!keyData) return null;
-  const text = keyData.raw || JSON.stringify(keyData.json, null, 2);
+  const displayJson = keyData.json?.credentials ?? keyData.json;
+  const text = JSON.stringify(displayJson, null, 2);
   async function copy() {
     const api = fgcp();
     if (!api) return;
