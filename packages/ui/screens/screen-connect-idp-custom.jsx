@@ -20,7 +20,6 @@ function ScreenConnectIdpCustomTrust({ ctx, setCtx, onNext, onBack }) {
   const [copied, setCopied] = React.useState(false);
 
   const idpName = ctx.connect.idpName;
-  const samlGroup = ctx.connect.samlGroup;
 
   React.useEffect(() => {
     const api = fgct();
@@ -104,32 +103,20 @@ function ScreenConnectIdpCustomTrust({ ctx, setCtx, onNext, onBack }) {
           <img
             src={SAML_SHOT}
             alt="New SAML Trust Configuration form in the BTP cockpit"
-            style={{ width: "100%", borderRadius: 6, border: "1px solid var(--border)", display: "block" }}
+            style={{ width: "50%", borderRadius: 6, border: "1px solid var(--border)", display: "block" }}
           />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-          <label style={{ display: "block" }}>
-            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>IDP name</div>
-            <input
-              className="input"
-              value={idpName}
-              onChange={(e) => setField("idpName", e.target.value)}
-              placeholder="figaf-saml"
-              style={{ width: "100%" }}
-            />
-          </label>
-          <label style={{ display: "block" }}>
-            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>SAML group</div>
-            <input
-              className="input"
-              value={samlGroup}
-              onChange={(e) => setField("samlGroup", e.target.value)}
-              placeholder="Admin"
-              style={{ width: "100%" }}
-            />
-          </label>
-        </div>
+        <label style={{ display: "block" }}>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>IDP name</div>
+          <input
+            className="input"
+            value={idpName}
+            onChange={(e) => setField("idpName", e.target.value)}
+            placeholder="figaf-saml"
+            style={{ width: "100%" }}
+          />
+        </label>
 
         {error && (
           <div className="card" style={{ padding: 12, marginTop: 14, borderColor: "var(--fg-red, #c0392b)" }}>
