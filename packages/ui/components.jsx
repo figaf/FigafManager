@@ -311,6 +311,16 @@ function CheckRow({ status, title, sub, meta }) {
   );
 }
 
+function ScrollReveal({ children }) {
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    // 'nearest' scrolls only as far as needed — avoids jarring re-centering
+    // when the element is already partially visible.
+    ref.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, []);
+  return <div ref={ref}>{children}</div>;
+}
+
 Object.assign(window, {
-  Ico, FigafMark, WinFrame, StepperRail, WizardFooter, TerminalDrawer, CheckRow,
+  Ico, FigafMark, WinFrame, StepperRail, WizardFooter, TerminalDrawer, CheckRow, ScrollReveal,
 });
