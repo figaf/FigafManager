@@ -401,6 +401,7 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
         </div>
 
         {cfg.useCloudConnectorForSmtpIntegration && (
+          <ScrollReveal>
           <div className="field" style={{ marginTop: 12 }}>
             <label className="field-label">
               Cloud connector destination name
@@ -413,6 +414,7 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
             />
             <div className="field-hint">Name of destination configured in SAP BTP Destination service for local SMTP server</div>
           </div>
+          </ScrollReveal>
         )}
 
         <div className="divider" />
