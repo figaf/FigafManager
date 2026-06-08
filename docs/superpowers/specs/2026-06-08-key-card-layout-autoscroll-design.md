@@ -33,6 +33,8 @@ Add to `packages/ui/components.jsx`:
 function ScrollReveal({ children }) {
   const ref = React.useRef(null);
   React.useEffect(() => {
+    // 'nearest' scrolls only as far as needed — avoids jarring re-centering
+    // when the element is already partially visible.
     ref.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, []);
   return <div ref={ref}>{children}</div>;
