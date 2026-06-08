@@ -280,6 +280,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
           </div>
 
           {!btpLoggedIn && gaChoice && gaChoice.accounts && gaChoice.accounts.length > 0 && (
+            <ScrollReveal>
             <div className="slide-in" style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 4 }}>
               <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 4 }}>
                 Choose a global account
@@ -335,9 +336,11 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                 </button>
               </div>
             </div>
+            </ScrollReveal>
           )}
 
           {!btpLoggedIn && subaccountChoice && subaccountChoice.subaccounts && subaccountChoice.subaccounts.length > 0 && (
+            <ScrollReveal>
             <div className="slide-in" style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 4 }}>
               <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 4 }}>
                 Choose a subaccount
@@ -397,9 +400,11 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                 </button>
               </div>
             </div>
+            </ScrollReveal>
           )}
 
           {btpLoggedIn && (
+            <ScrollReveal>
             <div className="summary-grid slide-in">
               {login.subdomain && <div className="cell"><div className="k">Global account</div><div className="v">{login.subdomain}</div></div>}
               {login.subaccountName && <div className="cell"><div className="k">Subaccount</div><div className="v">{login.subaccountName}</div></div>}
@@ -408,6 +413,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
               <div className="cell"><div className="k">Landscape</div><div className="v">{login.landscape}</div></div>
               <div className="cell"><div className="k">API endpoint</div><div className="v">api.{login.landscape.replace(/^cf-/, 'cf.')}.hana.ondemand.com</div></div>
             </div>
+            </ScrollReveal>
           )}
         </div>
 
@@ -442,6 +448,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                   </span>
                 </div>
               ) : (
+                <ScrollReveal>
                 <div className="slide-in">
                   <div className="sso-mock" style={{ marginBottom: 12 }}>
                     <div className="sso-mock-icon"><Ico.Shield /></div>
@@ -482,11 +489,13 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                     </div>
                   </div>
                 </div>
+                </ScrollReveal>
               )}
             </div>
           )}
 
           {!cfLoggedIn && orgChoice && orgChoice.orgs && orgChoice.orgs.length > 0 && (
+            <ScrollReveal>
             <div className="slide-in" style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 12 }}>
               <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 4 }}>
                 Choose a Cloud Foundry org
@@ -518,9 +527,11 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                 ))}
               </div>
             </div>
+            </ScrollReveal>
           )}
 
           {!cfLoggedIn && spaceChoice && spaceChoice.spaces && spaceChoice.spaces.length > 0 && (
+            <ScrollReveal>
             <div className="slide-in" style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 12 }}>
               <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 4 }}>
                 Choose a space
@@ -547,13 +558,16 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                 ))}
               </div>
             </div>
+            </ScrollReveal>
           )}
 
           {cfLoggedIn && (
+            <ScrollReveal>
             <div className="summary-grid slide-in">
               {login.org && <div className="cell"><div className="k">Org</div><div className="v">{login.org}</div></div>}
               {login.space && <div className="cell"><div className="k">Space</div><div className="v">{login.space}</div></div>}
             </div>
+            </ScrollReveal>
           )}
         </div>
       </div>
