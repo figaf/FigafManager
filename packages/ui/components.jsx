@@ -314,9 +314,14 @@ function CheckRow({ status, title, sub, meta }) {
 function ScrollReveal({ children }) {
   const ref = React.useRef(null);
   React.useEffect(() => {
-    // 'nearest' scrolls only as far as needed — avoids jarring re-centering
-    // when the element is already partially visible.
-    ref.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const inView = rect.top >= 0 && rect.bottom <= window.innerHeight;
+    // Only scroll if the element is not already fully in the viewport.
+    // This prevents jarring scrolls when navigating back to a screen
+    // where sections are already visible.
+    if (!inView) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, []);
   return <div ref={ref}>{children}</div>;
 }

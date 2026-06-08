@@ -1,4 +1,4 @@
-/* global React, Ico, CheckRow, WizardFooter */
+/* global React, Ico, CheckRow, WizardFooter, ScrollReveal */
 
 const fgcp = () => (typeof window !== "undefined" && window.figaf) || null;
 

@@ -1,4 +1,4 @@
-/* global React, Ico, WizardFooter */
+/* global React, Ico, WizardFooter, ScrollReveal */
 
 const fg = () => (typeof window !== "undefined" && window.figaf) || null;
 
