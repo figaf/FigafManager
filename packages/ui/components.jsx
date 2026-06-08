@@ -318,7 +318,7 @@ function ScrollReveal({ children }) {
     // when the element is already partially visible.
     ref.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, []);
-  return <div ref={ref}>{children}</div>;
+  return <div ref={ref} style={{ display: 'contents' }}>{children}</div>;
 }
 
 Object.assign(window, {
