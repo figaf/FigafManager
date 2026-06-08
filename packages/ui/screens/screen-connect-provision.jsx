@@ -168,10 +168,12 @@ function ScreenConnectProvision({ ctx, setCtx, onNext, onBack }) {
             </div>
 
             {allDone && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 16 }}>
-                <KeyCard label="API key (figaf-api / key-api)" keyData={keys.api} />
-                <KeyCard label="iFlow key (figaf-iflow / key-iflow)" keyData={keys.iflow} />
-              </div>
+              <ScrollReveal>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 16 }}>
+                  <KeyCard label="API key (figaf-api / key-api)" keyData={keys.api} />
+                  <KeyCard label="iFlow key (figaf-iflow / key-iflow)" keyData={keys.iflow} />
+                </div>
+              </ScrollReveal>
             )}
           </>
         )}
@@ -204,7 +206,7 @@ function KeyCard({ label, keyData }) {
     }
   }
   return (
-    <div className="card" style={{ padding: 14 }}>
+    <div className="card" style={{ padding: 14, minWidth: 0 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
         <div style={{ fontWeight: 600, fontSize: 13 }}>{label}</div>
         <button className="btn" onClick={copy}>
