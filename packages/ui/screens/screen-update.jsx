@@ -409,6 +409,31 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
                   <input className="input is-mono" value={vars.cloudConnectorDestinationNameForSmtpIntegration ?? ""} onChange={(e) => setVar({ cloudConnectorDestinationNameForSmtpIntegration: e.target.value })} placeholder="smtp-destination" />
                 </div>
               )}
+
+              <div className="field" style={{ marginTop: 14 }}>
+                <label className="field-label">CF services</label>
+                <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginBottom: 10 }}>
+                  <strong>figaf-connectivity</strong> and <strong>figaf-destination</strong> are required for PI/PO integration via SAP Cloud Connector. Auto-detected from the currently running app; the service instances must exist in the CF space.
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "not-allowed", opacity: 0.6, fontSize: 13 }}>
+                    <input type="checkbox" checked disabled style={{ cursor: "not-allowed" }} />
+                    <span><span className="kbd">figaf-db</span> <span className="pill gray">required</span></span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "not-allowed", opacity: 0.6, fontSize: 13 }}>
+                    <input type="checkbox" checked disabled style={{ cursor: "not-allowed" }} />
+                    <span><span className="kbd">figaf-xsuaa</span> <span className="pill gray">required</span></span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                    <input type="checkbox" checked={!!vars.enableConnectivity} onChange={(e) => setVar({ enableConnectivity: e.target.checked })} style={{ cursor: "pointer" }} />
+                    <span><span className="kbd">figaf-connectivity</span> <span className="pill blue">PI connection</span></span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                    <input type="checkbox" checked={!!vars.enableDestination} onChange={(e) => setVar({ enableDestination: e.target.checked })} style={{ cursor: "pointer" }} />
+                    <span><span className="kbd">figaf-destination</span> <span className="pill blue">PI connection</span></span>
+                  </label>
+                </div>
+              </div>
             </div>
           )}
         </div>

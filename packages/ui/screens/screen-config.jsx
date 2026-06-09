@@ -213,6 +213,8 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
       enableInstanceMonitoring: cfg.enableInstanceMonitoring,
       useCloudConnectorForSmtpIntegration: cfg.useCloudConnectorForSmtpIntegration,
       cloudConnectorDestinationNameForSmtpIntegration: cfg.cloudConnectorDestinationNameForSmtpIntegration,
+      enableConnectivity: cfg.enableConnectivity,
+      enableDestination: cfg.enableDestination,
     });
     if (!r || !r.ok) { setWriting(false); return; }
     const r2 = await api.config.writeDbConfig({
@@ -416,6 +418,43 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
           </div>
           </ScrollReveal>
         )}
+
+        <div className="divider" />
+
+        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", margin: "0 0 12px" }}>CF services</div>
+
+        <div style={{ fontSize: 12, color: "var(--ink-2)", marginBottom: 12 }}>
+          Select the Cloud Foundry services to bind in <span className="kbd">manifest.yml</span>. <strong>figaf-db</strong> and <strong>figaf-xsuaa</strong> are always required. <strong>figaf-connectivity</strong> and <strong>figaf-destination</strong> are needed for PI/PO integration via SAP Cloud Connector — the corresponding service instances must already exist in your CF space.
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 4 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "not-allowed", opacity: 0.6, fontSize: 13 }}>
+            <input type="checkbox" checked disabled style={{ cursor: "not-allowed" }} />
+            <span><span className="kbd">figaf-db</span> <span className="pill gray">required</span></span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "not-allowed", opacity: 0.6, fontSize: 13 }}>
+            <input type="checkbox" checked disabled style={{ cursor: "not-allowed" }} />
+            <span><span className="kbd">figaf-xsuaa</span> <span className="pill gray">required</span></span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={!!cfg.enableConnectivity}
+              onChange={(e) => setCfg({ enableConnectivity: e.target.checked })}
+              style={{ cursor: "pointer" }}
+            />
+            <span><span className="kbd">figaf-connectivity</span> <span className="pill blue">PI connection</span></span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={!!cfg.enableDestination}
+              onChange={(e) => setCfg({ enableDestination: e.target.checked })}
+              style={{ cursor: "pointer" }}
+            />
+            <span><span className="kbd">figaf-destination</span> <span className="pill blue">PI connection</span></span>
+          </label>
+        </div>
 
         <div className="divider" />
 

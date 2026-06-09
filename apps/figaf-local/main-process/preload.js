@@ -101,6 +101,8 @@ contextBridge.exposeInMainWorld("figaf", {
     resolveIdpOrigin: (idpName) => ipcRenderer.invoke("connect:resolveIdpOrigin", { idpName }),
     assignPiRole: (a) => ipcRenderer.invoke("connect:assignPiRole", a || {}),
     samlSsoUrl: () => ipcRenderer.invoke("connect:samlSsoUrl"),
+    createIasService: () => ipcRenderer.invoke("connect:createIasService"),
+    establishIasTrust: () => ipcRenderer.invoke("connect:establishIasTrust"),
   },
 
   config: {

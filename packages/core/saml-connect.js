@@ -76,6 +76,44 @@ function findTrustOrigin(trustJson, idpName) {
   };
 }
 
+// From `btp list security/available-idp` output, pick the SAP Cloud Identity
+// Services tenant value to pass to `btp create security/trust --idp`. After the
+// onboarding subscription completes, the provisioned tenant shows up in this
+// list; its tenant value is what the trust command consumes (per the
+// available-idp help text). The exact field name isn't documented, so we probe
+// the likely identifier fields in priority order and prefer a value that looks
+// like an IAS host (…accounts[N].ondemand.com or …cloud.sap). The chosen value
+// is returned VERBATIM — the trust command wants the tenant identifier exactly
+// as listed, not a normalized host. Accepts a bare array or a { value: [...] } /
+// { identityProviders: [...] } wrapper. Returns null when no candidate exists.
+function pickIasTenant(idpJson) {
+  const list = Array.isArray(idpJson)
+    ? idpJson
+    : (idpJson && Array.isArray(idpJson.value)
+        ? idpJson.value
+        : (idpJson && Array.isArray(idpJson.identityProviders)
+            ? idpJson.identityProviders
+            : []));
+  const FIELDS = ["name", "idpId", "id", "host", "tenant", "tenantName", "url", "idpUrl", "displayName"];
+  const valuesOf = (e) =>
+    (e && typeof e === "object")
+      ? FIELDS.map((f) => e[f]).filter((v) => typeof v === "string" && v.trim())
+      : [];
+  const looksIas = (v) => /accounts\d*\.ondemand\.com|\.cloud\.sap/i.test(v);
+
+  // First pass: an entry with a value that looks like an IAS host.
+  for (const e of list) {
+    const hit = valuesOf(e).find(looksIas);
+    if (hit) return hit.trim();
+  }
+  // Fallback: the first identifier-ish field of the first entry.
+  for (const e of list) {
+    const v = valuesOf(e)[0];
+    if (v) return v.trim();
+  }
+  return null;
+}
+
 // Interpret a `btp assign security/role-collection` result. Exit 0 (including
 // a re-assignment that prints "already assigned") is success. "Unknown session"
 // is a distinct, recoverable auth-expiry case the UI hints at specially.
@@ -103,5 +141,6 @@ module.exports = {
   trustConfigUrl,
   regionFromLandscape,
   findTrustOrigin,
+  pickIasTenant,
   classifyAssignResult,
 };

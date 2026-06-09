@@ -11,6 +11,7 @@ const {
   trustConfigUrl,
   regionFromLandscape,
   findTrustOrigin,
+  pickIasTenant,
   classifyAssignResult,
 } = require("./saml-connect");
 
@@ -174,4 +175,47 @@ test("parseSsoUrlFromMetadata returns null when only a URI-binding ACS exists", 
   const r = parseSsoUrlFromMetadata(uriOnly);
   assert.equal(r.ssoUrl, null);
   assert.equal(r.alias, null);
+});
+
+// ── pickIasTenant ────────────────────────────────────────────────────────
+// NOTE: the exact field name in `btp list security/available-idp` entries is
+// not documented (the list is empty until an IAS tenant is onboarded), so the
+// helper probes likely identifier fields and prefers an IAS-host-looking value.
+// These cases pin the resolution order against the field shapes we anticipate.
+test("pickIasTenant prefers an IAS-host-looking value over other fields", () => {
+  const idps = [{ id: "abc-123", name: "my-tenant.accounts.ondemand.com", displayName: "Corp IAS" }];
+  assert.equal(pickIasTenant(idps), "my-tenant.accounts.ondemand.com");
+});
+
+test("pickIasTenant handles a {value:[...]} wrapper", () => {
+  const idps = { value: [{ name: "t.accounts.ondemand.com" }] };
+  assert.equal(pickIasTenant(idps), "t.accounts.ondemand.com");
+});
+
+test("pickIasTenant handles an {identityProviders:[...]} wrapper", () => {
+  const idps = { identityProviders: [{ host: "t.accounts.ondemand.com" }] };
+  assert.equal(pickIasTenant(idps), "t.accounts.ondemand.com");
+});
+
+test("pickIasTenant matches a cloud.sap IAS host", () => {
+  assert.equal(pickIasTenant([{ name: "t.cloud.sap" }]), "t.cloud.sap");
+});
+
+test("pickIasTenant falls back to the first identifier field when none look like a host", () => {
+  assert.equal(pickIasTenant([{ id: "tenant-guid-1", displayName: "Some IDP" }]), "tenant-guid-1");
+});
+
+test("pickIasTenant skips an entry with no identifier fields and uses the next", () => {
+  const idps = [{ irrelevant: 42 }, { name: "t.accounts.ondemand.com" }];
+  assert.equal(pickIasTenant(idps), "t.accounts.ondemand.com");
+});
+
+test("pickIasTenant returns null for empty / non-array / no-field input", () => {
+  assert.equal(pickIasTenant([]), null);
+  assert.equal(pickIasTenant(null), null);
+  assert.equal(pickIasTenant([{ foo: 1 }]), null);
+});
+
+test("pickIasTenant trims surrounding whitespace", () => {
+  assert.equal(pickIasTenant([{ name: "  t.accounts.ondemand.com  " }]), "t.accounts.ondemand.com");
 });

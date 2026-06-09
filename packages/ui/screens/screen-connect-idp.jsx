@@ -58,7 +58,6 @@ function ScreenConnectIdp({ ctx, setCtx, onNext, onBack }) {
               <div className="choice-icon">{m.icon}</div>
               <div className="choice-title">
                 {m.title}
-                {m.id !== "custom-idp" && <span className="pill gray">Coming soon</span>}
               </div>
               <div className="choice-desc">{m.desc}</div>
             </button>

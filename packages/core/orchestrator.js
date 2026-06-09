@@ -14,6 +14,7 @@ const {
   trustConfigUrl,
   regionFromLandscape,
   findTrustOrigin,
+  pickIasTenant,
   classifyAssignResult,
 } = require("./saml-connect");
 
@@ -71,6 +72,11 @@ const DEPLOYMENT_ZIP_URL =
  *   mode after a v2-aware build-zip run. Electron returns null (the v2
  *   XSUAA upgrade flow does not apply to the desktop installer).
  */
+
+function patchManifestService(text, serviceName, enable) {
+  const re = new RegExp(`^(#?)(  - ${serviceName})$`, "m");
+  return text.replace(re, enable ? "$2" : "#$2");
+}
 
 function createOrchestrator({ host, send, audit }) {
   const state = {
@@ -1426,6 +1432,127 @@ function createOrchestrator({ host, send, audit }) {
       }
     },
 
+    /**
+     * Subscribe this subaccount to the SAP Cloud Identity Services onboarding
+     * app (app: sap-identity-services-onboarding, plan: default,
+     * params: {cloud_service:"PRODUCTIVE"}). This is a multitenant SaaS
+     * *subscription*, NOT a CF service instance — `cf create-service` cannot
+     * create it (in the cockpit "default" lives under Subscriptions; only the
+     * "application" plan is a createable instance). Polls
+     * `btp list accounts/subscription` until the app reaches SUBSCRIBED.
+     * Returns { ok, alreadyExists, status? }.
+     */
+    async "connect:createIasService"() {
+      const sub = state.subaccount;
+      if (!sub) return { ok: false, error: "subaccount not captured (sign in first)" };
+
+      const APP = "sap-identity-services-onboarding";
+      const PLAN = "default";
+
+      // --parameters accepts a file path; writing the JSON to a temp file
+      // sidesteps Windows shell-quoting of the inline object.
+      const configFile = path.join(os.tmpdir(), "figaf-ias-config.json");
+      await fsp.writeFile(configFile, JSON.stringify({ cloud_service: "PRODUCTIVE" }), "utf8");
+
+      const r = await run(resolveBtp(), [
+        "subscribe", "accounts/subaccount",
+        "--subaccount", sub,
+        "--to-app", APP,
+        "--plan", PLAN,
+        "--parameters", configFile,
+      ], { source: "btp" });
+
+      // An existing or in-flight subscription is reported as an error; treat it
+      // as success and let the poll below converge to the real state.
+      const alreadyExists =
+        /already subscribed|already exists|in progress|in process|subscription.*(exist|process)/i.test(r.stdout + r.stderr);
+      if (r.code !== 0 && !alreadyExists) {
+        return { ok: false, alreadyExists: false, stderr: r.stderr };
+      }
+
+      // Provisioning an IAS tenant can take several minutes.
+      const timeoutMs = 15 * 60 * 1000;
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        const s = await run(resolveBtp(), [
+          "--format", "json", "list", "accounts/subscription", "--subaccount", sub,
+        ], { source: "btp" });
+        let appState = "UNKNOWN";
+        try {
+          const js = s.stdout.indexOf("{");
+          const parsed = js >= 0 ? JSON.parse(s.stdout.slice(js)) : {};
+          const apps = parsed.applications || [];
+          const entry = apps.find((a) => a.appName === APP);
+          appState = (entry && entry.state) || "UNKNOWN";
+        } catch { /* keep UNKNOWN and retry on the next tick */ }
+        send("cf:serviceStatus", { name: "identity", status: appState });
+        if (/^SUBSCRIBED$/i.test(appState)) return { ok: true, alreadyExists };
+        if (/FAILED/i.test(appState)) return { ok: false, alreadyExists, status: appState };
+        await new Promise((resolve) => setTimeout(resolve, 10000));
+      }
+      return { ok: false, alreadyExists, status: "timeout" };
+    },
+
+    /**
+     * Establish trust between this subaccount and its SAP Cloud Identity
+     * Services tenant. Once the onboarding subscription (step 1) finishes
+     * provisioning, the tenant appears in `btp list security/available-idp`;
+     * that tenant value is exactly what `btp create security/trust --idp`
+     * consumes (per the available-idp help). No service key / secret is read in
+     * this flow — trust is established purely from the listed tenant identifier.
+     * Returns { ok, iasUrl, alreadyExists, step?, stderr?, error?, idps? }.
+     */
+    async "connect:establishIasTrust"() {
+      const sub = state.subaccount;
+      if (!sub) return { ok: false, error: "subaccount not captured (sign in first)" };
+
+      // Look up the provisioned IAS tenant from the subaccount's available IDPs.
+      const lr = await run(resolveBtp(), [
+        "--format", "json", "list", "security/available-idp", "--subaccount", sub,
+      ], { source: "btp" });
+      if (lr.code !== 0) return { ok: false, step: "list-idp", stderr: lr.stderr };
+
+      let idps;
+      try {
+        const arrStart = lr.stdout.indexOf("[");
+        const objStart = lr.stdout.indexOf("{");
+        const candidates = [arrStart, objStart].filter((i) => i >= 0);
+        const js = candidates.length ? Math.min(...candidates) : -1;
+        idps = js >= 0 ? JSON.parse(lr.stdout.slice(js)) : [];
+      } catch (e) {
+        return { ok: false, step: "parse-idp", error: "could not parse available-idp list: " + e.message };
+      }
+
+      const idpList = Array.isArray(idps) ? idps : (idps.value || idps.identityProviders || []);
+      if (!idpList.length) {
+        return {
+          ok: false,
+          step: "no-idp",
+          error: "No SAP Cloud Identity Services tenant is available yet — finish step 1 (subscribe) and wait for provisioning to complete before establishing trust.",
+        };
+      }
+
+      const tenant = pickIasTenant(idps);
+      if (!tenant) {
+        // Surface the raw entries so the tenant field can be pinned without guessing.
+        return { ok: false, step: "extract-idp", error: "could not determine the IAS tenant value from available-idp", idps: idpList };
+      }
+
+      const tr = await run(resolveBtp(), [
+        "create", "security/trust",
+        "--idp", tenant,
+        "--subaccount", sub,
+        "--name", "SAP Cloud Identity Services",
+      ], { source: "btp" });
+
+      const alreadyEstablished = /already exists|already established|already trusted/i.test(tr.stdout + tr.stderr);
+      if (tr.code !== 0 && !alreadyEstablished) {
+        return { ok: false, step: "establish-trust", stderr: tr.stderr, iasUrl: tenant };
+      }
+
+      return { ok: true, iasUrl: tenant, alreadyExists: alreadyEstablished };
+    },
+
     async "config:readVars"() {
       const deployDir = await resolveDeployDir();
       const file = path.join(deployDir, "vars.yml");
@@ -1457,6 +1584,16 @@ function createOrchestrator({ host, send, audit }) {
         else text += `\n${key}: ${value}`;
       }
       await fsp.writeFile(file, text, "utf8");
+
+      // Toggle figaf-connectivity / figaf-destination in manifest.yml
+      const manifestFile = path.join(deployDir, "manifest.yml");
+      try {
+        let manifest = await fsp.readFile(manifestFile, "utf8");
+        manifest = patchManifestService(manifest, "figaf-connectivity", !!vars.enableConnectivity);
+        manifest = patchManifestService(manifest, "figaf-destination", !!vars.enableDestination);
+        await fsp.writeFile(manifestFile, manifest, "utf8");
+      } catch { /* manifest may not exist yet during early setup */ }
+
       return { ok: true, path: file };
     },
 
@@ -2093,6 +2230,23 @@ function createOrchestrator({ host, send, audit }) {
         try {
           const mem = JSON.parse(p.stdout).memory_in_mb;
           if (mem != null) vars.instanceMemory = `${mem}M`;
+        } catch { partial = true; }
+      } else {
+        partial = true;
+      }
+
+      // Detect if figaf-connectivity / figaf-destination are currently bound.
+      // CF v3 API returns service_credential_bindings for the app; the
+      // include=service_instance param embeds service instance names so we
+      // avoid a second round-trip per binding.
+      const sb = await run(resolveCf(), ["curl", `/v3/service_credential_bindings?app_guids=${guid}&include=service_instance`], { source: "cf" });
+      if (sb.code === 0) {
+        try {
+          const sbData = JSON.parse(sb.stdout);
+          const instances = ((sbData.included || {}).service_instances) || [];
+          const names = instances.map((i) => i.name);
+          if (names.includes("figaf-connectivity")) vars.enableConnectivity = true;
+          if (names.includes("figaf-destination")) vars.enableDestination = true;
         } catch { partial = true; }
       } else {
         partial = true;

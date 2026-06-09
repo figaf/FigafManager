@@ -207,6 +207,8 @@
       resolveIdpOrigin:     function (idpName) { return rpc("connect:resolveIdpOrigin", { idpName: idpName }); },
       assignPiRole:         function (a)    { return rpc("connect:assignPiRole", a || {}); },
       samlSsoUrl:           function ()     { return rpc("connect:samlSsoUrl"); },
+      createIasService:     function ()     { return rpc("connect:createIasService"); },
+      establishIasTrust:    function ()     { return rpc("connect:establishIasTrust"); },
     },
 
     config: {

@@ -11,7 +11,12 @@ function ScreenProgress({ ctx, setCtx, onNext, onBack, appendLog }) {
 
   React.useEffect(() => {
     if (ctx.deployStarted) return;
-    setCtx(c => ({ ...c, deployStarted: true }));
+    setCtx(c => {
+      const extra = [];
+      if (ctx.config.enableConnectivity) extra.push({ id: "connectivity", status: "pending", title: "Create Connectivity service (figaf-connectivity)", sub: "cf create-service connectivity lite" });
+      if (ctx.config.enableDestination)  extra.push({ id: "destination",  status: "pending", title: "Create Destination service (figaf-destination)",   sub: "cf create-service destination lite" });
+      return { ...c, deployStarted: true, tasks: [...c.tasks, ...extra] };
+    });
     const api = fg();
     if (!api) return;
 
@@ -66,7 +71,21 @@ function ScreenProgress({ ctx, setCtx, onNext, onBack, appendLog }) {
         mark("roles", { status: r.ok ? "done" : "error", sub: r.ok ? `assigned IRTAdmin to ${who}` : (r.stderr || "failed") });
       })();
 
-      await Promise.all([dbPromise, xsRolePromise]);
+      // 4. Optional: Connectivity service (PI/PO via SAP Cloud Connector)
+      const connectivityPromise = ctx.config.enableConnectivity ? (async () => {
+        mark("connectivity", { status: "running" });
+        const c = await api.cf.createService({ offering: "connectivity", plan: "lite", name: "figaf-connectivity" });
+        mark("connectivity", { status: c.ok ? "done" : "error", sub: c.ok ? (c.alreadyExists ? "already exists" : "created") : (c.stderr || "create-service failed") });
+      })() : Promise.resolve();
+
+      // 5. Optional: Destination service (PI/PO via SAP Cloud Connector)
+      const destinationPromise = ctx.config.enableDestination ? (async () => {
+        mark("destination", { status: "running" });
+        const c = await api.cf.createService({ offering: "destination", plan: "lite", name: "figaf-destination" });
+        mark("destination", { status: c.ok ? "done" : "error", sub: c.ok ? (c.alreadyExists ? "already exists" : "created") : (c.stderr || "create-service failed") });
+      })() : Promise.resolve();
+
+      await Promise.all([dbPromise, xsRolePromise, connectivityPromise, destinationPromise]);
     })();
     // eslint-disable-next-line
   }, []);
@@ -81,7 +100,7 @@ function ScreenProgress({ ctx, setCtx, onNext, onBack, appendLog }) {
           </h1>
           <p className="pane-desc">
             {allDone
-              ? "PostgreSQL, XSUAA, and the IRTAdmin role are configured. Ready to deploy the app."
+              ? "All services and the IRTAdmin role are configured. Ready to deploy the app."
               : <>Creating services in <span className="kbd">{ctx.login.org || "?"} / {ctx.login.space || "?"}</span> and assigning role collections. Most tasks run in parallel.</>}
           </p>
         </div>
