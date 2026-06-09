@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld("figaf", {
     writeVars:        (a) => ipcRenderer.invoke("update:writeVars", a || {}),
     updateXsuaa:      (a) => ipcRenderer.invoke("update:updateXsuaa", a || {}),
     deleteApps:       (a) => ipcRenderer.invoke("update:deleteApps", a || {}),
+    createServices:   (a) => ipcRenderer.invoke("update:createServices", a || {}),
     pushApp:          (a) => ipcRenderer.invoke("update:pushApp", a || {}),
     verify:           (a) => ipcRenderer.invoke("update:verify", a || {}),
   },

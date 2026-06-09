@@ -2449,6 +2449,52 @@ function createOrchestrator({ host, send, audit }) {
       return { ok: true };
     },
 
+    // Create the optional PI/PO services (figaf-connectivity / figaf-destination)
+    // when the operator selected them. The update's config:writeVars only
+    // *binds* these in manifest.yml via patchManifestService — the instances
+    // themselves must exist before the push or CF fails the push with
+    // "Service instance 'figaf-connectivity' not found". cf:createService treats
+    // "already exists" as success, and we poll each to "create succeeded" so the
+    // subsequent push binds against a ready instance. No-op (marked done) when
+    // neither service is selected so the phase rail stays honest on plain
+    // updates. Idempotent on retry: re-running just re-confirms the instances.
+    async "update:createServices"({ deployId, vars } = {}) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      const phase = "create-services";
+      const targets = [];
+      if (vars && vars.enableConnectivity) targets.push({ offering: "connectivity", name: "figaf-connectivity" });
+      if (vars && vars.enableDestination)  targets.push({ offering: "destination",  name: "figaf-destination" });
+      if (targets.length === 0) {
+        send("update:phase", { phase, state: "done", detail: "no PI services selected" });
+        return { ok: true, skipped: true };
+      }
+      send("update:phase", { phase, state: "running" });
+      for (const t of targets) {
+        const c = await handlers["cf:createService"]({ offering: t.offering, plan: "lite", name: t.name });
+        if (!c.ok) {
+          const errText = c.stderr || `cf create-service ${t.name} failed`;
+          send("update:phase", { phase, state: "failed", error: errText });
+          writeUpdateState({ lastError: errText, lastFailedPhase: phase });
+          return { ok: false, error: errText };
+        }
+      }
+      // Wait until every instance reports "create succeeded" — the lite plans
+      // are usually instant, but the push must not race a still-provisioning
+      // instance. cf:pollService emits cf:serviceStatus per tick.
+      for (const t of targets) {
+        const p = await handlers["cf:pollService"]({ name: t.name });
+        if (!p.ok) {
+          const errText = `${t.name} did not become active (${p.status})`;
+          send("update:phase", { phase, state: "failed", error: errText });
+          writeUpdateState({ lastError: errText, lastFailedPhase: phase });
+          return { ok: false, error: errText };
+        }
+      }
+      writeUpdateState({ phase: "services-created" });
+      send("update:phase", { phase, state: "done", detail: targets.map((t) => t.name).join(", ") });
+      return { ok: true, created: targets.map((t) => t.name) };
+    },
+
     // Push <deployId>-<role>. The manifest names both apps (<id>-app via the
     // figaf-app block, <id>-router via the approuter block) using ((ID)) from
     // vars.yml, so a single -f manifest.yml + the already-rewritten vars.yml

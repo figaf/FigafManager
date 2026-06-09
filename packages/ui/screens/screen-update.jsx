@@ -15,11 +15,15 @@
 //
 // ScreenUpdateProgress
 //   Subscribes to update:phase + cli:line + cf:serviceStatus and runs
-//   the flow sequentially: writeVars → updateXsuaa → pushApp("app")
-//   → pushApp("router") → verify. Idempotency lives in the
-//   orchestrator (each handler checks update-state.json + does its
-//   own short-circuits), so a Retry button just re-runs from the
-//   first non-done phase.
+//   the flow sequentially: begin (refresh-templates) → writeVars →
+//   updateXsuaa → deleteApps → createServices → pushApp("app") →
+//   pushApp("router") → verify. begin is driven here (not on the config
+//   screen) so its refresh-templates events land after this screen has
+//   subscribed. createServices provisions figaf-connectivity /
+//   figaf-destination when the PI checkboxes are on, before the push.
+//   Idempotency lives in the orchestrator (each handler checks
+//   update-state.json + does its own short-circuits), so a Retry button
+//   just re-runs from the first non-done phase.
 // ═══════════════════════════════════════════════════════════
 
 const fg = () => (typeof window !== "undefined" && window.figaf) || null;
@@ -28,6 +32,7 @@ const UPDATE_PHASES = [
   { id: "refresh-templates", label: "Refresh deploy templates",  sub: "github.com/figaf/Figaf-BTP-Deployment · btp-users" },
   { id: "update-xsuaa",      label: "Update XSUAA service",      sub: "cf update-service figaf-xsuaa -c xs-security.json" },
   { id: "delete-apps",       label: "Delete current apps",       sub: "cf delete <id>-router/-app -f (recreate only)" },
+  { id: "create-services",   label: "Create PI services",        sub: "cf create-service connectivity/destination lite" },
   { id: "push-app",          label: "Push app",                  sub: "cf push <id>-app" },
   { id: "push-router",       label: "Push router",               sub: "cf push <id>-router" },
   { id: "verify",            label: "Verify deployment",         sub: "/v3/apps/<id>-app/droplets/current + route check" },
@@ -45,7 +50,6 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
   const [varsPartial, setVarsPartial] = React.useState(false);
   const [strategy, setStrategy] = React.useState(upd.strategy || "recreate");
   const [resume, setResume] = React.useState(null);
-  const [beginning, setBeginning] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [showAdvanced, setShowAdvanced] = React.useState(false);
   const setVar = (patch) => setVars(v => ({ ...v, ...patch }));
@@ -121,19 +125,16 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
     await loadCurrentConfig(c.id);
   }
 
-  async function startUpdate() {
-    const api = fg();
-    if (!api) return;
+  // Persist the operator's choices and advance to the progress screen. The
+  // actual work — including the refresh-templates phase (update:begin) — is
+  // driven entirely by ScreenUpdateProgress's runFlow, so every update:phase
+  // event fires *after* that screen has subscribed. Driving begin here instead
+  // (the old behavior) emitted refresh-templates running/done before the
+  // progress screen mounted, leaving its first row stuck on "pending".
+  function startUpdate() {
     if (!targetTag) { setError("Pick a target tag"); return; }
     setError(null);
-    setBeginning(true);
     const currentImage = detection && detection.app ? detection.app.image : null;
-    const r = await api.update.begin({ deployId, targetImageTag: targetTag, strategy });
-    setBeginning(false);
-    if (!r || r.ok === false) {
-      setError((r && r.error) || "update:begin failed");
-      return;
-    }
     setCtx(c => ({
       ...c,
       update: {
@@ -448,8 +449,8 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
       <WizardFooter
         onBack={onBack}
         onNext={startUpdate}
-        nextDisabled={!targetTag || !found || beginning}
-        nextLabel={beginning ? "Starting…" : "Start update"}
+        nextDisabled={!targetTag || !found}
+        nextLabel="Start update"
       />
     </>
   );
@@ -463,7 +464,16 @@ function ScreenUpdateProgress({ ctx, setCtx, onNext, onBack }) {
   const vars = upd.vars || {};
   const strategy = upd.strategy || "recreate";
 
-  const [phases, setPhases] = React.useState(() => UPDATE_PHASES.map(p => ({ ...p, status: "pending" })));
+  // Only show the create-services row when the operator actually selected a PI
+  // service — otherwise update:createServices short-circuits and the row would
+  // just read "no PI services selected", which is noise on a plain update.
+  const wantsServices = !!(vars.enableConnectivity || vars.enableDestination);
+  const phaseDefs = React.useMemo(
+    () => UPDATE_PHASES.filter(p => p.id !== "create-services" || wantsServices),
+    [wantsServices]
+  );
+
+  const [phases, setPhases] = React.useState(() => phaseDefs.map(p => ({ ...p, status: "pending" })));
   const [error, setError] = React.useState(null);
   const [running, setRunning] = React.useState(false);
   const [done, setDone] = React.useState(false);
@@ -497,6 +507,12 @@ function ScreenUpdateProgress({ ctx, setCtx, onNext, onBack }) {
     setError(null);
 
     try {
+      // refresh-templates phase: force-refresh the deploy dir + init
+      // update-state.json. Driven here (not on the config screen) so its
+      // update:phase events land after this screen has subscribed.
+      const bg = await api.update.begin({ deployId, targetImageTag: targetTag, strategy });
+      if (!bg || bg.ok === false) { setError((bg && bg.error) || "refresh templates failed"); setRunning(false); return; }
+
       const wv = await api.update.writeVars({ deployId, dockerTag: targetTag, vars });
       if (!wv.ok) { setError(wv.error || "writeVars failed"); setRunning(false); return; }
 
@@ -508,6 +524,13 @@ function ScreenUpdateProgress({ ctx, setCtx, onNext, onBack }) {
       // overlap can't trip the trial memory limit.
       const da = await api.update.deleteApps({ deployId, strategy });
       if (!da.ok) { setError(da.error || "deleteApps failed"); setRunning(false); return; }
+
+      // Create + activate figaf-connectivity / figaf-destination when the PI
+      // checkboxes are on. config:writeVars already bound them in manifest.yml,
+      // so the instances must exist before the push or it fails with
+      // "Service instance 'figaf-connectivity' not found". No-op otherwise.
+      const cs = await api.update.createServices({ deployId, vars });
+      if (!cs.ok) { setError(cs.error || "createServices failed"); setRunning(false); return; }
 
       const pa = await api.update.pushApp({ deployId, role: "app", strategy });
       if (!pa.ok) { setError(pa.error || "pushApp(app) failed"); setRunning(false); return; }
@@ -569,7 +592,7 @@ function ScreenUpdateProgress({ ctx, setCtx, onNext, onBack }) {
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
               <button className="btn btn-primary" disabled={running} onClick={() => {
-                setPhases(UPDATE_PHASES.map(p => ({ ...p, status: "pending" })));
+                setPhases(phaseDefs.map(p => ({ ...p, status: "pending" })));
                 runFlow();
               }}>Retry from failed phase</button>
               <button className="btn" onClick={abort}>Abort &amp; clear state</button>
