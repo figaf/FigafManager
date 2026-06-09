@@ -17,6 +17,16 @@ through prerequisites → login → service creation → `cf push` → ready-to-
 The wizards diverge only at the host-environment seam (file dialogs, persistent
 storage, deploy-template sourcing).
 
+### Quick reference (developers)
+
+| Task | Command |
+|------|---------|
+| Install all dependencies | `npm install` |
+| Run desktop app (dev) | `npm run start:local` |
+| Run cloud app locally (dev) | `npm run start:manager` |
+| Build Windows `.exe` installer | `npm run build:local` |
+| Build BTP Cockpit `.zip` | `npm run build:manager` |
+
 ---
 
 ## What it does
@@ -68,9 +78,16 @@ start-menu shortcuts. Launch **Figaf Installer** and follow the wizard.
 
 ### Cloud — figaf-manager
 
-Download `figaf-manager-app-<version>.zip` and deploy it from BTP Cockpit:
-**Space → Applications → Deploy Application → Browse → Deploy**. Once it's
-green, open the assigned URL and follow the wizard from your browser.
+You need **two files**:
+
+| File | Where to get it |
+|------|----------------|
+| `figaf-manager-app-<version>.zip` | Built by `npm run build:manager` or from a release |
+| `apps/figaf-manager/manifest.yml` | Checked into this repo — use as-is |
+
+Deploy via BTP Cockpit: **Space → Applications → Deploy Application**, upload the `.zip` as the application archive and `manifest.yml` as the deployment descriptor, then click **Deploy**. Once green, open the assigned URL in a browser.
+
+> **Tip:** `FIGAF_MANAGER_MAINTENANCE: 1` is set in `manifest.yml` by default. Comment it out before deploying to make the wizard immediately accessible.
 
 ---
 
@@ -104,28 +121,25 @@ npm run start:manager
 Then visit `http://localhost:8080`. In dev mode the host adapter falls back to
 `btp` / `cf` on `$PATH` if `apps/figaf-manager/bin/` is empty.
 
-### Build the Windows installer
+### Build the Windows installer (standalone `.exe`)
 
 ```sh
 npm run build:local
 ```
 
-Output lands in `apps/figaf-local/dist/Figaf-Installer-<version>-x64.exe`. The
-build uses `electron-builder` configured in
-[apps/figaf-local/package.json](apps/figaf-local/package.json); the BTP
-deployment templates and `instructions.md` are bundled as `extraResources`.
+Output: **`apps/figaf-local/dist/Figaf-Installer-<version>-x64.exe`**
 
-### Build the cockpit zip
+Double-click to run. The NSIS installer is self-contained — no Node.js or Electron runtime required on the target machine. It creates a Start Menu shortcut and a desktop icon. The BTP deployment templates are bundled as `extraResources` inside the installer.
+
+### Build the BTP Cockpit zip
 
 ```sh
 npm run build:manager
 ```
 
-This downloads pinned Linux `btp` + `cf` CLIs into
-`apps/figaf-manager/bin/` (cached across runs), stages a self-contained app
-tree under `apps/figaf-manager/.staging/`, and zips the result to
-`apps/figaf-manager/dist/figaf-manager-app-<version>.zip`. Upload via BTP
-Cockpit *Deploy Application*.
+Output: **`apps/figaf-manager/dist/figaf-manager-app-<version>.zip`**
+
+The script downloads pinned Linux `btp` + `cf` binaries into `apps/figaf-manager/bin/` (cached — skipped on subsequent runs), stages a self-contained app tree under `.staging/`, then zips it. Upload the resulting `.zip` together with `apps/figaf-manager/manifest.yml` via BTP Cockpit *Deploy Application*.
 
 ---
 
@@ -177,18 +191,54 @@ invariants, host-adapter contract), see [CLAUDE.md](CLAUDE.md).
 
 ## Architecture at a glance
 
-```
-   ┌─── apps/figaf-local (Electron) ────┐    ┌─── apps/figaf-manager (Cloud) ─────┐
-   │ ┌──────────┐  IPC ┌──────────────┐ │    │ ┌──────────┐  fetch+ws ┌────────┐ │
-   │ │ Renderer │─────▶│ Main process │ │    │ │ Browser  │──────────▶│ Express│ │
-   │ │ (React)  │◀─────│ (Node,spawn) │ │    │ │ (React)  │◀──────────│ +ws    │ │
-   │ └──────────┘ evts └──────┬───────┘ │    │ └──────────┘   events  └───┬────┘ │
-   │                          │         │    │                            │      │
-   │   host.electron.js ──────┘         │    │       host.cloud.js ───────┘      │
-   └──────────────────┬─────────────────┘    └──────────────────┬────────────────┘
-                      │                                         │
-                      └──────────► packages/core/orchestrator.js ◄
-                                   (shared CLI + login + push logic)
+```mermaid
+flowchart TB
+    subgraph Local["figaf-local — Electron (Windows)"]
+        direction TB
+        R1["React Renderer"]
+        M1["Main Process\nipc-bridge.js"]
+        HE["host.electron.js\ndialog · userData · clipboard"]
+        R1 -- "ipcRenderer.invoke" --> M1
+        M1 -- "events" --> R1
+        M1 --> HE
+    end
+
+    subgraph Cloud["figaf-manager — Cloud Foundry (browser)"]
+        direction TB
+        R2["React Renderer"]
+        EX["Express + WebSocketServer\nserver.js"]
+        HC["host.cloud.js\nsession-scoped · bundled bins"]
+        R2 -- "fetch /rpc + ws /stream" --> EX
+        EX -- "events" --> R2
+        EX --> HC
+    end
+
+    HE --> ORC
+    HC --> ORC
+
+    subgraph Core["packages/core — shared (byte-identical handlers)"]
+        ORC["orchestrator.js\n~38 IPC handlers"]
+    end
+
+    subgraph UI["packages/ui — shared React renderer"]
+        APP["app.jsx · screens/ · components.jsx"]
+    end
+
+    ORC -.->|"spawns"| BTP["btp CLI (SAP SSO)"]
+    ORC -.->|"spawns"| CF["cf CLI (CF Foundation)"]
+    ORC -.->|"https"| WEB["DockerHub · GitHub\nBTP landscape APIs"]
+
+    BTP --> BTPENV
+    CF  --> BTPENV
+
+    subgraph BTPENV["SAP BTP Cloud Foundry"]
+        APPR["approuter (Node)"] --> APP2["figaf-app (Docker)"]
+        APP2 --> XSUAA["figaf-xsuaa\n(OAuth2 / SAML)"]
+        APP2 --> DB["figaf-db\n(PostgreSQL 16)"]
+    end
+
+    Local -. "loads" .-> UI
+    Cloud -. "serves" .-> UI
 ```
 
 Both renderers consume the **same** `window.figaf` IPC surface (`prereq.*`,
