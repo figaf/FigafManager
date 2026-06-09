@@ -32,7 +32,7 @@
       // Update Figaf Tool branch — hosted only. Desktop operators just
       // re-run the installer; only the cloud manager needs an in-place
       // rolling-update flow.
-      updateFigafTool: hosted,
+      updateFigafTool: true,
     },
   };
 })();

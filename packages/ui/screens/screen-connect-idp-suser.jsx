@@ -8,8 +8,6 @@ function ScreenConnectIdpSuser({ ctx, setCtx, onNext, onBack }) {
     "PI_Administrator",
     "PI_Business_Expert",
     "PI_Integration_Developer",
-    "iadv-content-developer",
-    "iadv-content-administrator",
     "APIPortal.Administrator",
   ];
 
