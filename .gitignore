@@ -21,3 +21,10 @@ packages/manager-approuter/static/
 Thumbs.db
 .idea/
 .vscode/
+.claude/
+
+# Documentation and ai generated content
+docs/
+
+# Logs
+logs/
