@@ -17,7 +17,7 @@
     "@figaf/deploy-templates": "*"
   },
   "devDependencies": {
-    "electron": "^42.0.0",
+    "electron": "^33.0.0",
     "electron-builder": "^26.8.1"
   },
   "build": {

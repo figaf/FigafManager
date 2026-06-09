@@ -203,6 +203,7 @@
 
     connect: {
       templatePath:         function (name) { return rpc("connect:templatePath", { name: name }); },
+      integrationSuiteUrl:  function ()     { return rpc("connect:integrationSuiteUrl"); },
       trustConfigUrl:       function ()     { return rpc("connect:trustConfigUrl"); },
       resolveIdpOrigin:     function (idpName) { return rpc("connect:resolveIdpOrigin", { idpName: idpName }); },
       assignPiRole:         function (a)    { return rpc("connect:assignPiRole", a || {}); },

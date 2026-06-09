@@ -344,7 +344,7 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack }) {
           <div className="pane-eyebrow">XSUAA upgrade</div>
           <h1 className="pane-title">Enable persistent SSO login</h1>
           <p className="pane-desc">
-            Replace the cockpit-log setup token with proper SAP IAS authentication. After this upgrade, anyone you add to the <strong>{ASSIGN_ROLE}</strong> role collection can come back to this wizard without the token dance.
+            Replace the cockpit-log setup token with SAP IAS authentication. After this upgrade, anyone you add to the <strong>{ASSIGN_ROLE}</strong> role collection will be able to access the application with SAP IAS.
           </p>
           <p className="pane-desc" style={{ fontSize: 12, color: "var(--ink-3)" }}>
             This will create one XSUAA service instance, push an approuter sibling app, optionally assign you to the role collection, and restage figaf-manager. Expect ~2-3 minutes total, with 30-90 seconds of downtime mid-flow.

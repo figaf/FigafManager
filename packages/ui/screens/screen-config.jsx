@@ -424,7 +424,7 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
         <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", margin: "0 0 12px" }}>CF services</div>
 
         <div style={{ fontSize: 12, color: "var(--ink-2)", marginBottom: 12 }}>
-          Select the Cloud Foundry services to bind in <span className="kbd">manifest.yml</span>. <strong>figaf-db</strong> and <strong>figaf-xsuaa</strong> are always required. <strong>figaf-connectivity</strong> and <strong>figaf-destination</strong> are needed for PI/PO integration via SAP Cloud Connector — the corresponding service instances must already exist in your CF space.
+          Select the Cloud Foundry services to bind in <span className="kbd">manifest.yml</span>. <strong>figaf-db</strong> and <strong>figaf-xsuaa</strong> are always required. <strong>figaf-connectivity</strong> and <strong>figaf-destination</strong> are needed for PI/PO integration via SAP Cloud Connector — if the services do not already exist, they will be created durring the next step.
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 4 }}>

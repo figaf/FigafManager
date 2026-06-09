@@ -147,6 +147,8 @@ function ScreenConnectProvision({ ctx, setCtx, onNext, onBack }) {
           </p>
         </div>
 
+        <IntegrationSuiteBanner />
+
         {marketplaceOk === false ? (
           <div className="card" style={{ padding: 18 }}>
             <p style={{ marginTop: 0 }}>
@@ -220,6 +222,66 @@ function KeyCard({ label, keyData }) {
       }}>
 {text}
       </pre>
+    </div>
+  );
+}
+
+// Banner shown at the top of the Provision screen: the Integration Suite
+// subscription URL for the targeted subaccount (read once on mount via
+// connect:integrationSuiteUrl). Renders nothing while loading or when the
+// account has no IS subscription.
+function IntegrationSuiteBanner() {
+  const [url, setUrl] = React.useState(null);
+  const [copied, setCopied] = React.useState(false);
+
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      const api = fgcp();
+      if (!api || !api.connect || !api.connect.integrationSuiteUrl) return;
+      try {
+        const r = await api.connect.integrationSuiteUrl();
+        if (alive && r && r.ok && r.url) setUrl(r.url);
+      } catch {
+        /* non-fatal — the banner just stays hidden */
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  if (!url) return null;
+
+  async function copy() {
+    const api = fgcp();
+    if (!api) return;
+    try {
+      await api.shell.writeClipboard(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ padding: 14, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
+            Integration Suite found on this account
+          </div>
+          <div style={{
+            fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-2)",
+            wordBreak: "break-all", background: "var(--surface-2)",
+            border: "1px solid var(--border)", borderRadius: 6, padding: "6px 8px",
+          }}>
+            {url}
+          </div>
+        </div>
+        <button className="btn" onClick={copy} style={{ flexShrink: 0 }}>
+          <Ico.Copy /> {copied ? "Copied!" : "Copy"}
+        </button>
+      </div>
     </div>
   );
 }

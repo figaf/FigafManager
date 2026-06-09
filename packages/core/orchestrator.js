@@ -156,6 +156,10 @@ function createOrchestrator({ host, send, audit }) {
       proc.stdout.on("data", (buf) => {
         const text = buf.toString();
         stdout += text;
+        // opts.quiet suppresses per-line streaming to the terminal drawer (used
+        // for large JSON payloads like `list accounts/subscription`, which carry
+        // base64 icons). stdout is still captured for the return value + audit.
+        if (opts.quiet) return;
         for (const line of text.split(/\r?\n/)) {
           if (line.length) log(opts.source || cmd, "line", line);
         }
@@ -1354,6 +1358,55 @@ function createOrchestrator({ host, send, audit }) {
       }
       const url = trustConfigUrl({ licenseType: state.licenseType, gaGuid, subGuid });
       return { ok: true, url, isTrial: state.licenseType === "TRIAL" };
+    },
+
+    /**
+     * Find this subaccount's Integration Suite subscription URL, if any.
+     * Integration Suite is a multitenant-app subscription, so `list
+     * accounts/subscription` surfaces it (alongside every other marketplace app,
+     * subscribed or not — each carrying a base64 icon, hence quiet:true so the
+     * ~160 KB payload doesn't flood the terminal drawer). We accept only
+     * state === "SUBSCRIBED" and match on commercialAppName
+     * ("integrationsuite" / "integrationsuite-trial") or the "Integration Suite"
+     * displayName; appName is a random provisioning id (e.g. "it-cpitrial05-prov")
+     * so we never key off it. Returns { ok:false } (not an error toast) when no
+     * IS subscription exists — the UI just hides the banner.
+     */
+    async "connect:integrationSuiteUrl"() {
+      const sub = state.subaccount;
+      if (!sub) return { ok: false, error: "subaccount not captured (sign in first)" };
+      const r = await run(
+        resolveBtp(),
+        ["--format", "json", "list", "accounts/subscription", "--subaccount", sub],
+        { source: "btp", quiet: true }
+      );
+      if (r.code !== 0) return { ok: false, error: r.stderr || "list accounts/subscription failed" };
+      let apps;
+      try {
+        const jsonStart = r.stdout.indexOf("{");
+        const data = jsonStart >= 0 ? JSON.parse(r.stdout.slice(jsonStart)) : null;
+        apps = (data && data.applications) || [];
+      } catch (e) {
+        return { ok: false, error: "could not parse subscription list: " + e.message };
+      }
+      const is = apps.find(
+        (a) =>
+          a && a.state === "SUBSCRIBED" &&
+          ((typeof a.commercialAppName === "string" &&
+            a.commercialAppName.toLowerCase().startsWith("integrationsuite")) ||
+            a.displayName === "Integration Suite")
+      );
+      if (!is || !is.subscriptionUrl) {
+        log("btp", "line", "No Integration Suite subscription found on this subaccount.");
+        return { ok: false, error: "No Integration Suite subscription found on this subaccount." };
+      }
+      log("btp", "ok", `Integration Suite found: ${is.subscriptionUrl}`);
+      return {
+        ok: true,
+        url: is.subscriptionUrl,
+        displayName: is.displayName || "Integration Suite",
+        planName: is.planName || null,
+      };
     },
 
     /**
