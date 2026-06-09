@@ -7,7 +7,7 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder",
-    "build:win": "electron-builder --win nsis"
+    "build:win": "node scripts/build-win.js"
   },
   "author": "Figaf",
   "license": "UNLICENSED",
@@ -24,7 +24,7 @@
     "appId": "com.figaf.installer",
     "productName": "Figaf Installer",
     "asar": true,
-    "icon": "../../packages/ui/figaf-logo.png",
+    "icon": "../../packages/ui/favicon.png",
     "files": [
       "main-process/**/*",
       "node_modules/@figaf/core/**/*",
@@ -51,9 +51,14 @@
           "arch": [
             "x64"
           ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
         }
-      ],
-      "artifactName": "Figaf-Installer-${version}-${arch}.${ext}"
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -61,7 +66,11 @@
       "perMachine": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Figaf Installer"
+      "shortcutName": "Figaf Installer",
+      "artifactName": "Figaf-Installer-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Figaf-Installer-${version}-${arch}.${ext}"
     }
   }
 }

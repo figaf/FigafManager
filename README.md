@@ -9,7 +9,7 @@ sharing one orchestration layer and one React renderer:
 
 | App | Where it runs | How users get to it |
 |---|---|---|
-| **figaf-local**   | Windows desktop (Electron)             | Download and run `Figaf-Installer-<v>-x64.exe` |
+| **figaf-local**   | Windows desktop (Electron)             | Download the `.exe` from Releases and run it   |
 | **figaf-manager** | A Cloud Foundry space (Express + WS)   | Push the cockpit zip once, then visit its URL  |
 
 Both wrap `btp` and `cf` CLIs, ship the BTP deployment templates, and walk you
@@ -24,7 +24,7 @@ storage, deploy-template sourcing).
 | Install all dependencies | `npm install` |
 | Run desktop app (dev) | `npm run start:local` |
 | Run cloud app locally (dev) | `npm run start:manager` |
-| Build Windows `.exe` installer | `npm run build:local` |
+| Build Windows app (installer + portable `.exe`) | `npm run build:local` |
 | Build BTP Cockpit `.zip` | `npm run build:manager` |
 
 ---
@@ -72,9 +72,14 @@ nothing is hidden behind the GUI.
 
 ### Desktop — figaf-local
 
-Download the latest `Figaf-Installer-<version>-x64.exe` from your release
-source and run it. The NSIS installer offers per-user install with desktop and
-start-menu shortcuts. Launch **Figaf Installer** and follow the wizard.
+Download from the [**Releases page**](../../releases/latest). Two builds are published:
+
+| File | Use it when |
+|------|-------------|
+| `Figaf-Installer-<v>-x64.exe` | **Just run it** — standalone portable app. Double-click to launch, no installation, no admin rights. |
+| `Figaf-Installer-Setup-<v>-x64.exe` | You want it installed — NSIS setup wizard with Start Menu + desktop shortcuts. |
+
+Either way, launch **Figaf Installer** and follow the wizard.
 
 ### Cloud — figaf-manager
 
@@ -121,15 +126,20 @@ npm run start:manager
 Then visit `http://localhost:8080`. In dev mode the host adapter falls back to
 `btp` / `cf` on `$PATH` if `apps/figaf-manager/bin/` is empty.
 
-### Build the Windows installer (standalone `.exe`)
+### Build the Windows app
 
 ```sh
 npm run build:local
 ```
 
-Output: **`apps/figaf-local/dist/Figaf-Installer-<version>-x64.exe`**
+Produces **two** artifacts in `apps/figaf-local/dist/`, both self-contained (no Node.js or Electron runtime needed on the target machine):
 
-Double-click to run. The NSIS installer is self-contained — no Node.js or Electron runtime required on the target machine. It creates a Start Menu shortcut and a desktop icon. The BTP deployment templates are bundled as `extraResources` inside the installer.
+| File | Type |
+|------|------|
+| `Figaf-Installer-<version>-x64.exe` | **Portable** — double-click to run, no install |
+| `Figaf-Installer-Setup-<version>-x64.exe` | **Installer** — NSIS setup wizard, creates shortcuts |
+
+The BTP deployment templates are bundled as `extraResources` inside both. To distribute, attach these to a tagged **GitHub Release** (don't commit them — `dist/` is gitignored to keep the ~80 MB+ binaries out of git history).
 
 ### Build the BTP Cockpit zip
 
