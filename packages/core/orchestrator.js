@@ -747,6 +747,9 @@ function createOrchestrator({ host, send, audit }) {
         try { state.btpLoginProc.kill(); } catch {}
       }
       state.btpLoginWaitingForChoice = false;
+      // Force `btp login` to always prompt for a GA so our handling is
+      // deterministic; we auto-answer it below and re-pick via `btp target`.
+      await run(resolveBtp(), ["set", "config", "--login.showglobalaccounts", "true"], { source: "btp" });
       const btpBin = resolveBtp();
       const args = ["login", "--url", "https://cli.btp.cloud.sap", "--sso"];
       const proc = spawn(btpBin, args, { shell: false, windowsHide: true });
@@ -772,25 +775,13 @@ function createOrchestrator({ host, send, audit }) {
         }
       };
 
-      const tryDetectGaPrompt = () => {
+      const tryAutoPickGa = () => {
         if (promptEmitted) return;
         const m = /Choose a global account:?[\s\S]*?Choose option\s*[>:]/i.exec(cleanBuffer);
         if (!m) return;
-        const block = m[0];
-        const accounts = [];
-        const optRe = /\[(\d+)\]\s+([^\r\n]+?)\s*$/gm;
-        let am;
-        while ((am = optRe.exec(block))) {
-          accounts.push({ index: Number(am[1]), displayName: am[2].trim() });
-        }
-        if (accounts.length === 0) return;
         promptEmitted = true;
-        if (lineRemainder.trim()) {
-          log("btp", "line", lineRemainder.replace(ansiRe, "").replace(/\r/g, "").trim());
-          lineRemainder = "";
-        }
-        state.btpLoginWaitingForChoice = true;
-        send("btp:gaChoice", { accounts });
+        log("btp", "line", "Multiple global accounts — selecting the first to enumerate via 'btp target'.");
+        try { proc.stdin.write("1" + os.EOL); } catch {}
         cleanBuffer = cleanBuffer.slice(m.index + m[0].length);
       };
 
@@ -806,7 +797,7 @@ function createOrchestrator({ host, send, audit }) {
         cleanBuffer += text.replace(ansiRe, "").replace(/\r(?!\n)/g, "\n");
         if (cleanBuffer.length > 16384) cleanBuffer = cleanBuffer.slice(-8192);
         flushLines(text, source);
-        tryDetectGaPrompt();
+        tryAutoPickGa();
         tryDetectSsoUrl();
       };
 
@@ -824,25 +815,7 @@ function createOrchestrator({ host, send, audit }) {
         state.btpLoginProc = null;
         state.btpLoginWaitingForChoice = false;
         if (code === 0) {
-          const gaInfo = await run(resolveBtp(), ["--format", "json", "get", "accounts/global-account"], { source: "btp" });
-          if (gaInfo.code === 0) {
-            try {
-              const js = gaInfo.stdout.indexOf("{");
-              if (js >= 0) {
-                const data = JSON.parse(gaInfo.stdout.slice(js));
-                state.globalAccountSubdomain = data.subdomain || null;
-                state.globalAccountGuid = data.guid || null;
-                state.licenseType = data.licenseType || null;
-                log("btp", "line", `Global account subdomain: ${state.globalAccountSubdomain}`);
-              }
-            } catch (e) {
-              log("btp", "warn", `Could not parse GA info: ${e.message}`);
-            }
-          }
-          const env = await handlers["btp:listEnvInstances"]();
-          if (!env.choicePending) {
-            send("btp:loggedIn", { ...env, subdomain: state.globalAccountSubdomain });
-          }
+          await handlers["btp:listGlobalAccounts"]();
         } else {
           send("btp:loginFailed", { code, signal });
         }

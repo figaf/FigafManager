@@ -185,6 +185,37 @@ test("btp:listGlobalAccounts with a single GA auto-selects it (no gaChoice, logg
   assert.equal(loggedIn.payload.landscape, "cf-us10", "landscape carried from the env probe");
 });
 
+test("btp:loginStart sets showglobalaccounts, auto-answers the GA prompt with 1, then lists GAs", async () => {
+  const GA_PROMPT = [
+    "Authentication successful",
+    "Choose a global account:",
+    "  [1] 17b44102trial",
+    "  [2] Figaf ApS",
+    "Choose option> ",
+  ].join("\n");
+  responses.push(
+    { match: (a) => a[0] === "set" && a.includes("--login.showglobalaccounts"), stdout: "", code: 0 },
+    { match: (a) => a[0] === "login", interactive: true, stdout: GA_PROMPT, code: 0 },
+    { match: (a) => a[0] === "target", interactive: true, stdout: SAMPLE_TREE, code: 0 },
+  );
+  const send = makeSend();
+  const orch = createOrchestrator({ host: makeHost(), send: send.fn });
+  await orch.handlers["btp:loginStart"]();
+  await settle();
+
+  // config was enabled before login
+  const setCfg = spawnCalls.find((c) => c.args[0] === "set");
+  assert.ok(setCfg, "btp set config invoked");
+  assert.deepEqual(setCfg.args, ["set", "config", "--login.showglobalaccounts", "true"]);
+
+  // GA prompt auto-answered with "1"
+  const loginCall = spawnCalls.find((c) => c.args[0] === "login");
+  assert.equal(loginCall.stdinData.join("").trim(), "1");
+
+  // delegated to the tree picker → gaChoice
+  assert.ok(send.events.some((e) => e.channel === "btp:gaChoice"), "gaChoice emitted after login");
+});
+
 test("btp:selectGlobalAccount on a GA with no CF subaccount re-opens the GA picker", async () => {
   responses.push(
     { match: (a) => a[0] === "target", interactive: true, stdout: SAMPLE_TREE, code: 0 }, // listGlobalAccounts
