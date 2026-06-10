@@ -16,7 +16,6 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
   const btpLoggedIn = login.btpStatus === "done";
   const cfLoggedIn = login.cfStatus === "done";
   const canContinue = btpLoggedIn && cfLoggedIn;
-  const multiGa = !!(gaChoice && gaChoice.accounts && gaChoice.accounts.length > 1);
 
   React.useEffect(() => {
     const api = fg();
@@ -130,6 +129,23 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     if (!api) return;
     setSubaccountChoice(null);
     setLogin({ btpStatus: "running" });
+    await api.btp.listGlobalAccounts();
+  }
+
+  async function switchGlobalAccount() {
+    const api = fg();
+    if (!api) return;
+    setGaChoice(null);
+    setSubaccountChoice(null);
+    setOrgChoice(null);
+    setSpaceChoice(null);
+    setLogin({
+      btpStatus: "running",
+      cfStatus: "idle",
+      landscape: "", subaccount: "", subaccountName: "", subdomain: "", provider: "", org: "", space: "", user: "", apiUrl: "",
+      passcode: "", passcodeRequested: false,
+    });
+    setCtx(c => ({ ...c, config: { ...c.config, trialPg: undefined, dbParams: {} } }));
     await api.btp.listGlobalAccounts();
   }
 
@@ -261,6 +277,11 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
             </div>
             {btpLoggedIn && <span className="pill green"><Ico.Check /> Connected</span>}
             {btpLoggedIn && (
+              <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={switchGlobalAccount}>
+                <Ico.Refresh /> Switch GA
+              </button>
+            )}
+            {btpLoggedIn && (
               <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={handleLogout}>
                 Sign out
               </button>
@@ -338,7 +359,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                 </div>
               )}
               <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 10 }}>
-                This global account has multiple subaccounts. Pick the one you want to deploy to.
+                Pick the subaccount you want to deploy to. Subaccounts without a Cloud Foundry environment are shown but cannot be selected.
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {subaccountChoice.subaccounts.map((sa, i) => {
@@ -387,13 +408,9 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                 })}
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
-                <div>
-                  {multiGa && (
-                    <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={goBackToGaPicker}>
-                      <Ico.ArrowLeft /> Back to accounts
-                    </button>
-                  )}
-                </div>
+                <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={goBackToGaPicker}>
+                  <Ico.Refresh /> Switch global account
+                </button>
                 <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={cancelBtpLogin}>
                   Cancel sign-in
                 </button>

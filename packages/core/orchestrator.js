@@ -955,15 +955,13 @@ function createOrchestrator({ host, send, audit }) {
 
     // Enumerate every subaccount in the targeted GA and probe each for a
     // Cloud Foundry environment instance. Outcomes:
-    //   0 CF-enabled  → return error (today's behavior)
-    //   1 CF-enabled  → silent auto-pick, target it, return env payload
-    //   >1 CF-enabled → cache the list, emit `btp:subaccountChoice`, return
+    //   0 CF-enabled  → return error
+    //   ≥1 CF-enabled → cache the list, emit `btp:subaccountChoice`, return
     //                   { ok: true, choicePending: true } — callers must NOT
     //                   emit `btp:loggedIn` until the user picks via
     //                   `btp:selectSubaccount`.
-    // Non-CF subaccounts are still returned in the choice payload (with
-    // cfEnabled:false) so the picker can render them as disabled — gives users
-    // visibility into the full GA, mirroring `btp target`'s output.
+    // Non-CF subaccounts are included in the choice payload (cfEnabled:false)
+    // so the picker renders them as disabled, giving visibility into the full GA.
     async "btp:listEnvInstances"() {
       const subRes = await run(resolveBtp(), ["--format", "json", "list", "accounts/subaccount"], { source: "btp" });
       if (subRes.code !== 0) return { ok: false, error: subRes.stderr || "Failed to list subaccounts" };
@@ -1020,18 +1018,6 @@ function createOrchestrator({ host, send, audit }) {
 
       if (cfList.length === 0) {
         return { ok: false, error: "No Cloud Foundry environment found in any subaccount" };
-      }
-      if (cfList.length === 1) {
-        const only = cfList[0];
-        const skipped = enumerated.length - 1;
-        log(
-          "btp",
-          "line",
-          skipped > 0
-            ? `Auto-selected subaccount '${only.displayName}' — the only one of ${enumerated.length} with a Cloud Foundry environment.`
-            : `Auto-selected the only subaccount '${only.displayName}'.`
-        );
-        return await applySubaccountSelection(only);
       }
 
       state.subaccountWaitingForChoice = true;

@@ -277,6 +277,19 @@ Both adapters expose the exact same shape; they differ only in implementation.
   globals on `window` and reach each other that way.
 - **Path persistence over PATH**: when adding a new external CLI, follow the
   `cliPaths.json` pattern in `host.electron.js` — never assume `$PATH`.
+- **External calls audit**: whenever you add, remove, or change a call that belongs
+  to any of the categories below, update `/external-calls-audit.md` in the same
+  commit. The categories are:
+  - A `run()` call or direct `spawn()` / `spawnSync()` / `execSync()` — new CLI
+    command or changed args/flags
+  - An `httpsJson` / `httpsDownload` / `httpsText` call, or a new `https.get` —
+    new or changed URL
+  - A URL that is opened in the browser via `host.openExternal()` or returned to
+    the UI for the user to visit (cockpit deep-links, passcode URLs, etc.)
+  - A build-time download in `apps/figaf-manager/scripts/build-zip.js`
+  For each entry include: the exact command / URL pattern, the IPC handler (or
+  script function) it lives in, and the scope (`both` / `desktop` / `cloud` /
+  `build`).
 
 ## Roadmap markers in code
 
