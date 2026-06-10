@@ -16,6 +16,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
   const btpLoggedIn = login.btpStatus === "done";
   const cfLoggedIn = login.cfStatus === "done";
   const canContinue = btpLoggedIn && cfLoggedIn;
+  const multiGa = !!(gaChoice && gaChoice.accounts && gaChoice.accounts.length > 1);
 
   React.useEffect(() => {
     const api = fg();
@@ -114,19 +115,21 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     }
   }
 
-  async function selectGa(val) {
+  async function selectGa(index) {
     const api = fg();
     if (!api) return;
     setGaChoice(null);
     setSubaccountChoice(null);
     setLogin({ btpStatus: "running" });
-    if (typeof val === "number") {
-      // Interactive mode: write the choice index to the live btp login stdin
-      await api.btp.submitChoice(val);
-    } else {
-      // Post-login mode: target the GA by subdomain in a separate btp call
-      await api.btp.selectGlobalAccount(val);
-    }
+    await api.btp.selectGlobalAccount(index);
+  }
+
+  async function goBackToGaPicker() {
+    const api = fg();
+    if (!api) return;
+    setSubaccountChoice(null);
+    setLogin({ btpStatus: "running" });
+    await api.btp.listGlobalAccounts();
   }
 
   async function handleLogout() {
@@ -286,49 +289,32 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                 Choose a global account
               </div>
               <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 10 }}>
-                Your account has access to multiple global accounts. Pick the one you want to use.
+                Your account has access to multiple global accounts. Pick the one you want to deploy to.
               </div>
-              {(() => {
-                const names = gaChoice.accounts.map(a => a.displayName || "");
-                const hasDuplicates = names.some((n, i) => n && names.indexOf(n) !== i);
-                return hasDuplicates ? (
-                  <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 6, background: "rgba(234,179,8,0.1)", border: "1px solid rgba(234,179,8,0.3)", fontSize: 11.5, color: "var(--ink-2)", lineHeight: 1.5 }}>
-                    Some accounts share the same display name. The order matches the BTP cockpit's global account switcher — if unsure, try option 1 and you can sign out to retry.
-                  </div>
-                ) : null;
-              })()}
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {gaChoice.accounts.map((acct, i) => {
-                  const name = acct.displayName || acct.subdomain || acct.guid || `Account ${i + 1}`;
-                  const sub = acct.subdomain;
-                  const region = acct.region || acct.commercialRegion;
-                  const meta = [
-                    sub && sub !== name && `subdomain: ${sub}`,
-                    region && `region: ${region}`,
-                    acct.commercialModel,
-                  ].filter(Boolean);
-                  return (
-                    <button
-                      key={acct.index || acct.guid || i}
-                      className="choice"
-                      style={{ flexDirection: "row", alignItems: "center", padding: "12px 14px", gap: 14, textAlign: "left" }}
-                      onClick={() => selectGa(typeof acct.index === "number" ? acct.index : (acct.subdomain || acct.guid))}
-                    >
-                      <div style={{ width: 28, height: 28, borderRadius: 6, background: "var(--fg-blue-soft)", color: "var(--fg-blue)", display: "grid", placeItems: "center", flexShrink: 0, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-mono)" }}>
-                        {acct.index || (i + 1)}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-0)" }}>{name}</div>
-                        {meta.length > 0 && (
-                          <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 2, fontFamily: "var(--font-mono)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                            {meta.join(" · ")}
-                          </div>
-                        )}
-                      </div>
-                      <Ico.ArrowRight />
-                    </button>
-                  );
-                })}
+                {gaChoice.accounts.map((acct) => (
+                  <button
+                    key={acct.index}
+                    className="choice"
+                    style={{ flexDirection: "row", alignItems: "center", padding: "12px 14px", gap: 14, textAlign: "left" }}
+                    onClick={() => selectGa(acct.index)}
+                  >
+                    <div style={{ width: 28, height: 28, borderRadius: 6, background: "var(--fg-blue-soft)", color: "var(--fg-blue)", display: "grid", placeItems: "center", flexShrink: 0, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-mono)" }}>
+                      {acct.index}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-0)" }}>{acct.name}</div>
+                      {acct.subaccounts && acct.subaccounts.length > 0 && (
+                        <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 3, display: "flex", flexWrap: "wrap", gap: 4 }}>
+                          {acct.subaccounts.map((s) => (
+                            <span key={s.index} style={{ background: "var(--bg-2)", borderRadius: 4, padding: "1px 6px", fontFamily: "var(--font-mono)" }}>{s.name}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <Ico.ArrowRight />
+                  </button>
+                ))}
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
                 <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={cancelBtpLogin}>
@@ -345,6 +331,11 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
               <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 4 }}>
                 Choose a subaccount
               </div>
+              {subaccountChoice.globalAccountName && (
+                <div style={{ fontSize: 12, color: "var(--ink-2)", marginBottom: 6 }}>
+                  Global account: <strong>{subaccountChoice.globalAccountName}</strong>
+                </div>
+              )}
               <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 10 }}>
                 This global account has multiple subaccounts. Pick the one you want to deploy to.
               </div>
@@ -394,7 +385,14 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                   );
                 })}
               </div>
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
+                <div>
+                  {multiGa && (
+                    <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={goBackToGaPicker}>
+                      <Ico.ArrowLeft /> Back to accounts
+                    </button>
+                  )}
+                </div>
                 <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={cancelBtpLogin}>
                   Cancel sign-in
                 </button>
