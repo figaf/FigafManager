@@ -839,6 +839,21 @@ function createOrchestrator({ host, send, audit }) {
       if (proc && !proc.killed) { try { proc.kill(); } catch {} }
       state.btpLoginProc = null;
       state.btpLoginWaitingForChoice = false;
+      // Run full logout so the BTP/CF session is cleanly torn down.
+      await run(resolveBtp(), ["logout"], { source: "btp" });
+      await run(resolveCf(), ["logout"], { source: "cf" }).catch(() => {});
+      state.globalAccountSubdomain = null;
+      state.globalAccountGuid = null;
+      state.landscape = null;
+      state.subaccount = null;
+      state.org = null;
+      state.space = null;
+      state.user = null;
+      state.provider = null;
+      state.subaccountList = null;
+      state.subaccountWaitingForChoice = false;
+      state.gaTree = null;
+      state.globalAccountName = null;
       return { ok: true };
     },
 

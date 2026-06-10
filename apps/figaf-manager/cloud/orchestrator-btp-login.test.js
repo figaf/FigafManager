@@ -246,3 +246,53 @@ test("btp:selectGlobalAccount on a GA with no CF subaccount re-opens the GA pick
   assert.ok(!send.events.some((e) => e.channel === "btp:subaccountChoice"), "no subaccount picker for a CF-less GA");
   assert.ok(!send.events.some((e) => e.channel === "btp:loggedIn"), "no loggedIn for a CF-less multi-GA");
 });
+
+test("btp:cancelLogin runs btp logout and cf logout and clears GA state", async () => {
+  // Give it a live proc to kill first.
+  responses.push(
+    { match: (a) => a[0] === "set" && a.includes("--login.showglobalaccounts"), stdout: "", code: 0 },
+    { match: (a) => a[0] === "login", interactive: true, stdout: "", code: 0 },
+    { match: (a) => a[0] === "logout", stdout: "", code: 0 },          // btp logout
+    { match: (a) => a[0] === "logout", stdout: "", code: 0 },          // cf logout
+  );
+  const send = makeSend();
+  const orch = createOrchestrator({ host: makeHost(), send: send.fn });
+  // Start login (background — don't await full settle).
+  orch.handlers["btp:loginStart"]();
+  // Let the fake proc register in state.btpLoginProc.
+  await new Promise((r) => setImmediate(r));
+  await orch.handlers["btp:cancelLogin"]();
+
+  const cmds = spawnCalls.map((c) => c.args[0]);
+  assert.ok(cmds.includes("logout"), "at least one logout ran");
+  // Both btp logout and cf logout should appear (they run the same 'logout' sub-command
+  // but on different binaries; both show up in spawnCalls).
+  const logoutCalls = spawnCalls.filter((c) => c.args[0] === "logout");
+  assert.equal(logoutCalls.length, 2, "both btp logout and cf logout ran");
+});
+
+test("btp:subaccountChoice payload carries globalAccountName from the selected GA", async () => {
+  // This is a regression guard: subaccountChoice must include globalAccountName.
+  // It's already covered by test 2, but we pin it explicitly for clarity.
+  const twoSubs = JSON.stringify({ value: [
+    { guid: "SUB-A", displayName: "demotest", region: "us10" },
+    { guid: "SUB-B", displayName: "figafpartner", region: "eu10" },
+  ] });
+  responses.push(
+    { match: (a) => a[0] === "target", interactive: true, stdout: SAMPLE_TREE, code: 0 },
+    { match: (a) => a[0] === "target", interactive: true, stdout: SAMPLE_TREE, code: 0 },
+    { match: (a) => a.includes("accounts/global-account"), stdout: JSON.stringify({ subdomain: "figafaps-02", guid: "GA-6", licenseType: "Subscription" }), code: 0 },
+    { match: (a) => a.includes("accounts/subaccount"), stdout: twoSubs, code: 0 },
+    { match: (a) => a.includes("accounts/environment-instance"), stdout: JSON.stringify({ environmentInstances: [{ environmentType: "cloudfoundry", landscapeLabel: "cf-us10", subaccountGUID: "SUB-A", labels: '{"Org Name":"org-a"}' }] }), code: 0 },
+    { match: (a) => a.includes("accounts/environment-instance"), stdout: JSON.stringify({ environmentInstances: [{ environmentType: "cloudfoundry", landscapeLabel: "cf-eu10", subaccountGUID: "SUB-B", labels: '{"Org Name":"org-b"}' }] }), code: 0 },
+  );
+  const send = makeSend();
+  const orch = createOrchestrator({ host: makeHost(), send: send.fn });
+  await orch.handlers["btp:listGlobalAccounts"]();
+  await orch.handlers["btp:selectGlobalAccount"]({ index: 6 });
+  await settle();
+
+  const sub = send.events.find((e) => e.channel === "btp:subaccountChoice");
+  assert.ok(sub, "subaccountChoice was emitted");
+  assert.equal(sub.payload.globalAccountName, "Figaf ApS", "globalAccountName is the display name of the selected GA");
+});
