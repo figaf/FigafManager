@@ -49,6 +49,17 @@ test("captures the current target index from the prompt", () => {
   assert.equal(parseGlobalAccountTree(SAMPLE).currentIndex, 6);
 });
 
+test("captures currentIndex even when the GA name contains an apostrophe", () => {
+  const txt = "   [3] O'Brien Corp (global account)\nChoose, or hit ENTER to stay in 'O'Brien Corp' [3]> ";
+  assert.equal(parseGlobalAccountTree(txt).currentIndex, 3);
+});
+
+test("handles parentheses inside a name", () => {
+  const r = parseGlobalAccountTree("   [1] Acct (EU) (global account)\n   [2]  └─ Sub (dev) (subaccount)");
+  assert.equal(r.accounts[0].name, "Acct (EU)");
+  assert.equal(r.accounts[0].subaccounts[0].name, "Sub (dev)");
+});
+
 test("ignores the Current target / Now targeting summary lines", () => {
   const { accounts } = parseGlobalAccountTree(SAMPLE);
   // 'Figaf ApS (global account, subdomain: figafaps-02)' has no [N] and must not become an account.

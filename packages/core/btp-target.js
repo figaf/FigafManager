@@ -8,8 +8,10 @@
 const ANSI_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 // A tree row: optional indent, [N], optional box-drawing prefix, name, "(type)".
 const ROW_RE = /^\s*\[(\d+)\]\s+(.*?)\s+\((global account|subaccount|directory)\)\s*$/;
-// The trailing prompt reveals the current target's index: "... [6]>".
-const CURRENT_RE = /hit ENTER to stay in '[^']*'\s*\[(\d+)\]/;
+// The trailing prompt reveals the current target's index, e.g. "… 'My GA' [6]> ".
+// Anchored on the closing quote + "[N]>" so an apostrophe inside a GA name
+// (e.g. "O'Brien Corp") can't truncate the match. cm[1] = current index.
+const CURRENT_RE = /'\s*\[(\d+)\]\s*>/;
 
 function cleanText(raw) {
   return String(raw || "").replace(ANSI_RE, "").replace(/\r/g, "");
