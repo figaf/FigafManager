@@ -17,6 +17,7 @@ const {
   pickIasTenant,
   classifyAssignResult,
 } = require("./saml-connect");
+const { parseGlobalAccountTree } = require("./btp-target");
 
 const DEPLOYMENT_ZIP_URL =
   process.env.FIGAF_DEPLOYMENT_ZIP_URL ||
@@ -90,6 +91,8 @@ function createOrchestrator({ host, send, audit }) {
     btpLoginWaitingForChoice: false,
     subaccountWaitingForChoice: false,
     subaccountList: null,
+    gaTree: null,
+    globalAccountName: null,
     cfLoginProc: null,
     cfOrgList: null,
     cfSpaceList: null,
@@ -482,6 +485,49 @@ function createOrchestrator({ host, send, audit }) {
     };
   }
 
+  // Spawn `btp target --hierarchy true`, wait for the interactive prompt, parse
+  // the tree, then write `chooseIndex` to stdin so the CLI targets that node and
+  // exits 0. `chooseIndex` is a number, or a fn(parsed) -> number (e.g. stay on
+  // the current target). Resolves { code, parsed }. This is the same long-lived
+  // proc + stdin mechanism btp login uses; verified against btp v2.106.1.
+  function runTargetHierarchy(chooseIndex) {
+    return new Promise((resolve) => {
+      const btpBin = resolveBtp();
+      const args = ["target", "--hierarchy", "true"];
+      log("cmd", "cmd", `${btpBin} ${args.join(" ")}`);
+      const proc = spawn(btpBin, args, { shell: false, windowsHide: true });
+      const ansiRe = /\x1b\[[0-9;?]*[a-zA-Z]/g;
+      let clean = "";
+      let parsed = null;
+      let wrote = false;
+
+      const onData = (buf) => {
+        const text = buf.toString();
+        clean += text.replace(ansiRe, "").replace(/\r(?!\n)/g, "\n");
+        for (const raw of text.split(/\r\n|\n/)) {
+          const line = raw.replace(ansiRe, "").replace(/\r/g, "").trim();
+          if (line.length) log("btp", "line", line);
+        }
+        if (!wrote && /hit ENTER to stay in '[^']*'\s*\[\d+\]/.test(clean)) {
+          wrote = true;
+          parsed = parseGlobalAccountTree(clean);
+          const idx = typeof chooseIndex === "function" ? chooseIndex(parsed) : chooseIndex;
+          try { proc.stdin.write((idx != null ? String(idx) : "") + os.EOL); } catch {}
+        }
+      };
+
+      proc.stdout.on("data", onData);
+      proc.stderr.on("data", (b) => {
+        for (const line of b.toString().split(/\r?\n/)) if (line.trim()) log("btp", "err", line.trim());
+      });
+      proc.on("error", (err) => { log("btp", "err", `btp target spawn error: ${err.message}`); resolve({ code: -1, parsed }); });
+      proc.on("close", (code) => {
+        if (!parsed && clean) parsed = parseGlobalAccountTree(clean);
+        resolve({ code, parsed });
+      });
+    });
+  }
+
   // ─── handlers ─────────────────────────────────────────────────────────────
 
   const handlers = {
@@ -823,6 +869,24 @@ function createOrchestrator({ host, send, audit }) {
       state.btpLoginProc = null;
       state.btpLoginWaitingForChoice = false;
       return { ok: true };
+    },
+
+    // Enumerate all reachable global accounts via `btp target --hierarchy true`.
+    // Stays on the current target (writes its index) — read-only. Single GA →
+    // auto-select; otherwise emit btp:gaChoice with each GA's subaccounts (which
+    // disambiguate same-named GAs). Reused by the UI's "Back" button.
+    async "btp:listGlobalAccounts"() {
+      const { code, parsed } = await runTargetHierarchy((p) => (p ? p.currentIndex : null));
+      if (code !== 0 || !parsed || parsed.accounts.length === 0) {
+        send("btp:loginFailed", { code });
+        return { ok: false, error: "Could not list global accounts" };
+      }
+      state.gaTree = parsed.accounts;
+      if (parsed.accounts.length === 1) {
+        return await handlers["btp:selectGlobalAccount"]({ index: parsed.accounts[0].index });
+      }
+      send("btp:gaChoice", { accounts: parsed.accounts });
+      return { ok: true, choicePending: true };
     },
 
     async "btp:selectGlobalAccount"({ subdomain }) {
