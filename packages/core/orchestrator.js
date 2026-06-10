@@ -740,13 +740,11 @@ function createOrchestrator({ host, send, audit }) {
     // number to its stdin when the multi-account prompt appears.
     async "btp:loginStart"() {
       if (state.btpLoginProc && !state.btpLoginProc.killed) {
-        if (state.btpLoginWaitingForChoice) {
-          log("btp", "warn", "Login in progress (awaiting GA choice), ignoring re-invocation");
-          return { ok: true };
-        }
-        try { state.btpLoginProc.kill(); } catch {}
+        log("btp", "warn", "Login already in progress, ignoring re-invocation");
+        return { ok: true };
       }
-      state.btpLoginWaitingForChoice = false;
+      state.gaTree = null;
+      state.globalAccountName = null;
       // Force `btp login` to always prompt for a GA so our handling is
       // deterministic; we auto-answer it below and re-pick via `btp target`.
       await run(resolveBtp(), ["set", "config", "--login.showglobalaccounts", "true"], { source: "btp" });
@@ -780,7 +778,7 @@ function createOrchestrator({ host, send, audit }) {
         const m = /Choose a global account:?[\s\S]*?Choose option\s*[>:]/i.exec(cleanBuffer);
         if (!m) return;
         promptEmitted = true;
-        log("btp", "line", "Multiple global accounts — selecting the first to enumerate via 'btp target'.");
+        log("btp", "line", "GA prompt detected — auto-answering '1' (real selection follows via 'btp target').");
         try { proc.stdin.write("1" + os.EOL); } catch {}
         cleanBuffer = cleanBuffer.slice(m.index + m[0].length);
       };
@@ -933,6 +931,8 @@ function createOrchestrator({ host, send, audit }) {
       state.provider = null;
       state.subaccountList = null;
       state.subaccountWaitingForChoice = false;
+      state.gaTree = null;
+      state.globalAccountName = null;
       return { ok: true };
     },
 

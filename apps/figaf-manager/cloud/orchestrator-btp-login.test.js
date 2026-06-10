@@ -212,8 +212,19 @@ test("btp:loginStart sets showglobalaccounts, auto-answers the GA prompt with 1,
   const loginCall = spawnCalls.find((c) => c.args[0] === "login");
   assert.equal(loginCall.stdinData.join("").trim(), "1");
 
-  // delegated to the tree picker → gaChoice
-  assert.ok(send.events.some((e) => e.channel === "btp:gaChoice"), "gaChoice emitted after login");
+  // set config ran BEFORE login
+  const loginIdx = spawnCalls.findIndex((c) => c.args[0] === "login");
+  const setIdx = spawnCalls.findIndex((c) => c.args[0] === "set");
+  assert.ok(setIdx !== -1 && loginIdx !== -1, "both set config and login were spawned");
+  assert.ok(setIdx < loginIdx, "set config ran before btp login");
+
+  // no loginFailed emitted
+  assert.ok(!send.events.some((e) => e.channel === "btp:loginFailed"), "no loginFailed emitted");
+
+  // delegated to the tree picker → gaChoice with correct indices
+  const gaChoice = send.events.find((e) => e.channel === "btp:gaChoice");
+  assert.ok(gaChoice, "gaChoice emitted after login");
+  assert.deepEqual(gaChoice.payload.accounts.map((a) => a.index), [1, 6, 9], "gaChoice carries all three GA indices");
 });
 
 test("btp:selectGlobalAccount on a GA with no CF subaccount re-opens the GA picker", async () => {
