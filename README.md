@@ -38,8 +38,11 @@ storage, deploy-template sourcing).
    binaries inside its zip.
 2. **Signs you in** — `btp login --sso` opens your browser, then we discover
    your landscape and run `cf login --sso` with the one-time passcode.
-3. **Lets you choose** — *Deploy Figaf Tool* (default) or *Connect to
-   Integration Suite* (planned).
+3. **Lets you choose an action** — *Deploy Figaf Tool* (fresh install),
+   *Update Figaf Tool* (refresh an existing deployment to the latest image),
+   *Connect to Integration Suite* (wire up an existing deployment), and — on the
+   cloud installer only — *Enable persistent SSO login* (the XSUAA upgrade,
+   see [Securing the cloud installer](#securing-the-cloud-installer-figaf-manager)).
 4. **Configures the deployment** — auto-detects the apps domain, the latest
    `figaf/app` Docker tag, and the available PostgreSQL plans; you fill in the
    ID and pick a plan.
@@ -50,7 +53,23 @@ storage, deploy-template sourcing).
    URL once it's live.
 
 A collapsible terminal drawer streams every CLI command in real time, so
-nothing is hidden behind the GUI.
+nothing is hidden behind the GUI. Secrets (service keys, JWTs, setup tokens) are
+redacted from the stream and from the audit log before they're ever shown or
+written.
+
+### The other actions
+
+- **Update Figaf Tool** — detects the running deployment, seeds the form from
+  its *live* `vars.yml` (so an update never silently changes memory, domain,
+  location, or SMTP settings), lets you pick a target Docker tag and a `cf push`
+  strategy (`recreate` vs. rolling), pulls the latest deploy templates, then
+  applies the update and verifies it.
+- **Connect to Integration Suite** — provisions the `it-rt` *api* and
+  *integration-flow* services, creates and fetches their service keys, then
+  configures BTP access. The **custom SAML IdP** path is complete (creates the
+  cockpit trust configuration, resolves the IdP origin, builds the SSO URL, and
+  assigns the `PI_*` role collections); the IAS / S-user / passport auth modes
+  are still stubs.
 
 ---
 
@@ -93,6 +112,33 @@ You need **two files**:
 Deploy via BTP Cockpit: **Space → Applications → Deploy Application**, upload the `.zip` as the application archive and `manifest.yml` as the deployment descriptor, then click **Deploy**. Once green, open the assigned URL in a browser.
 
 > **Tip:** `FIGAF_MANAGER_MAINTENANCE: 1` is set in `manifest.yml` by default. Comment it out before deploying to make the wizard immediately accessible.
+
+---
+
+## Securing the cloud installer (figaf-manager)
+
+The cloud installer runs on a **public Cloud Foundry route** — anyone who learns
+the URL could otherwise drive it. It ships with a two-phase auth gate so it's
+never unauthenticated:
+
+1. **Token gate (default, zero config).** On boot the app generates a one-time
+   setup token and prints it **once** to stdout, tagged `[SETUP]`. Open the app
+   URL, go to the `/setup` page, and paste the token from the BTP Cockpit
+   **Logs** view. The first successful claim consumes the token, mints a signed
+   session cookie, and closes `/setup` (it returns `410 Gone` afterward). No
+   pre-deploy configuration and no `cf` CLI is required — reading the cockpit log
+   is the only capability the gate depends on.
+2. **Persistent SSO (optional, in-wizard upgrade).** After signing in, choose
+   **Enable persistent SSO login**. The wizard provisions an XSUAA service and
+   pushes a bundled [`@sap/approuter`](packages/manager-approuter/) in front of
+   itself, then deep-links you to assign yourself the role collection in the
+   cockpit (~30 s). From then on you reach the wizard through the approuter and
+   authenticate with SAP IAS single sign-on — no more cockpit-log token.
+
+The session cookie is signed with `FIGAF_AUTH_SECRET` (a per-boot random value
+when unset). The manager also self-destructs after a configurable idle period.
+See [docs/auth-gate-implementation-plan.md](docs/auth-gate-implementation-plan.md)
+for the full design.
 
 ---
 
@@ -168,8 +214,11 @@ figaf-installer/                          ← workspace root (npm workspaces)
 │   └── figaf-manager/                    Cloud-hosted installer
 │       ├── cloud/
 │       │   ├── server.js                   Express RPC + WebSocket
-│       │   ├── client.js                   browser window.figaf shim (fetch + ws)
-│       │   └── index.html                  cloud renderer shell
+│       │   ├── auth.js                      token-gate auth (setup token, session cookie)
+│       │   ├── xsuaa-auth.js                v2 XSUAA/JWT verification
+│       │   ├── client.js                    browser window.figaf shim (fetch + ws)
+│       │   ├── index.html, setup.html       cloud renderer shell + /setup claim page
+│       │   └── *.test.js                    auth, ws, xsuaa, restage tests (node:test)
 │       ├── host.cloud.js                 HostAdapter: session-scoped, bundled bin
 │       ├── bin/                          Linux btp + cf binaries (build-time)
 │       ├── scripts/build-zip.js          assembles the cockpit zip
@@ -178,15 +227,22 @@ figaf-installer/                          ← workspace root (npm workspaces)
 └── packages/
     ├── core/                             host-agnostic orchestrator
     │   ├── orchestrator.js                 ~38 IPC handlers + HostAdapter typedef
+    │   ├── audit-log.js                     append-only audit log (with secret redaction)
+    │   ├── redact-service-key.js            scrubs service-key / JWT material from output
+    │   ├── saml-connect.js                  pure SAML/IdP-trust logic (Connect flow)
+    │   ├── db-schemas.js                    PostgreSQL params + hyperscaler/trial defaults
     │   └── index.js
     ├── ui/                               shared React renderer (no bundler)
-    │   ├── app.jsx                         <App/> wizard state machine
-    │   ├── screens.jsx                     per-step screens
+    │   ├── app.jsx                         <App/> wizard state machine (deploy/update/connect/xsuaa)
+    │   ├── screens/                         one file per wizard step group (screen-*.jsx)
     │   ├── components.jsx                  shared primitives + frameless chrome
     │   ├── mode.js                         window.figafModeFlags (isHosted + features)
     │   ├── styles.css, electron-app.css
     │   ├── index.html                      Electron renderer shell
     │   └── figaf-logo.png
+    ├── manager-approuter/                v2 @sap/approuter pushed in front of figaf-manager
+    │   ├── server.js                        maintenance gate + approuter bootstrap
+    │   └── maintenance.html
     └── deploy-templates/                 BTP CF deployment templates
         ├── manifest.yml                    approuter + figaf-app
         ├── vars.yml                        rewritten at runtime
@@ -274,9 +330,9 @@ paths persisted to `cliPaths.json`. PATH is never modified.
 
 ## Roadmap
 
-- **Connect to Integration Suite** — the wizard already exposes the choice, but
-  the flow is a placeholder. Will allow linking an existing Figaf deployment to
-  an SAP Integration Suite tenant for tracking and testing.
+- **Connect to Integration Suite — remaining IdP modes.** The flow is built and
+  the custom SAML IdP path is complete; the **IAS**, **S-user**, and **passport**
+  authentication modes are still stubs (`screen-connect-idp-{ias,suser,passport}.jsx`).
 - **PI/PO connectivity** — `figaf-connectivity` and `figaf-destination`
   services are reserved (commented out) in
   [packages/deploy-templates/manifest.yml](packages/deploy-templates/manifest.yml)

@@ -23,6 +23,8 @@ Thumbs.db
 .vscode/
 .claude/
 
+graphify-out/
+
 # Documentation and ai generated content
 docs/
 
