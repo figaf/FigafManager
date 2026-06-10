@@ -39,6 +39,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     const offCfSpaceChoice = api.on("cf:spaceChoice", (p) => setSpaceChoice(p));
 
     const offGaChoice = api.on("btp:gaChoice", (p) => {
+      setSubaccountChoice(null);
       setGaChoice(p);
     });
     const offSubChoice = api.on("btp:subaccountChoice", (p) => {

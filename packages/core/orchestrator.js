@@ -948,6 +948,8 @@ function createOrchestrator({ host, send, audit }) {
       state.subaccountWaitingForChoice = false;
       state.gaTree = null;
       state.globalAccountName = null;
+      state.globalAccountGuid = null;
+      state.licenseType = null;
       return { ok: true };
     },
 
