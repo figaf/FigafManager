@@ -179,6 +179,10 @@ test("btp:listGlobalAccounts with a single GA auto-selects it (no gaChoice, logg
 
   assert.ok(!send.events.some((e) => e.channel === "btp:gaChoice"), "no gaChoice for a single GA");
   assert.ok(send.events.some((e) => e.channel === "btp:loggedIn"), "loggedIn emitted via auto-pick");
+  const loggedIn = send.events.find((e) => e.channel === "btp:loggedIn");
+  assert.ok(loggedIn.payload.ok, "loggedIn payload is ok");
+  assert.equal(loggedIn.payload.subdomain, "onlyga", "subdomain carried from gaInfo");
+  assert.equal(loggedIn.payload.landscape, "cf-us10", "landscape carried from the env probe");
 });
 
 test("btp:selectGlobalAccount on a GA with no CF subaccount re-opens the GA picker", async () => {
@@ -198,4 +202,5 @@ test("btp:selectGlobalAccount on a GA with no CF subaccount re-opens the GA pick
   const after = send.events.filter((e) => e.channel === "btp:gaChoice").length;
   assert.ok(after > before, "GA picker re-emitted when the GA has no CF subaccount");
   assert.ok(!send.events.some((e) => e.channel === "btp:subaccountChoice"), "no subaccount picker for a CF-less GA");
+  assert.ok(!send.events.some((e) => e.channel === "btp:loggedIn"), "no loggedIn for a CF-less multi-GA");
 });

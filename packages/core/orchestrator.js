@@ -903,6 +903,11 @@ function createOrchestrator({ host, send, audit }) {
       state.subaccountList = null;
       state.subaccountWaitingForChoice = false;
       state.provider = null;
+      // Clear prior-GA metadata up front so a failed `get` below can't leak a
+      // stale subdomain/guid/license from a previously-selected global account.
+      state.globalAccountSubdomain = null;
+      state.globalAccountGuid = null;
+      state.licenseType = null;
 
       // Authoritative GA metadata (subdomain / guid / license) from JSON — the
       // current target is now the chosen GA.
@@ -920,6 +925,8 @@ function createOrchestrator({ host, send, audit }) {
         } catch (e) {
           log("btp", "warn", `Could not parse GA info: ${e.message}`);
         }
+      } else {
+        log("btp", "warn", `get accounts/global-account failed (code ${gaInfo.code}); subdomain/guid will be null`);
       }
 
       const env = await handlers["btp:listEnvInstances"]();
