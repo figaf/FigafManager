@@ -889,22 +889,56 @@ function createOrchestrator({ host, send, audit }) {
       return { ok: true, choicePending: true };
     },
 
-    async "btp:selectGlobalAccount"({ subdomain }) {
-      const r = await run(resolveBtp(), ["target", "--global-account", subdomain], { source: "btp" });
-      if (r.code !== 0) {
-        send("btp:loggedIn", { ok: false, error: r.stderr || "Failed to target global account" });
-        return { ok: false, error: r.stderr || "Failed to target global account" };
+    async "btp:selectGlobalAccount"({ index }) {
+      const ga = (state.gaTree || []).find((g) => g.index === Number(index));
+      if (!ga) return { ok: false, error: "Unknown global account index" };
+
+      const { code } = await runTargetHierarchy(Number(index));
+      if (code !== 0) {
+        send("btp:loginFailed", { code });
+        return { ok: false, error: "Failed to target global account" };
       }
-      state.globalAccountSubdomain = subdomain;
+      state.globalAccountName = ga.name;
       // GA switch invalidates the previous subaccount enumeration.
       state.subaccountList = null;
       state.subaccountWaitingForChoice = false;
       state.provider = null;
-      const env = await handlers["btp:listEnvInstances"]();
-      if (!env.choicePending) {
-        send("btp:loggedIn", { ...env, subdomain });
+
+      // Authoritative GA metadata (subdomain / guid / license) from JSON — the
+      // current target is now the chosen GA.
+      const gaInfo = await run(resolveBtp(), ["--format", "json", "get", "accounts/global-account"], { source: "btp" });
+      if (gaInfo.code === 0) {
+        try {
+          const js = gaInfo.stdout.indexOf("{");
+          if (js >= 0) {
+            const data = JSON.parse(gaInfo.stdout.slice(js));
+            state.globalAccountSubdomain = data.subdomain || null;
+            state.globalAccountGuid = data.guid || null;
+            state.licenseType = data.licenseType || null;
+            log("btp", "line", `Global account subdomain: ${state.globalAccountSubdomain}`);
+          }
+        } catch (e) {
+          log("btp", "warn", `Could not parse GA info: ${e.message}`);
+        }
       }
-      return { ok: true };
+
+      const env = await handlers["btp:listEnvInstances"]();
+      if (env.ok === false) {
+        // e.g. this GA has no Cloud-Foundry-enabled subaccount. Surface the
+        // reason, and if there are other GAs, drop back to the GA picker so the
+        // user can choose a different one rather than restarting the whole login.
+        log("btp", "warn", env.error || "No Cloud Foundry environment in this global account");
+        if ((state.gaTree || []).length > 1) {
+          send("btp:gaChoice", { accounts: state.gaTree });
+        } else {
+          send("btp:loggedIn", { ...env, subdomain: state.globalAccountSubdomain });
+        }
+        return env;
+      }
+      if (!env.choicePending) {
+        send("btp:loggedIn", { ...env, subdomain: state.globalAccountSubdomain });
+      }
+      return env;
     },
 
     async "btp:logout"() {
@@ -1005,6 +1039,8 @@ function createOrchestrator({ host, send, audit }) {
 
       state.subaccountWaitingForChoice = true;
       send("btp:subaccountChoice", {
+        globalAccountName: state.globalAccountName || null,
+        globalAccountSubdomain: state.globalAccountSubdomain || null,
         subaccounts: enumerated.map((e) => ({
           guid: e.guid,
           displayName: e.displayName,

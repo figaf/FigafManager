@@ -115,3 +115,87 @@ test("btp:listGlobalAccounts parses the tree and emits btp:gaChoice", async () =
   assert.equal(targetCall.stdinData.join("").trim(), "6");
   assert.deepEqual(targetCall.args, ["target", "--hierarchy", "true"]);
 });
+
+test("btp:selectGlobalAccount targets by index and emits subaccountChoice with the GA name", async () => {
+  // listGlobalAccounts first (populates state.gaTree), then select GA index 6.
+  const twoSubs = JSON.stringify({ value: [
+    { guid: "SUB-A", displayName: "demotest", region: "us10" },
+    { guid: "SUB-B", displayName: "figafpartner", region: "eu10" },
+  ] });
+  responses.push(
+    { match: (a) => a[0] === "target", interactive: true, stdout: SAMPLE_TREE, code: 0 }, // listGlobalAccounts (stay on 6)
+    { match: (a) => a[0] === "target", interactive: true, stdout: SAMPLE_TREE, code: 0 }, // selectGlobalAccount (write 6)
+    { match: (a) => a.includes("accounts/global-account"), stdout: JSON.stringify({ subdomain: "figafaps-02", guid: "GA-6", licenseType: "Subscription" }), code: 0 },
+    { match: (a) => a.includes("accounts/subaccount"), stdout: twoSubs, code: 0 },
+    { match: (a) => a.includes("accounts/environment-instance"), stdout: JSON.stringify({ environmentInstances: [{ environmentType: "cloudfoundry", landscapeLabel: "cf-us10", subaccountGUID: "SUB-A", labels: '{"Org Name":"org-a"}' }] }), code: 0 },
+    { match: (a) => a.includes("accounts/environment-instance"), stdout: JSON.stringify({ environmentInstances: [{ environmentType: "cloudfoundry", landscapeLabel: "cf-eu10", subaccountGUID: "SUB-B", labels: '{"Org Name":"org-b"}' }] }), code: 0 },
+  );
+  const send = makeSend();
+  const orch = createOrchestrator({ host: makeHost(), send: send.fn });
+  await orch.handlers["btp:listGlobalAccounts"]();
+  await orch.handlers["btp:selectGlobalAccount"]({ index: 6 });
+  await settle();
+
+  // The second target spawn received "6" (disambiguating the two Figaf ApS GAs).
+  const targetCalls = spawnCalls.filter((c) => c.args[0] === "target");
+  assert.equal(targetCalls.length, 2);
+  assert.equal(targetCalls[1].stdinData.join("").trim(), "6");
+
+  const sub = send.events.find((e) => e.channel === "btp:subaccountChoice");
+  assert.ok(sub, "subaccountChoice emitted (2 CF subaccounts)");
+  assert.equal(sub.payload.globalAccountName, "Figaf ApS");
+  assert.equal(sub.payload.subaccounts.length, 2);
+  assert.ok(!send.events.some((e) => e.channel === "btp:loggedIn"), "no loggedIn while a subaccount choice is pending");
+});
+
+test("btp:selectGlobalAccount rejects an unknown index without spawning target", async () => {
+  const send = makeSend();
+  const orch = createOrchestrator({ host: makeHost(), send: send.fn });
+  const r = await orch.handlers["btp:selectGlobalAccount"]({ index: 999 });
+  assert.equal(r.ok, false);
+  assert.ok(!spawnCalls.some((c) => c.args[0] === "target"), "no target spawn for unknown GA");
+});
+
+test("btp:listGlobalAccounts with a single GA auto-selects it (no gaChoice, loggedIn)", async () => {
+  const oneGa = [
+    "Choose global account, subaccount, or directory:",
+    "   [1] OnlyGA (global account)",
+    "   [2]  └─ dev (subaccount)",
+    "Choose, or hit ENTER to stay in 'OnlyGA' [1]> ",
+  ].join("\n");
+  responses.push(
+    { match: (a) => a[0] === "target", interactive: true, stdout: oneGa, code: 0 }, // listGlobalAccounts (stay on 1)
+    { match: (a) => a[0] === "target" && a.includes("--hierarchy"), interactive: true, stdout: oneGa, code: 0 }, // selectGlobalAccount (write 1)
+    { match: (a) => a.includes("accounts/global-account"), stdout: JSON.stringify({ subdomain: "onlyga", guid: "GA-1", licenseType: "TRIAL" }), code: 0 },
+    { match: (a) => a.includes("accounts/subaccount"), stdout: JSON.stringify({ value: [{ guid: "SUB-1", displayName: "dev", region: "us10" }] }), code: 0 },
+    { match: (a) => a.includes("accounts/environment-instance"), stdout: JSON.stringify({ environmentInstances: [{ environmentType: "cloudfoundry", landscapeLabel: "cf-us10", subaccountGUID: "SUB-1", labels: '{"Org Name":"org-dev"}' }] }), code: 0 },
+    // applySubaccountSelection runs `btp target --subaccount SUB-1`; the default
+    // (unmatched, non-interactive, code 0) response covers it.
+  );
+  const send = makeSend();
+  const orch = createOrchestrator({ host: makeHost(), send: send.fn });
+  await orch.handlers["btp:listGlobalAccounts"]();
+  await settle();
+
+  assert.ok(!send.events.some((e) => e.channel === "btp:gaChoice"), "no gaChoice for a single GA");
+  assert.ok(send.events.some((e) => e.channel === "btp:loggedIn"), "loggedIn emitted via auto-pick");
+});
+
+test("btp:selectGlobalAccount on a GA with no CF subaccount re-opens the GA picker", async () => {
+  responses.push(
+    { match: (a) => a[0] === "target", interactive: true, stdout: SAMPLE_TREE, code: 0 }, // listGlobalAccounts
+    { match: (a) => a[0] === "target" && a.includes("--hierarchy"), interactive: true, stdout: SAMPLE_TREE, code: 0 }, // select GA 6
+    { match: (a) => a.includes("accounts/global-account"), stdout: JSON.stringify({ subdomain: "figafaps-02", guid: "GA-6" }), code: 0 },
+    { match: (a) => a.includes("accounts/subaccount"), stdout: JSON.stringify({ value: [{ guid: "SUB-A", displayName: "demotest", region: "us10" }] }), code: 0 },
+    { match: (a) => a.includes("accounts/environment-instance"), stdout: JSON.stringify({ environmentInstances: [] }), code: 0 }, // no CF env
+  );
+  const send = makeSend();
+  const orch = createOrchestrator({ host: makeHost(), send: send.fn });
+  await orch.handlers["btp:listGlobalAccounts"]();
+  const before = send.events.filter((e) => e.channel === "btp:gaChoice").length;
+  await orch.handlers["btp:selectGlobalAccount"]({ index: 6 });
+  await settle();
+  const after = send.events.filter((e) => e.channel === "btp:gaChoice").length;
+  assert.ok(after > before, "GA picker re-emitted when the GA has no CF subaccount");
+  assert.ok(!send.events.some((e) => e.channel === "btp:subaccountChoice"), "no subaccount picker for a CF-less GA");
+});
