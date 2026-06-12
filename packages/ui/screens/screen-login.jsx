@@ -12,6 +12,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
   const [subaccountChoice, setSubaccountChoice] = React.useState(null);
   const [orgChoice, setOrgChoice] = React.useState(null);
   const [spaceChoice, setSpaceChoice] = React.useState(null);
+  const [cfSwitchingOrg, setCfSwitchingOrg] = React.useState(false);
 
   const btpLoggedIn = login.btpStatus === "done";
   const cfLoggedIn = login.cfStatus === "done";
@@ -36,6 +37,12 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     });
     const offCfOrgChoice = api.on("cf:orgChoice", (p) => setOrgChoice(p));
     const offCfSpaceChoice = api.on("cf:spaceChoice", (p) => setSpaceChoice(p));
+    const offSwitchDone = api.on("cf:switchOrgDone", ({ org, space }) => {
+      setCfSwitchingOrg(false);
+      setOrgChoice(null);
+      setSpaceChoice(null);
+      setLogin(l => ({ ...l, org, space }));
+    });
 
     const offGaChoice = api.on("btp:gaChoice", (p) => {
       setSubaccountChoice(null);
@@ -76,6 +83,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
       offCf2 && offCf2();
       offCfOrgChoice && offCfOrgChoice();
       offCfSpaceChoice && offCfSpaceChoice();
+      offSwitchDone && offSwitchDone();
       offGaChoice && offGaChoice();
       offSubChoice && offSubChoice();
       offBtpOk && offBtpOk();
@@ -176,10 +184,37 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     });
   }
 
+  async function switchCfOrg() {
+    const api = fg();
+    if (!api) return;
+    setOrgChoice(null);
+    setSpaceChoice(null);
+    setCfSwitchingOrg(true);
+    const r = await api.cf.switchOrgStart();
+    if (r && r.ok === false) {
+      appendLog([{ type: "err", text: r.error || "Failed to list orgs" }]);
+      setCfSwitchingOrg(false);
+    }
+  }
+
+  function cancelCfSwitch() {
+    setCfSwitchingOrg(false);
+    setOrgChoice(null);
+    setSpaceChoice(null);
+  }
+
   async function selectCfOrg(index) {
     const api = fg();
     if (!api) return;
     setOrgChoice(null);
+    if (cfSwitchingOrg) {
+      const r = await api.cf.switchSelectOrg(index);
+      if (r && r.ok === false) {
+        appendLog([{ type: "err", text: r.error || "Failed to select org" }]);
+        setCfSwitchingOrg(false);
+      }
+      return;
+    }
     const r = await api.cf.selectOrg(index);
     if (r && r.ok === false) {
       appendLog([{ type: "err", text: r.error || "Failed to select org" }]);
@@ -191,6 +226,14 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     const api = fg();
     if (!api) return;
     setSpaceChoice(null);
+    if (cfSwitchingOrg) {
+      const r = await api.cf.switchSelectSpace(index);
+      if (r && r.ok === false) {
+        appendLog([{ type: "err", text: r.error || "Failed to select space" }]);
+        setCfSwitchingOrg(false);
+      }
+      return;
+    }
     const r = await api.cf.selectSpace(index);
     if (r && r.ok === false) {
       appendLog([{ type: "err", text: r.error || "Failed to select space" }]);
@@ -450,9 +493,14 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                 Sign out
               </button>
             )}
+            {cfLoggedIn && !cfSwitchingOrg && (
+              <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={switchCfOrg}>
+                <Ico.Refresh /> Switch Org
+              </button>
+            )}
           </div>
 
-          {btpLoggedIn && !cfLoggedIn && (
+          {btpLoggedIn && !cfLoggedIn && !cfSwitchingOrg && (
             <div className="slide-in">
               {!login.passcodeRequested ? (
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -510,7 +558,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
             </div>
           )}
 
-          {!cfLoggedIn && orgChoice && orgChoice.orgs && orgChoice.orgs.length > 0 && (
+          {(!cfLoggedIn || cfSwitchingOrg) && orgChoice && orgChoice.orgs && orgChoice.orgs.length > 0 && (
             <ScrollReveal>
             <div className="slide-in" style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 12 }}>
               <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 4 }}>
@@ -542,11 +590,18 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                   </button>
                 ))}
               </div>
+              {cfSwitchingOrg && (
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+                  <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={cancelCfSwitch}>
+                    Cancel
+                  </button>
+                </div>
+              )}
             </div>
             </ScrollReveal>
           )}
 
-          {!cfLoggedIn && spaceChoice && spaceChoice.spaces && spaceChoice.spaces.length > 0 && (
+          {(!cfLoggedIn || cfSwitchingOrg) && spaceChoice && spaceChoice.spaces && spaceChoice.spaces.length > 0 && (
             <ScrollReveal>
             <div className="slide-in" style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 12 }}>
               <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginBottom: 4 }}>
@@ -573,6 +628,13 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                   </button>
                 ))}
               </div>
+              {cfSwitchingOrg && (
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+                  <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={cancelCfSwitch}>
+                    Cancel
+                  </button>
+                </div>
+              )}
             </div>
             </ScrollReveal>
           )}
