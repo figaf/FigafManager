@@ -213,7 +213,7 @@ function StepperRail({ steps, current, maxReached }) {
       </div>
 
       <div className="rail-foot">
-        <span>v2403-btp</span>
+        <span>v2606</span>
         <span>figaf.com</span>
       </div>
     </aside>

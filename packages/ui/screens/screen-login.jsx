@@ -278,7 +278,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
             {btpLoggedIn && <span className="pill green"><Ico.Check /> Connected</span>}
             {btpLoggedIn && (
               <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={switchGlobalAccount}>
-                <Ico.Refresh /> Switch GA
+                <Ico.Refresh /> Switch Account
               </button>
             )}
             {btpLoggedIn && (
