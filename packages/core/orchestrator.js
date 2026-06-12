@@ -874,6 +874,9 @@ function createOrchestrator({ host, send, audit }) {
       state.subaccountWaitingForChoice = false;
       state.gaTree = null;
       state.globalAccountName = null;
+      state.cfSwitchOrgList = null;
+      state.cfSwitchSelectedOrg = null;
+      state.cfSwitchSpaceList = null;
       return { ok: true };
     },
 
@@ -970,6 +973,9 @@ function createOrchestrator({ host, send, audit }) {
       state.globalAccountName = null;
       state.globalAccountGuid = null;
       state.licenseType = null;
+      state.cfSwitchOrgList = null;
+      state.cfSwitchSelectedOrg = null;
+      state.cfSwitchSpaceList = null;
       return { ok: true };
     },
 
@@ -1248,6 +1254,9 @@ function createOrchestrator({ host, send, audit }) {
       state.org = null;
       state.space = null;
       state.user = null;
+      state.cfSwitchOrgList = null;
+      state.cfSwitchSelectedOrg = null;
+      state.cfSwitchSpaceList = null;
       return { ok: true };
     },
 

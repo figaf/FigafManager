@@ -200,10 +200,14 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     }
   }
 
-  function cancelCfSwitch() {
+  async function cancelCfSwitch() {
+    const api = fg();
+    if (!api) return;
     setCfSwitchingOrg(false);
     setOrgChoice(null);
     setSpaceChoice(null);
+    const t = await api.cf.targetOrgSpace();
+    if (t && t.ok) setLogin(l => ({ ...l, org: t.org || l.org, space: t.space || l.space }));
   }
 
   async function selectCfOrg(index) {
