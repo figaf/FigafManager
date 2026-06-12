@@ -1288,7 +1288,17 @@ function createOrchestrator({ host, send, audit }) {
       if (t.code !== 0) return { ok: false, error: t.stderr || "cf target -o failed" };
       state.cfSwitchSelectedOrg = orgName;
       const sr = await run(resolveCf(), ["spaces"], { source: "cf" });
-      if (sr.code !== 0) return { ok: false, error: sr.stderr || "cf spaces failed" };
+      if (sr.code !== 0) {
+        const sync = await run(resolveCf(), ["target"], { source: "cf" });
+        if (sync.code === 0) {
+          state.org   = /org:\s+(\S+)/i.exec(sync.stdout)?.[1]   || state.org;
+          state.space = /space:\s+(\S+)/i.exec(sync.stdout)?.[1] || null;
+        } else {
+          state.org   = null;
+          state.space = null;
+        }
+        return { ok: false, error: sr.stderr || "cf spaces failed" };
+      }
       const spaces = parseCfList(sr.stdout);
       if (spaces.length === 0) return { ok: false, error: "No spaces found in org" };
       state.cfSwitchSpaceList = spaces;

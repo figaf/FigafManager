@@ -51,6 +51,10 @@ Binary resolved via `host.resolveBinary("cf")`.
 | 2 | `cf login -a https://api.<landscape>.hana.ondemand.com --sso` | `cf:loginStart` | both | Long-lived spawn; parses "Select an org / space" picker output |
 | 3 | `cf logout` | `btp:cancelLogin`, `btp:logout`, `cf:logout` | both | |
 | 4 | `cf target` | `cf:targetOrgSpace` | both | Reads org/space/user from output |
+| 5 | `cf orgs` | `cf:switchOrgStart` | both | Enumerates all orgs the authenticated user can see; populates `state.cfSwitchOrgList` and emits `cf:orgChoice` |
+| 6 | `cf target -o <orgName>` | `cf:switchSelectOrg` | both | Retargets CF CLI to the selected org; precedes `cf spaces` call |
+| 7 | `cf spaces` | `cf:switchSelectOrg` | both | Lists spaces in the newly targeted org; if this fails, `cf target` (no args) is run to re-sync state |
+| 8 | `cf target -o <orgName> -s <spaceName>` | `cf:switchSelectSpace` | both | Commits the chosen org+space as the active CF target; updates `state.org` / `state.space` and emits `cf:switchOrgDone` |
 
 ### Discovery
 
@@ -168,7 +172,7 @@ All runtime calls go through `https.get` (Node built-in). No third-party HTTP li
 | Category | Count | Scope |
 |----------|-------|-------|
 | BTP CLI commands | 21 | both / cloud |
-| CF CLI commands (direct) | 32 | both / cloud |
+| CF CLI commands (direct) | 36 | both / cloud |
 | CF v3 API (`cf curl`) | 7 | cloud only |
 | Other process spawns (system) | 8 | desktop / cloud / build |
 | HTTPS fetches (runtime) | 7 | both / cloud / desktop |
