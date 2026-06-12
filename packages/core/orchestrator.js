@@ -103,6 +103,9 @@ function createOrchestrator({ host, send, audit }) {
     subaccountSubdomain: null,
     globalAccountGuid: null,
     licenseType: null,
+    cfSwitchOrgList: null,
+    cfSwitchSelectedOrg: null,
+    cfSwitchSpaceList: null,
   };
 
   // SAP BTP region → hyperscaler mapping. Suffix tells you the provider for
@@ -526,6 +529,23 @@ function createOrchestrator({ host, send, audit }) {
         resolve({ code, parsed });
       });
     });
+  }
+
+  // Parse `cf orgs` / `cf spaces` output into a plain string array.
+  // Skips: "Getting X as Y..." header, "OK" (CLI v7), "name" (CLI v8 header),
+  // separator lines (---), and blank lines. Every remaining non-empty line is an entry.
+  function parseCfList(stdout) {
+    return stdout
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(
+        (l) =>
+          l &&
+          !/^getting /i.test(l) &&
+          l !== "OK" &&
+          l.toLowerCase() !== "name" &&
+          !/^-+$/.test(l)
+      );
   }
 
   // ─── handlers ─────────────────────────────────────────────────────────────
@@ -1241,6 +1261,57 @@ function createOrchestrator({ host, send, audit }) {
       state.space = space || state.space;
       state.user  = user  || state.user;
       return { ok: true, org, space, user };
+    },
+
+    async "cf:switchOrgStart"() {
+      const r = await run(resolveCf(), ["orgs"], { source: "cf" });
+      if (r.code !== 0) return { ok: false, error: r.stderr || "cf orgs failed" };
+      const orgs = parseCfList(r.stdout);
+      if (orgs.length === 0) return { ok: false, error: "No orgs found" };
+      state.cfSwitchOrgList = orgs;
+      state.cfSwitchSelectedOrg = null;
+      state.cfSwitchSpaceList = null;
+      send("cf:orgChoice", {
+        orgs: orgs.map((name, i) => ({
+          index: i + 1,
+          name,
+          recommended: !!(state.org && name === state.org),
+        })),
+      });
+      return { ok: true };
+    },
+
+    async "cf:switchSelectOrg"({ index }) {
+      const orgName = (state.cfSwitchOrgList || [])[Number(index) - 1];
+      if (!orgName) return { ok: false, error: "Unknown org index" };
+      const t = await run(resolveCf(), ["target", "-o", orgName], { source: "cf" });
+      if (t.code !== 0) return { ok: false, error: t.stderr || "cf target -o failed" };
+      state.cfSwitchSelectedOrg = orgName;
+      const sr = await run(resolveCf(), ["spaces"], { source: "cf" });
+      if (sr.code !== 0) return { ok: false, error: sr.stderr || "cf spaces failed" };
+      const spaces = parseCfList(sr.stdout);
+      if (spaces.length === 0) return { ok: false, error: "No spaces found in org" };
+      state.cfSwitchSpaceList = spaces;
+      send("cf:spaceChoice", {
+        spaces: spaces.map((name, i) => ({ index: i + 1, name })),
+      });
+      return { ok: true };
+    },
+
+    async "cf:switchSelectSpace"({ index }) {
+      const org = state.cfSwitchSelectedOrg;
+      const spaceName = (state.cfSwitchSpaceList || [])[Number(index) - 1];
+      if (!org) return { ok: false, error: "No org selected for switch" };
+      if (!spaceName) return { ok: false, error: "Unknown space index" };
+      const t = await run(resolveCf(), ["target", "-o", org, "-s", spaceName], { source: "cf" });
+      if (t.code !== 0) return { ok: false, error: t.stderr || "cf target -o -s failed" };
+      state.org = org;
+      state.space = spaceName;
+      state.cfSwitchOrgList = null;
+      state.cfSwitchSelectedOrg = null;
+      state.cfSwitchSpaceList = null;
+      send("cf:switchOrgDone", { org, space: spaceName });
+      return { ok: true };
     },
 
     async "cf:domains"() {
