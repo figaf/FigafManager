@@ -24,6 +24,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     const offCf1 = api.on("cf:loggedIn", () => {
       setOrgChoice(null);
       setSpaceChoice(null);
+      setCfSwitchingOrg(false);
       setLogin({ cfStatus: "done" });
       (async () => {
         const t = await api.cf.targetOrgSpace();
@@ -33,6 +34,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     const offCf2 = api.on("cf:loginFailed", () => {
       setOrgChoice(null);
       setSpaceChoice(null);
+      setCfSwitchingOrg(false);
       setLogin({ cfStatus: "error" });
     });
     const offCfOrgChoice = api.on("cf:orgChoice", (p) => setOrgChoice(p));
@@ -175,6 +177,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     const api = fg();
     if (!api) return;
     await api.cf.logout();
+    setCfSwitchingOrg(false);
     setOrgChoice(null);
     setSpaceChoice(null);
     setLogin({
