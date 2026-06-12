@@ -8,6 +8,7 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "@sap/approuter": "^16.0.0"
+    "@sap/approuter": "^22.0.1",
+    "electron": "42.4.0"
   }
 }

@@ -14,6 +14,7 @@
     "build:manager": "npm --workspace apps/figaf-manager run build-zip"
   },
   "dependencies": {
-    "@sap/approuter": "^16.9.0"
+    "@sap/approuter": "^22.0.1",
+    "electron": "42.4.0"
   }
 }

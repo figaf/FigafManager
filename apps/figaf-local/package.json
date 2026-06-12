@@ -13,11 +13,11 @@
   "license": "UNLICENSED",
   "dependencies": {
     "@figaf/core": "*",
-    "@figaf/ui": "*",
-    "@figaf/deploy-templates": "*"
+    "@figaf/deploy-templates": "*",
+    "@figaf/ui": "*"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
+    "electron": "^42.4.0",
     "electron-builder": "^26.8.1"
   },
   "build": {
