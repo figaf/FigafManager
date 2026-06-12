@@ -3,7 +3,7 @@
 # The wizard is gated by cf login --sso (passcode) rather than XSUAA.
 applications:
   - name: figaf-manager
-    memory: 512M
+    memory: 128M
     disk_quota: 512M
     instances: 1
     buildpack: nodejs_buildpack

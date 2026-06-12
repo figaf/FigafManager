@@ -221,10 +221,9 @@ function StepperRail({ steps, current, maxReached }) {
 }
 
 // ───────────── Wizard footer (Back / Next) ─────────────
-function WizardFooter({ onBack, onNext, nextLabel = "Next", backLabel = "Back", nextDisabled, showBack = true, showCancel = true, children }) {
+function WizardFooter({ onBack, onNext, nextLabel = "Next", backLabel = "Back", nextDisabled, showBack = true, children }) {
   return (
     <div className="pane-foot">
-      {showCancel && <button className="btn btn-ghost">Cancel</button>}
       <div className="spacer" />
       {children}
       {showBack && (

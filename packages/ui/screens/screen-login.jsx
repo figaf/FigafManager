@@ -43,7 +43,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
       setCfSwitchingOrg(false);
       setOrgChoice(null);
       setSpaceChoice(null);
-      setLogin(l => ({ ...l, org, space }));
+      setLogin({ org, space });
     });
 
     const offGaChoice = api.on("btp:gaChoice", (p) => {
