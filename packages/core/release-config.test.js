@@ -50,12 +50,12 @@ test("compareSemver: malformed input is NaN-safe", () => {
   assert.equal(compareSemver(null, undefined), 0);
 });
 
-test("RELEASE_REPO defaults to the public Figaf release repo", () => {
+test("RELEASE_REPO defaults to the figaf code repo (single-repo releases)", () => {
   const { RELEASE_REPO, RELEASE_LATEST_URL } = loadFresh(null);
-  assert.equal(RELEASE_REPO, "afl-figaf/figaf-manager-release");
+  assert.equal(RELEASE_REPO, "figaf/FigafManager");
   assert.equal(
     RELEASE_LATEST_URL,
-    "https://api.github.com/repos/afl-figaf/figaf-manager-release/releases/latest"
+    "https://api.github.com/repos/figaf/FigafManager/releases/latest"
   );
 });
 

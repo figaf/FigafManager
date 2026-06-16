@@ -1,0 +1,35 @@
+# Continuous integration — runs the unit test suite on every push to the
+# default branch and every pull request. Keeps the build-status badge in
+# README.md honest. Does NOT touch any real BTP/CF integration; the tests
+# are pure-logic (parsers, semver, suppression rules).
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `npm ci` installs from package-lock.json for a reproducible tree.
+      # Falls back to `npm install` if no lockfile is committed yet.
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Run unit tests
+        run: npm test

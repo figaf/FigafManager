@@ -1,0 +1,109 @@
+# Release automation. Triggered when a Release is *published* on
+# github.com/figaf/FigafManager (Releases tab → Draft a new release → Publish).
+#
+# Flow:
+#   verify         (ubuntu)  — tag must equal both app package.json versions; run tests.
+#   build-manager  (ubuntu)  — build figaf-manager-app-<v>.zip, attach to the release.
+#   build-desktop  (windows) — build Figaf-Installer-Setup-<v>-x64.exe, attach to the release.
+#
+# Single-repo: artifacts attach to this same repo's release via the built-in
+# GITHUB_TOKEN (no PAT). `permissions: contents: write` grants the upload right.
+# The two build jobs run in parallel after verify and each attach their own
+# artifact, so finish order doesn't matter.
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The tag (e.g. v1.1.0) must match BOTH app versions, because those
+      # drive the artifact filenames AND the self-update version comparison
+      # (cloud reads apps/figaf-manager/package.json; desktop uses electron's
+      # app.getVersion() = apps/figaf-local/package.json).
+      - name: Verify tag matches app versions
+        run: |
+          VERSION="${TAG#v}"
+          MGR=$(node -p "require('./apps/figaf-manager/package.json').version")
+          LOC=$(node -p "require('./apps/figaf-local/package.json').version")
+          echo "tag=$VERSION  manager=$MGR  local=$LOC"
+          if [ "$VERSION" != "$MGR" ] || [ "$VERSION" != "$LOC" ]; then
+            echo "::error::Tag $TAG (=$VERSION) must match apps/figaf-manager ($MGR) and apps/figaf-local ($LOC) package.json versions"
+            exit 1
+          fi
+
+      - name: Run unit tests
+        run: npm test
+
+  build-manager:
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # build-zip.js downloads the Linux btp + cf binaries, stages a
+      # self-contained tree, npm-installs prod deps, and zips. All network
+      # targets are public (tools.hana.ondemand.com, packages.cloudfoundry.org).
+      - name: Build cloud zip
+        run: npm run build:manager
+
+      - name: Attach cloud zip to release
+        run: |
+          VERSION="${TAG#v}"
+          gh release upload "$TAG" "apps/figaf-manager/dist/figaf-manager-app-$VERSION.zip" --clobber
+
+  build-desktop:
+    needs: verify
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        shell: bash
+        run: npm ci
+
+      # electron-builder NSIS target. Unsigned (no certificate configured) —
+      # users get a SmartScreen prompt on first run, which is expected.
+      - name: Build Windows installer
+        run: npm run build:local
+
+      - name: Attach installer to release
+        shell: bash
+        run: |
+          VERSION="${TAG#v}"
+          gh release upload "$TAG" "apps/figaf-local/dist/Figaf-Installer-Setup-$VERSION-x64.exe" --clobber

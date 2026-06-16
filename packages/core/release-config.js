@@ -8,7 +8,7 @@
 //   Figaf-Installer-Setup-<semver>-x64.exe    (Windows NSIS installer)
 // Plus electron-updater metadata (latest.yml, blockmap) — not parsed here.
 
-const RELEASE_REPO = process.env.FIGAF_RELEASE_REPO || "afl-figaf/figaf-manager-release";
+const RELEASE_REPO = process.env.FIGAF_RELEASE_REPO || "figaf/FigafManager";
 
 const RELEASE_LATEST_URL = `https://api.github.com/repos/${RELEASE_REPO}/releases/latest`;
 

@@ -1,5 +1,7 @@
 # Figaf Installer
 
+[![CI](https://github.com/figaf/FigafManager/actions/workflows/ci.yml/badge.svg)](https://github.com/figaf/FigafManager/actions/workflows/ci.yml)
+
 A wizard that deploys the [Figaf Tool](https://figaf.com) to your **SAP BTP
 Cloud Foundry** subaccount in a few clicks — no manual CLI work, no PATH
 gymnastics.

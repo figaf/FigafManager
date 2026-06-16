@@ -11,7 +11,8 @@
     "start:local": "npm --workspace apps/figaf-local start",
     "start:manager": "npm --workspace apps/figaf-manager start",
     "build:local": "npm --workspace apps/figaf-local run build:win",
-    "build:manager": "npm --workspace apps/figaf-manager run build-zip"
+    "build:manager": "npm --workspace apps/figaf-manager run build-zip",
+    "test": "node --test \"packages/core/*.test.js\" \"packages/ui/*.test.js\""
   },
   "dependencies": {
     "@sap/approuter": "^22.0.1",
