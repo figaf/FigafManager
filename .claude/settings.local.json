@@ -36,7 +36,19 @@
       "Skill(superpowers:executing-plans)",
       "Skill(superpowers:finishing-a-development-branch)",
       "Bash(echo \"---exit:$?\")",
-      "Bash(not exist *)"
+      "Bash(not exist *)",
+      "Bash(cf target *)",
+      "Bash(cf app *)",
+      "Bash(cf curl *)",
+      "Bash(cf push *)",
+      "Bash(findstr /i \"strategy\")",
+      "PowerShell(Copy-Item *)",
+      "Bash(cf org *)",
+      "Bash(cf quota *)",
+      "Bash(tar --version)",
+      "Bash(tar --force-local -xzf manager-approuter.tar.gz -C manager-approuter)",
+      "Bash(mkdir -p ar)",
+      "Bash(tar --force-local -xzf manager-approuter.tar.gz -C ar)"
     ]
   }
 }

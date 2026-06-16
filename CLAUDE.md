@@ -290,6 +290,19 @@ Both adapters expose the exact same shape; they differ only in implementation.
   For each entry include: the exact command / URL pattern, the IPC handler (or
   script function) it lives in, and the scope (`both` / `desktop` / `cloud` /
   `build`).
+- **Self-update across minor versions — xs-app.json compatibility convention**:
+  the wizard can redeploy itself via `update:pushSelf` (manager) and, when v2
+  XSUAA is active, the sibling `figaf-manager-approuter` via the same flow.
+  Push order is approuter-first then manager, with `--strategy rolling`. The
+  intermediate state during a self-update is therefore *always* "new approuter
+  ↔ old manager" — never the reverse. To keep that transient state safe,
+  **`packages/manager-approuter/xs-app.json` route changes MUST be
+  backwards-compatible across minor versions**: new routes are fine, removing
+  or renaming an existing route is a breaking change and requires a major
+  version bump + an operator-visible banner message warning that sign-in will
+  briefly interrupt. Same rule applies to `packages/deploy-templates/approuter/
+  xs-app.json` for the deployed Figaf Tool's own approuter when that update
+  path lands.
 
 ## Roadmap markers in code
 

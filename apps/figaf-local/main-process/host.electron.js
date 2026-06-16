@@ -50,6 +50,32 @@ function createHost({ getWindow }) {
     isHosted: false,
     getUserDataDir: () => app.getPath("userData"),
 
+    getInstalledVersion: () => app.getVersion(),
+
+    getUpdateStagingDir: () => path.join(app.getPath("temp"), "figaf-update"),
+
+    // Self-redeploy is a hosted-only flow; desktop self-update is a
+    // download-and-relaunch via electron-updater. Returning null causes
+    // update:selfTarget / update:pushSelf to short-circuit cleanly.
+    getDeployTargetForSelf: () => null,
+
+    // Launch the downloaded installer and exit the current app. The new
+    // installer (NSIS) will overwrite the asar and start the new version.
+    // shell.openPath uses the OS file association so an unsigned .exe still
+    // surfaces the SmartScreen warning the operator already accepted once.
+    async launchInstallerAndQuit(installerPath) {
+      try {
+        const err = await shell.openPath(installerPath);
+        if (err) return { ok: false, error: String(err) };
+        // Small delay so the new process is definitely started before we
+        // surrender our own asar/file locks. 500ms is empirical for NSIS.
+        setTimeout(() => { try { app.quit(); } catch {} }, 500);
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e && e.message ? e.message : String(e) };
+      }
+    },
+
     resolveBinary(name) {
       const paths = loadCliPaths();
       return paths[name] || name;

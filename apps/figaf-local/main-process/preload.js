@@ -86,7 +86,17 @@ contextBridge.exposeInMainWorld("figaf", {
   // Update Figaf Tool — hosted-only flow. Handlers gate on host.isHosted and
   // return a safe error in desktop mode; surface is exposed here for shape
   // parity with the cloud client.
+  //
+  // update.checkSelf is the exception: it works in BOTH hosts (it discovers
+  // newer Figaf Installer releases on GitHub). The renderer reads `host` on
+  // the response to decide which CTA to show.
   update: {
+    checkSelf:        () => ipcRenderer.invoke("update:checkSelf"),
+    selfTarget:       () => ipcRenderer.invoke("update:selfTarget"),
+    downloadSelf:     (a) => ipcRenderer.invoke("update:downloadSelf", a || {}),
+    extractSelf:      (a) => ipcRenderer.invoke("update:extractSelf", a || {}),
+    pushSelf:         (a) => ipcRenderer.invoke("update:pushSelf", a || {}),
+    downloadAndInstallDesktop: (a) => ipcRenderer.invoke("update:downloadAndInstallDesktop", a || {}),
     resumeStatus:     () => ipcRenderer.invoke("update:resumeStatus"),
     detectDeployment: (a) => ipcRenderer.invoke("update:detectDeployment", a || {}),
     readCurrentConfig: (a) => ipcRenderer.invoke("update:readCurrentConfig", a || {}),

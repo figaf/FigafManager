@@ -33,6 +33,36 @@
       // re-run the installer; only the cloud manager needs an in-place
       // rolling-update flow.
       updateFigafTool: true,
+      // Self-update (update the wizard itself). On in both hosts; cloud can
+      // disable via FIGAF_DISABLE_SELF_UPDATE=1 in manifest.yml for air-
+      // gapped deployments that can't reach api.github.com.
+      selfUpdateBanner:
+        !(typeof window !== "undefined" && window.figafDisableSelfUpdate === true),
     },
+  };
+
+  // Banner suppression helper — used by <SelfUpdateBanner/> to hide itself
+  // while the operator is mid-flow (deploying, logging in, upgrading XSUAA,
+  // etc). The reason we suppress is operator-experience: interrupting an
+  // active deploy with "hey, update the wizard?" is hostile, and a stale
+  // banner during a 10-minute service-create wait is just noise.
+  //
+  // Add an entry here when introducing a new long-running flow rather than
+  // letting the banner peek through in surprising places.
+  window.figafIsLongRunningFlow = function (ctx, stepId) {
+    if (!ctx) return false;
+    if (ctx.prereqsStarted && (ctx.prereqs || []).some(p => p.status === "pending" || p.status === "running")) return true;
+    if (ctx.login && (ctx.login.btpStatus === "running" || ctx.login.cfStatus === "running")) return true;
+    if (ctx.pushStatus === "running") return true;
+    if (ctx.deployStarted && ctx.pushStatus !== "done" && ctx.pushStatus !== "error" && ctx.pushStatus !== "idle") return true;
+    if (ctx.update && ctx.update.resumeState) return true;
+    if (ctx.selfUpdate && ctx.selfUpdate.preflightOpen) return true;
+    var noisy = {
+      "xsuaa-upgrade": 1, "xsuaa-assign-role": 1,
+      "connect-idp-custom-trust": 1, "connect-idp-custom-assign": 1,
+      "updateProgress": 1,
+    };
+    if (stepId && noisy[stepId]) return true;
+    return false;
   };
 })();

@@ -98,6 +98,11 @@ Binary resolved via `host.resolveBinary("cf")`.
 | 30 | `cf unmap-route <app> <domain> --hostname <hostname>` | `cf:unmapRoute`, `cf:restage` | cloud | |
 | 31 | `cf set-env figaf-manager-approuter destinations <json>` | `cf:pushManagerApprouter` | cloud | Inline destination for `@sap/approuter` |
 | 32 | `cf set-env figaf-manager-approuter destinations_figaf_manager_internal_url <url>` | `cf:pushManagerApprouter` | cloud | |
+| 32a | `cf api` | `update:selfTarget` | cloud | Read endpoint to confirm cf CLI matches manager's VCAP_APPLICATION before self-redeploy |
+| 32b | `cf target` | `update:selfTarget` | cloud | Read current org/space/user for the same pre-flight |
+| 32c | `cf target -o <vcap.org> -s <vcap.space>` | `update:pushSelf` | cloud | Defense-in-depth re-target from VCAP_APPLICATION before push |
+| 32d | `cf push <appName> -f <patched-manifest> -p <extractedDir> --strategy rolling` | `update:pushSelf` | cloud | Self-redeploy of figaf-manager; manifest's `name:` is rewritten to the operator's actual app name |
+| 32e | `cf push figaf-manager-approuter -p <approuterDir> --strategy rolling --no-manifest` | `update:pushSelf` | cloud | Co-redeploy of approuter when v2 XSUAA is active; AWAITED before the manager push |
 
 ### CF v3 API (via `cf curl`)
 
@@ -145,6 +150,9 @@ All runtime calls go through `https.get` (Node built-in). No third-party HTTP li
 | 5 | `https://hub.docker.com/v2/repositories/figaf/app/tags?name=btp&page_size=10&ordering=last_updated` | `httpsJson` | `config:dockerHubBtpTags` | both | `User-Agent: Figaf-Manager` |
 | 6 | `https://github.com/figaf/Figaf-BTP-Deployment/archive/refs/heads/btp-users.zip` (or `$FIGAF_DEPLOYMENT_ZIP_URL`) | `httpsDownload` | `resolveDeployDir` | cloud | EULA cookie; follows up to 5 redirects |
 | 7 | `https://<subdomain>.authentication.<region>.hana.ondemand.com/saml/metadata` | `httpsText` | `connect:samlSsoUrl` | both | `User-Agent: Figaf-Manager`; follows up to 5 redirects; max 512 KB body |
+| 7a | `https://api.github.com/repos/afl-figaf/figaf-manager-release/releases/latest` (or `$FIGAF_RELEASE_REPO`) | `httpsJson` | `update:checkSelf` | both | `User-Agent: Figaf-Manager`; fails open on 404/network error |
+| 7b | `<release.assets[].browser_download_url>` matching `figaf-manager-app-<v>.zip` | `httpsDownload` | `update:downloadSelf` | cloud | URL is validated server-side against the result of the most recent `update:checkSelf` — renderer cannot pass an arbitrary URL |
+| 7c | `<release.assets[].browser_download_url>` matching `Figaf-Installer-Setup-<v>-x64.exe` | `httpsDownload` | `update:downloadAndInstallDesktop` | desktop | Same server-side validation as 7b |
 
 ### Runtime — Constructed URLs (opened in browser, not fetched by the server)
 
@@ -172,10 +180,10 @@ All runtime calls go through `https.get` (Node built-in). No third-party HTTP li
 | Category | Count | Scope |
 |----------|-------|-------|
 | BTP CLI commands | 21 | both / cloud |
-| CF CLI commands (direct) | 36 | both / cloud |
+| CF CLI commands (direct) | 41 | both / cloud |
 | CF v3 API (`cf curl`) | 7 | cloud only |
 | Other process spawns (system) | 8 | desktop / cloud / build |
-| HTTPS fetches (runtime) | 7 | both / cloud / desktop |
+| HTTPS fetches (runtime) | 10 | both / cloud / desktop |
 | URLs opened in browser (not fetched) | 7 | both / cloud / desktop |
 | HTTPS fetches (build-time) | 2 | build only |
 

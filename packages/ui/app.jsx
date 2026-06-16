@@ -5,7 +5,8 @@
    ScreenUpdateConfig, ScreenUpdateProgress,
    ScreenConnectProvision, ScreenConnectIdp,
    ScreenConnectIdpSuser, ScreenConnectIdpPassport, ScreenConnectIdpIas,
-   ScreenConnectIdpCustomTrust, ScreenConnectIdpCustomAssign */
+   ScreenConnectIdpCustomTrust, ScreenConnectIdpCustomAssign,
+   UpdatePreflightModal, SelfUpdateBanner */
 
 function App() {
   const [step, setStepRaw] = React.useState(0);
@@ -118,6 +119,11 @@ function App() {
       ],
       sso: { status: "idle", url: null, alias: null, error: null },
     },
+    // Self-update — wizard's own update banner / pre-flight modal state.
+    // Populated by update:checkSelf in PR 5 and the preflight modal in PR 2.
+    selfUpdate: {
+      preflightOpen: false,
+    },
   });
 
   const [logs, setLogs] = React.useState([
@@ -139,6 +145,21 @@ function App() {
       setLogs(prev => [...prev, { type: t, text: msg.text }]);
     });
     return () => off && off();
+  }, []);
+
+  // Expose imperative open/close for the self-update pre-flight modal so PR 2
+  // is testable via DevTools before the banner (PR 5) is wired:
+  //   window.figafShowPreflight()  → opens
+  //   window.figafHidePreflight()  → closes
+  React.useEffect(() => {
+    window.figafShowPreflight = () =>
+      setCtx(c => ({ ...c, selfUpdate: { ...c.selfUpdate, preflightOpen: true } }));
+    window.figafHidePreflight = () =>
+      setCtx(c => ({ ...c, selfUpdate: { ...c.selfUpdate, preflightOpen: false } }));
+    return () => {
+      delete window.figafShowPreflight;
+      delete window.figafHidePreflight;
+    };
   }, []);
 
   const baseSteps = [
@@ -231,10 +252,21 @@ function App() {
     default: Screen = null;
   }
 
+  const currentStepId = STEPS[currentStep] && STEPS[currentStep].id;
+  const suppressSelfUpdate = typeof window !== "undefined" && window.figafIsLongRunningFlow
+    ? window.figafIsLongRunningFlow(ctx, currentStepId)
+    : false;
+
   return (
     <WinFrame>
       <StepperRail steps={STEPS} current={currentStep} maxReached={maxReached} />
       <div className="pane">
+        <SelfUpdateBanner
+          ctx={ctx}
+          setCtx={setCtx}
+          currentStepId={currentStepId}
+          suppress={suppressSelfUpdate}
+        />
         {Screen}
         <TerminalDrawer
           open={terminalOpen}
@@ -243,6 +275,11 @@ function App() {
           currentCmd={currentCmd}
         />
       </div>
+      {ctx.selfUpdate && ctx.selfUpdate.preflightOpen && (
+        <UpdatePreflightModal
+          onClose={() => setCtx(c => ({ ...c, selfUpdate: { ...c.selfUpdate, preflightOpen: false } }))}
+        />
+      )}
     </WinFrame>
   );
 }

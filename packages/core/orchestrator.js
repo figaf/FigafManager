@@ -18,6 +18,9 @@ const {
   classifyAssignResult,
 } = require("./saml-connect");
 const { parseGlobalAccountTree } = require("./btp-target");
+const { parseCfApi, parseCfTarget, normalizeApiUrl } = require("./cf-target");
+const { patchManifestName } = require("./manifest-patch");
+const releaseConfig = require("./release-config");
 
 const DEPLOYMENT_ZIP_URL =
   process.env.FIGAF_DEPLOYMENT_ZIP_URL ||
@@ -72,6 +75,29 @@ const DEPLOYMENT_ZIP_URL =
  *   ONLY by hosts that ship the approuter payload — figaf-manager in cloud
  *   mode after a v2-aware build-zip run. Electron returns null (the v2
  *   XSUAA upgrade flow does not apply to the desktop installer).
+ *
+ * @property {() => string} getInstalledVersion
+ *   Semver of the running app — surfaced to the renderer for the self-update
+ *   banner. Electron: app.getVersion(). Cloud: figaf-manager's package.json
+ *   version baked into the build-zip.
+ *
+ * @property {() => string} getUpdateStagingDir
+ *   Per-host writable temp dir for staging downloaded self-update artifacts
+ *   (the new figaf-manager-app-<v>.zip, or the desktop installer .exe).
+ *   Distinct from getUserDataDir so cleanup is cheap and a corrupted
+ *   download can't pollute persistent state.
+ *
+ * @property {() => null | { apiUrl: string, orgName: string, spaceName: string, appName: string, uris: string[] }} getDeployTargetForSelf
+ *   Cloud only: parses VCAP_APPLICATION to return the running dyno's own
+ *   CF coordinates so the self-redeploy flow can verify the operator's cf
+ *   CLI is targeted at the same landscape + org + space before `cf push`.
+ *   Returns null on desktop (the self-update flow there is a one-shot
+ *   download-and-relaunch, not a redeploy).
+ *
+ * @property {(installerPath: string) => Promise<{ ok: boolean, error?: string }>} [launchInstallerAndQuit]
+ *   Desktop only: hand off to the downloaded installer .exe and exit the
+ *   current Electron process so the new installer can write over the asar.
+ *   Cloud returns { ok: false, error: "not available" }.
  */
 
 function patchManifestService(text, serviceName, enable) {
@@ -106,6 +132,9 @@ function createOrchestrator({ host, send, audit }) {
     cfSwitchOrgList: null,
     cfSwitchSelectedOrg: null,
     cfSwitchSpaceList: null,
+    // Cached result of the most recent update:checkSelf call. download/extract/
+    // push handlers consult this to refuse arbitrary URLs from the renderer.
+    lastCheckSelf: null,
   };
 
   // SAP BTP region → hyperscaler mapping. Suffix tells you the provider for
@@ -137,6 +166,15 @@ function createOrchestrator({ host, send, audit }) {
 
   function resolveBtp() { return host.resolveBinary("btp"); }
   function resolveCf()  { return host.resolveBinary("cf");  }
+
+  // Shared probe: is the sibling figaf-manager-approuter app present in the
+  // currently-targeted org/space? Used by both xsuaa:upgradeStatus (to gate
+  // the v2 upgrade UI) and update:pushSelf (to decide whether self-update
+  // should co-redeploy the approuter alongside the manager).
+  async function probeApprouterPresence() {
+    const r = await run(resolveCf(), ["app", "figaf-manager-approuter"], { source: "cf" });
+    return r.code === 0;
+  }
 
   // ─── subprocess helpers ────────────────────────────────────────────────────
 
@@ -1883,8 +1921,7 @@ function createOrchestrator({ host, send, audit }) {
       const result = { ok: true, hasXsuaaService: false, hasApprouterApp: false, managerBound: false, route: null, mode: "token" };
       const svc = await run(resolveCf(), ["service", "figaf-manager-xsuaa"], { source: "cf" });
       result.hasXsuaaService = svc.code === 0;
-      const app = await run(resolveCf(), ["app", "figaf-manager-approuter"], { source: "cf" });
-      result.hasApprouterApp = app.code === 0;
+      result.hasApprouterApp = await probeApprouterPresence();
       // Read manager's own routes from VCAP_APPLICATION (set by CF on every dyno).
       try {
         const va = JSON.parse(process.env.VCAP_APPLICATION || "{}");
@@ -2749,6 +2786,391 @@ function createOrchestrator({ host, send, audit }) {
       writeUpdateState({ phase: "verified", completedAt: new Date().toISOString(), lastError: null });
       send("update:phase", { phase, state: "done" });
       return { ok: true, appImage, routerHealth: "running", route };
+    },
+
+    // Self-update — version-discovery for the installer itself ────────────────
+    // Detects whether a newer Figaf Installer release is published on the
+    // GitHub repo configured via release-config.js. Fails open: any network
+    // error, missing release, or unconfigured repo returns ok:false WITHOUT
+    // blocking the wizard. The renderer banner is suppressed unless the
+    // response says updateAvailable=true.
+    //
+    // The "host" field distinguishes which CTA the renderer should show
+    // (download installer vs. self-redeploy) — the renderer never branches
+    // on isHosted directly for this feature.
+    async "update:checkSelf"() {
+      const host_ = host.isHosted ? "cloud" : "desktop";
+      const current = (host.getInstalledVersion && host.getInstalledVersion()) || "0.0.0";
+
+      let data;
+      try {
+        data = await httpsJson(releaseConfig.RELEASE_LATEST_URL);
+      } catch (e) {
+        // No releases yet → GitHub 404 lands here. Banner stays hidden.
+        return { ok: false, current, host: host_, error: e.message };
+      }
+
+      const tag = String(data?.tag_name || "").replace(/^v/, "");
+      if (!tag) {
+        return { ok: false, current, host: host_, error: "release missing tag_name" };
+      }
+
+      const assetList = Array.isArray(data.assets) ? data.assets : [];
+      const cloudAsset   = assetList.find((a) => releaseConfig.CLOUD_ASSET_REGEX.test(a.name || ""));
+      const desktopAsset = assetList.find((a) => releaseConfig.DESKTOP_ASSET_REGEX.test(a.name || ""));
+
+      const updateAvailable = releaseConfig.compareSemver(current, tag) < 0;
+
+      const result = {
+        ok: true,
+        host: host_,
+        current,
+        latest: tag,
+        updateAvailable,
+        releaseUrl: data.html_url || null,
+        assets: {
+          cloud:   cloudAsset   ? { name: cloudAsset.name,   url: cloudAsset.browser_download_url   } : null,
+          desktop: desktopAsset ? { name: desktopAsset.name, url: desktopAsset.browser_download_url } : null,
+        },
+      };
+      // Cache the asset URLs so update:downloadSelf can validate the URL it's
+      // told to fetch against what GitHub actually published in this version's
+      // release. The renderer cannot be trusted to pass an arbitrary URL.
+      state.lastCheckSelf = result;
+      return result;
+    },
+
+    // Pre-flight for self-redeploy. Read-only: runs `cf api` + `cf target`,
+    // parses, and compares against the manager's OWN CF coordinates from
+    // VCAP_APPLICATION. Used by <UpdatePreflightModal/> to decide whether
+    // to show "Update now" (clean) or drive the operator through a cf-cli
+    // re-target / re-login sub-flow first.
+    //
+    // Returns four shapes:
+    //   { ok: false, error: "not available in desktop mode" }          desktop
+    //   { ok: false, error: "VCAP_APPLICATION missing" }               dev/non-CF runtime
+    //   { ok: true,  loggedIn: false, target, current: {...}, mismatch:{...} } not logged in
+    //   { ok: true,  loggedIn: true,  target, current: {...}, mismatch:{...} } logged in
+    //
+    // `mismatch` is { apiUrl: bool, org: bool, space: bool } — true means
+    // the current cf-cli target does NOT match the manager's own location.
+    async "update:selfTarget"() {
+      if (!host.isHosted || !host.getDeployTargetForSelf) {
+        return { ok: false, error: "not available in desktop mode" };
+      }
+      const target = host.getDeployTargetForSelf();
+      if (!target) {
+        return { ok: false, error: "VCAP_APPLICATION missing — not running in CF?" };
+      }
+
+      const cfBin = resolveCf();
+      const apiOut    = await run(cfBin, ["api"],    { source: "cf" });
+      const targetOut = await run(cfBin, ["target"], { source: "cf" });
+
+      // `cf target` exits non-zero when logged out; stdout+stderr both carry
+      // information depending on cf-cli version. Concatenate for the parser.
+      const apiText    = (apiOut.stdout    || "") + "\n" + (apiOut.stderr    || "");
+      const targetText = (targetOut.stdout || "") + "\n" + (targetOut.stderr || "");
+
+      const api     = parseCfApi(apiText);
+      const current = parseCfTarget(targetText);
+
+      // Prefer `cf api`'s endpoint (stable across logged-in/out); fall back
+      // to `cf target` parse if the user has only ever run `cf target`.
+      const currentApiUrl = api.apiUrl || current.apiUrl || null;
+
+      const apiUrlMatch = !!currentApiUrl
+        && normalizeApiUrl(currentApiUrl) === normalizeApiUrl(target.apiUrl);
+      const orgMatch    = current.loggedIn && current.orgName   === target.orgName;
+      const spaceMatch  = current.loggedIn && current.spaceName === target.spaceName;
+
+      return {
+        ok: true,
+        loggedIn: current.loggedIn,
+        target: {
+          apiUrl:    target.apiUrl,
+          orgName:   target.orgName,
+          spaceName: target.spaceName,
+          appName:   target.appName,
+        },
+        current: {
+          apiUrl:    currentApiUrl,
+          orgName:   current.loggedIn ? current.orgName   : null,
+          spaceName: current.loggedIn ? current.spaceName : null,
+          user:      current.loggedIn ? current.user      : null,
+        },
+        mismatch: {
+          apiUrl: !apiUrlMatch,
+          org:    !orgMatch,
+          space:  !spaceMatch,
+        },
+      };
+    },
+
+    // Self-update: download the new manager zip. URL must match what the
+    // most recent update:checkSelf saw on GitHub — this is the only seam
+    // where a renderer-supplied URL is honoured, so it is hard-pinned.
+    async "update:downloadSelf"({ assetUrl } = {}) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      if (!assetUrl) return { ok: false, error: "assetUrl required" };
+
+      const last = state.lastCheckSelf;
+      if (!last || !last.assets || !last.assets.cloud || last.assets.cloud.url !== assetUrl) {
+        return { ok: false, error: "assetUrl does not match latest update:checkSelf — re-run check first" };
+      }
+
+      const stagingDir = host.getUpdateStagingDir();
+      try {
+        fs.mkdirSync(stagingDir, { recursive: true });
+      } catch (e) {
+        return { ok: false, error: "could not create staging dir: " + e.message };
+      }
+      const zipPath = path.join(stagingDir, last.assets.cloud.name);
+
+      send("update:selfPhase", { phase: "download", state: "running", percent: 0 });
+      try {
+        await httpsDownload(assetUrl, zipPath, (got, total) => {
+          const percent = total ? Math.round((got / total) * 100) : 0;
+          send("update:selfPhase", { phase: "download", state: "running", percent });
+        });
+        send("update:selfPhase", { phase: "download", state: "done", percent: 100 });
+        return { ok: true, zipPath, version: last.latest };
+      } catch (e) {
+        send("update:selfPhase", { phase: "download", state: "failed", error: e.message });
+        return { ok: false, error: e.message };
+      }
+    },
+
+    // Self-update: extract the downloaded zip, sanity-check layout, detect
+    // whether the v2 manager-approuter tarball is present so the caller knows
+    // whether to also redeploy the approuter (PR 4).
+    async "update:extractSelf"({ zipPath } = {}) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      if (!zipPath || !fs.existsSync(zipPath)) return { ok: false, error: "zipPath missing or not found" };
+
+      const stagingDir = host.getUpdateStagingDir();
+      const extractedDir = path.join(stagingDir, "extracted");
+
+      send("update:selfPhase", { phase: "extract", state: "running" });
+      try {
+        try { fs.rmSync(extractedDir, { recursive: true, force: true }); } catch {}
+        await extractZip(zipPath, extractedDir);
+      } catch (e) {
+        send("update:selfPhase", { phase: "extract", state: "failed", error: e.message });
+        return { ok: false, error: e.message };
+      }
+
+      // Sanity-check: build-zip.js stages manifest.yml + package.json + cloud/
+      // at the zip root. Anything else is a malformed (or wrong) archive.
+      const mustExist = ["manifest.yml", "package.json", "cloud"];
+      const missing = mustExist.filter((n) => !fs.existsSync(path.join(extractedDir, n)));
+      if (missing.length) {
+        const err = "zip layout unexpected — missing at root: " + missing.join(", ");
+        send("update:selfPhase", { phase: "extract", state: "failed", error: err });
+        return { ok: false, error: err };
+      }
+
+      const apprtTar = path.join(extractedDir, "manager-approuter.tar.gz");
+      const hasApprouterTarball = fs.existsSync(apprtTar);
+
+      send("update:selfPhase", {
+        phase: "extract", state: "done",
+        detail: hasApprouterTarball ? "approuter tarball present" : "no approuter tarball",
+      });
+      return { ok: true, extractedDir, hasApprouterTarball };
+    },
+
+    // Self-update: redeploy the manager from extractedDir. Re-runs the
+    // pre-flight as a fresh safety check (the renderer's preflight result
+    // may be stale by the time the user clicks Update). Force-targets the
+    // manager's own org/space as defense in depth, then fires `cf push`
+    // fire-and-forget — the dyno will bounce during the rolling cutover.
+    //
+    // includeApprouter is plumbed for PR 4; for PR 3 it is logged and
+    // ignored (the call still succeeds, but the approuter is not touched).
+    async "update:pushSelf"({ extractedDir, includeApprouter } = {}) {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      if (!extractedDir || !fs.existsSync(extractedDir)) {
+        return { ok: false, error: "extractedDir missing or not found" };
+      }
+
+      send("update:selfPhase", { phase: "preflight", state: "running" });
+      const pf = await handlers["update:selfTarget"]();
+      if (!pf.ok) {
+        send("update:selfPhase", { phase: "preflight", state: "failed", error: pf.error });
+        return pf;
+      }
+      if (!pf.loggedIn || pf.mismatch.apiUrl || pf.mismatch.org || pf.mismatch.space) {
+        const err = "preflight failed — cf CLI must be targeted at the manager's own landscape/org/space";
+        send("update:selfPhase", { phase: "preflight", state: "failed", error: err });
+        return { ok: false, error: err, preflight: pf };
+      }
+
+      const target = pf.target;
+      const cfBin = resolveCf();
+
+      const t = await run(cfBin, ["target", "-o", target.orgName, "-s", target.spaceName], { source: "cf" });
+      if (t.code !== 0) {
+        send("update:selfPhase", { phase: "preflight", state: "failed", error: t.stderr || "cf target failed" });
+        return { ok: false, error: "cf target failed: " + (t.stderr || "(no stderr)") };
+      }
+      send("update:selfPhase", { phase: "preflight", state: "done" });
+
+      // Approuter co-redeploy (PR 4) ─────────────────────────────────────────
+      // If the operator has the v2 XSUAA approuter deployed, redeploy it
+      // FIRST then the manager. Push order matters: approuter fronts the
+      // public route, manager sits behind on -internal. Pushing approuter
+      // first means the intermediate state is "new approuter → old manager"
+      // (xs-app.json contract is backwards-compat across minor versions),
+      // never "new manager → old approuter" (which would 404 new endpoints).
+      //
+      // The approuter push is AWAITED (not fire-and-forget): the manager
+      // dyno running this orchestrator is unaffected, so we can wait. If
+      // the approuter push fails we abort BEFORE bouncing the manager —
+      // operator keeps a working system to retry from.
+      if (includeApprouter) {
+        const approuterPresent = await probeApprouterPresence();
+        if (!approuterPresent) {
+          // Bundle had the tarball but the live space has no approuter app —
+          // probably the operator never ran the v2 XSUAA upgrade. Skip cleanly.
+          log("cf", "warn", "approuter tarball bundled but figaf-manager-approuter not deployed in this space — skipping approuter step");
+        } else {
+          const approuterDir = path.join(extractedDir, "manager-approuter");
+          send("update:selfPhase", { phase: "push-approuter", state: "running", detail: "extracting tarball" });
+          try {
+            fs.mkdirSync(approuterDir, { recursive: true });
+            // Spawn tar with cwd=extractedDir and relative paths: GNU tar on
+            // Windows mis-parses absolute paths with a colon ("C:/…") as
+            // remote host:path. --force-local is a no-op on Linux, a fix
+            // on Windows, and using cwd-relative paths sidesteps the parser
+            // entirely. The on-CF Linux dyno is fine with either form.
+            const tarRes = await run(
+              "tar",
+              ["--force-local", "-xzf", "manager-approuter.tar.gz", "-C", "manager-approuter"],
+              { source: "cf", cwd: extractedDir }
+            );
+            if (tarRes.code !== 0) throw new Error(tarRes.stderr || "tar -xzf failed");
+          } catch (e) {
+            const err = "approuter tarball extract failed: " + e.message;
+            send("update:selfPhase", { phase: "push-approuter", state: "failed", error: err });
+            return { ok: false, error: err };
+          }
+
+          // Push the approuter. --no-manifest because the approuter package
+          // ships no manifest — its routes, env vars (destinations), and
+          // service bindings (figaf-manager-xsuaa) are already attached to
+          // the live app and persist across cf push. --strategy rolling for
+          // zero-downtime cutover. We await this; if it fails, we abort.
+          const apprtPushArgs = [
+            "push", "figaf-manager-approuter",
+            "-p", approuterDir,
+            "--strategy", "rolling",
+            "--no-manifest",
+          ];
+          send("update:selfPhase", { phase: "push-approuter", state: "running", detail: "cf push (rolling)" });
+          log("cmd", "cmd", `${cfBin} ${apprtPushArgs.join(" ")}`);
+          const apprtRes = await run(cfBin, apprtPushArgs, { source: "cf" });
+          if (apprtRes.code !== 0) {
+            const err = "approuter rolling push failed: " + (apprtRes.stderr || "(no stderr)");
+            send("update:selfPhase", { phase: "push-approuter", state: "failed", error: err });
+            return { ok: false, error: err };
+          }
+          send("update:selfPhase", { phase: "push-approuter", state: "done" });
+        }
+      }
+
+      // Patch the bundled manifest's `name:` to match the operator's actual
+      // app name (could differ from the literal `figaf-manager` baked into
+      // the zip if the deployment was renamed). Write the patched copy to
+      // the staging dir so the extracted tree stays pristine.
+      const manifestSrc = path.join(extractedDir, "manifest.yml");
+      let manifestPath = manifestSrc;
+      try {
+        const yaml = fs.readFileSync(manifestSrc, "utf8");
+        const patched = patchManifestName(yaml, target.appName);
+        if (patched !== yaml) {
+          manifestPath = path.join(host.getUpdateStagingDir(), "manifest-patched.yml");
+          fs.writeFileSync(manifestPath, patched);
+          log("cf", "line", `manifest name rewritten: figaf-manager → ${target.appName} (${manifestPath})`);
+        }
+      } catch (e) {
+        send("update:selfPhase", { phase: "push-manager", state: "failed", error: "manifest patch failed: " + e.message });
+        return { ok: false, error: "manifest patch failed: " + e.message };
+      }
+
+      // Fire-and-forget cf push with -f <patchedManifest>: applies all
+      // manifest values from v Next (new env vars, memory bumps, command,
+      // buildpack) so the operator gets the version's intended runtime.
+      // Trade-off: a manual `cf scale -m` override the operator did between
+      // deploys WILL be reset to whatever the manifest declares. For a wizard
+      // app this is the right default; operators aren't expected to hand-tune.
+      // --strategy rolling = zero-downtime cutover.
+      const pushArgs = ["push", target.appName, "-f", manifestPath, "-p", extractedDir, "--strategy", "rolling"];
+      send("update:selfPhase", { phase: "push-manager", state: "running" });
+      log("cmd", "cmd", `${cfBin} ${pushArgs.join(" ")}`);
+      const pushAudit = auditor.beginCli({ cmd: cfBin, args: pushArgs, user: state.user });
+      let pushStdout = "", pushStderr = "";
+      const proc = spawn(cfBin, pushArgs, { shell: false, windowsHide: true, detached: false });
+      proc.stdout.on("data", (b) => { const s = b.toString(); pushStdout += s; log("cf", "line", s); });
+      proc.stderr.on("data", (b) => { const s = b.toString(); pushStderr += s; log("cf", "err", s); });
+      proc.on("error", (err) => {
+        log("cf", "err", "cf push spawn failed: " + (err && err.message));
+        pushAudit.exit({ code: -1, stdout: pushStdout, stderr: pushStderr, errorMessage: err && err.message });
+      });
+      proc.on("close", (code) => {
+        pushAudit.exit({ code: code ?? 0, stdout: pushStdout, stderr: pushStderr });
+      });
+
+      return {
+        ok: true,
+        kickedOff: true,
+        appName: target.appName,
+        expectedRoute: (target.uris && target.uris[0]) || null,
+        etaSec: 180,
+      };
+    },
+
+    // Desktop self-update: download the NSIS installer .exe and hand off
+    // to it. The current Electron process exits so the new installer can
+    // overwrite the asar. URL is validated against state.lastCheckSelf —
+    // same security gate as update:downloadSelf.
+    async "update:downloadAndInstallDesktop"({ assetUrl } = {}) {
+      if (host.isHosted) return { ok: false, error: "not available in cloud mode" };
+      if (!host.launchInstallerAndQuit) return { ok: false, error: "host does not support installer handoff" };
+      if (!assetUrl) return { ok: false, error: "assetUrl required" };
+
+      const last = state.lastCheckSelf;
+      if (!last || !last.assets || !last.assets.desktop || last.assets.desktop.url !== assetUrl) {
+        return { ok: false, error: "assetUrl does not match latest update:checkSelf — re-run check first" };
+      }
+
+      const stagingDir = host.getUpdateStagingDir();
+      try { fs.mkdirSync(stagingDir, { recursive: true }); }
+      catch (e) { return { ok: false, error: "could not create staging dir: " + e.message }; }
+
+      const installerPath = path.join(stagingDir, last.assets.desktop.name);
+
+      send("update:selfPhase", { phase: "download", state: "running", percent: 0 });
+      try {
+        await httpsDownload(assetUrl, installerPath, (got, total) => {
+          const percent = total ? Math.round((got / total) * 100) : 0;
+          send("update:selfPhase", { phase: "download", state: "running", percent });
+        });
+        send("update:selfPhase", { phase: "download", state: "done", percent: 100 });
+      } catch (e) {
+        send("update:selfPhase", { phase: "download", state: "failed", error: e.message });
+        return { ok: false, error: e.message };
+      }
+
+      send("update:selfPhase", { phase: "install", state: "running" });
+      const r = await host.launchInstallerAndQuit(installerPath);
+      if (!r || r.ok === false) {
+        send("update:selfPhase", { phase: "install", state: "failed", error: (r && r.error) || "launch failed" });
+        return { ok: false, error: (r && r.error) || "launch failed" };
+      }
+      // The host quits the process shortly after this returns. The renderer
+      // will see the window close.
+      return { ok: true, installerPath };
     },
 
     // shell ───────────────────────────────────────────────────────────────────

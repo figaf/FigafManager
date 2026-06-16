@@ -14,10 +14,44 @@ const fs = require("fs");
 const os = require("os");
 const { spawnSync } = require("child_process");
 
+// Version: read from the package.json that ships with figaf-manager. In a
+// staged/zipped build that file sits two levels up from cloud/ (… /app/
+// package.json); in `npm start` from a checkout it's the workspace
+// app's package.json. Either way require() resolves at module load.
+const PKG_VERSION = (() => {
+  try { return require(path.join(__dirname, "package.json")).version || "0.0.0"; }
+  catch { return "0.0.0"; }
+})();
+
+// Parse VCAP_APPLICATION once at module load. CF populates it before our
+// process starts; if it's missing we're either running in dev (npm start
+// outside CF) or something is very wrong — either way return null and let
+// callers fail with a clear "not in CF" message.
+const VCAP_TARGET = (() => {
+  const raw = process.env.VCAP_APPLICATION;
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    return {
+      apiUrl:    v.cf_api || "",
+      orgName:   v.organization_name || "",
+      spaceName: v.space_name || "",
+      appName:   v.application_name || "",
+      uris:      Array.isArray(v.uris) ? v.uris.slice() : [],
+    };
+  } catch { return null; }
+})();
+
 function createHost({ sessionId }) {
   return {
     isHosted: true,
     getUserDataDir: () => path.join(os.homedir(), "sessions", sessionId),
+
+    getInstalledVersion: () => PKG_VERSION,
+
+    getUpdateStagingDir: () => path.join(os.tmpdir(), "figaf-update-" + sessionId),
+
+    getDeployTargetForSelf: () => (VCAP_TARGET ? { ...VCAP_TARGET } : null),
 
     resolveBinary(name) {
       const bundled = path.join(__dirname, "bin", name);
