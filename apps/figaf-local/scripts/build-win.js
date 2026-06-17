@@ -63,6 +63,21 @@ for (const target of [fsp, fs.promises]) {
   }
 }
 
+// A GitHub token in the environment makes electron-builder treat GitHub as the
+// implicit publish provider and try to RESOLVE it (to publish, and/or to write
+// electron-updater metadata). In CI the repository isn't detectable from
+// .git/config, so that resolution fails — either throwing "Cannot detect
+// repository" or yielding a null config that crashes update-info generation
+// ("Cannot read properties of null (reading 'channel')"). We publish via
+// `gh release upload` in a separate workflow step and don't use electron-
+// updater, so this build never needs a token. Strip them here (this child
+// process only — the upload step keeps its own GH_TOKEN) so electron-builder
+// does no GitHub resolution at all. (Belt-and-suspenders: the sole Windows
+// target is "portable", which isn't an electron-updater target, so the
+// update-info path wouldn't run anyway.)
+delete process.env.GH_TOKEN;
+delete process.env.GITHUB_TOKEN;
+
 const { build, Platform } = require("electron-builder");
 
 // publish: "never" — we attach artifacts ourselves via `gh release upload` in

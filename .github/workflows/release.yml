@@ -11,8 +11,8 @@
 #   build-manager  (ubuntu)  — stamp version, build the cloud zip, attach the zip
 #                              AND the CF manifest.yml (operators deploy both).
 #   build-desktop  (windows) — stamp version, build the desktop app, attach the
-#                              PORTABLE exe (runs without installation). The NSIS
-#                              installer is still built but not published.
+#                              PORTABLE exe (runs without installation; the only
+#                              Windows target built).
 #
 # Single-repo: artifacts attach to this same repo's release via the built-in
 # GITHUB_TOKEN (no PAT). `permissions: contents: write` grants the upload right.
@@ -119,15 +119,15 @@ jobs:
         shell: bash
         run: npm pkg set version="${TAG#v}" -w apps/figaf-local
 
-      # electron-builder builds BOTH the NSIS installer and the portable exe
-      # (see win.target in apps/figaf-local/package.json). Both are unsigned —
-      # users get a SmartScreen prompt on first run, which is expected.
+      # electron-builder builds only the portable exe (see win.target in
+      # apps/figaf-local/package.json). It's unsigned — users get a SmartScreen
+      # prompt on first run, which is expected. Portable is not an
+      # electron-updater target, so no update-metadata (latest.yml) is produced.
       - name: Build Windows app
         run: npm run build:local
 
-      # Publish only the PORTABLE exe (Figaf-Installer-<v>-x64.exe) — it runs
-      # without installation. The NSIS installer is built above but not
-      # attached. The desktop self-update matches this portable name via
+      # Publish the PORTABLE exe (Figaf-Installer-<v>-x64.exe) — it runs without
+      # installation. The desktop self-update matches this name via
       # DESKTOP_ASSET_REGEX in packages/core/release-config.js — keep them in
       # lockstep if the artifactName changes.
       - name: Attach portable build to release

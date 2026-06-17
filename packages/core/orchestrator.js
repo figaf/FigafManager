@@ -91,13 +91,8 @@ const DEPLOYMENT_ZIP_URL =
  *   Cloud only: parses VCAP_APPLICATION to return the running dyno's own
  *   CF coordinates so the self-redeploy flow can verify the operator's cf
  *   CLI is targeted at the same landscape + org + space before `cf push`.
- *   Returns null on desktop (the self-update flow there is a one-shot
- *   download-and-relaunch, not a redeploy).
- *
- * @property {(installerPath: string) => Promise<{ ok: boolean, error?: string }>} [launchInstallerAndQuit]
- *   Desktop only: hand off to the downloaded installer .exe and exit the
- *   current Electron process so the new installer can write over the asar.
- *   Cloud returns { ok: false, error: "not available" }.
+ *   Returns null on desktop (the desktop self-update opens the GitHub release
+ *   page for a manual portable download, rather than redeploying).
  */
 
 function patchManifestService(text, serviceName, enable) {
@@ -3128,49 +3123,6 @@ function createOrchestrator({ host, send, audit }) {
         expectedRoute: (target.uris && target.uris[0]) || null,
         etaSec: 180,
       };
-    },
-
-    // Desktop self-update: download the NSIS installer .exe and hand off
-    // to it. The current Electron process exits so the new installer can
-    // overwrite the asar. URL is validated against state.lastCheckSelf —
-    // same security gate as update:downloadSelf.
-    async "update:downloadAndInstallDesktop"({ assetUrl } = {}) {
-      if (host.isHosted) return { ok: false, error: "not available in cloud mode" };
-      if (!host.launchInstallerAndQuit) return { ok: false, error: "host does not support installer handoff" };
-      if (!assetUrl) return { ok: false, error: "assetUrl required" };
-
-      const last = state.lastCheckSelf;
-      if (!last || !last.assets || !last.assets.desktop || last.assets.desktop.url !== assetUrl) {
-        return { ok: false, error: "assetUrl does not match latest update:checkSelf — re-run check first" };
-      }
-
-      const stagingDir = host.getUpdateStagingDir();
-      try { fs.mkdirSync(stagingDir, { recursive: true }); }
-      catch (e) { return { ok: false, error: "could not create staging dir: " + e.message }; }
-
-      const installerPath = path.join(stagingDir, last.assets.desktop.name);
-
-      send("update:selfPhase", { phase: "download", state: "running", percent: 0 });
-      try {
-        await httpsDownload(assetUrl, installerPath, (got, total) => {
-          const percent = total ? Math.round((got / total) * 100) : 0;
-          send("update:selfPhase", { phase: "download", state: "running", percent });
-        });
-        send("update:selfPhase", { phase: "download", state: "done", percent: 100 });
-      } catch (e) {
-        send("update:selfPhase", { phase: "download", state: "failed", error: e.message });
-        return { ok: false, error: e.message };
-      }
-
-      send("update:selfPhase", { phase: "install", state: "running" });
-      const r = await host.launchInstallerAndQuit(installerPath);
-      if (!r || r.ok === false) {
-        send("update:selfPhase", { phase: "install", state: "failed", error: (r && r.error) || "launch failed" });
-        return { ok: false, error: (r && r.error) || "launch failed" };
-      }
-      // The host quits the process shortly after this returns. The renderer
-      // will see the window close.
-      return { ok: true, installerPath };
     },
 
     // shell ───────────────────────────────────────────────────────────────────

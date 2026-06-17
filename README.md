@@ -99,7 +99,7 @@ Download the portable app from the [**Releases page**](../../releases/latest):
 |------|-------------|
 | `Figaf-Installer-<v>-x64.exe` | **Just run it** — standalone portable app. Double-click to launch, no installation, no admin rights. |
 
-Launch **Figaf Installer** and follow the wizard. (An NSIS setup installer is also produced by the build but is **not published** — the portable needs no installation.)
+Launch **Figaf Installer** and follow the wizard. No installation step — the portable exe is self-contained.
 
 ### Cloud — figaf-manager
 
@@ -179,14 +179,13 @@ Then visit `http://localhost:8080`. In dev mode the host adapter falls back to
 npm run build:local
 ```
 
-Produces **two** artifacts in `apps/figaf-local/dist/`, both self-contained (no Node.js or Electron runtime needed on the target machine):
+Produces a single self-contained artifact in `apps/figaf-local/dist/` (no Node.js or Electron runtime needed on the target machine):
 
 | File | Type |
 |------|------|
 | `Figaf-Installer-<version>-x64.exe` | **Portable** — double-click to run, no install |
-| `Figaf-Installer-Setup-<version>-x64.exe` | **Installer** — NSIS setup wizard, creates shortcuts |
 
-The BTP deployment templates are bundled as `extraResources` inside both. The release workflow publishes only the **portable** exe (it needs no installation); the NSIS installer is built but not attached. Don't commit either — `dist/` is gitignored to keep the ~80 MB+ binaries out of git history.
+The BTP deployment templates are bundled as `extraResources` inside it. The release workflow attaches this portable exe to the GitHub Release. Don't commit it — `dist/` is gitignored to keep the ~80 MB+ binary out of git history.
 
 ### Build the BTP Cockpit zip
 

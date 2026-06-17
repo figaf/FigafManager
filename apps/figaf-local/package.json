@@ -47,27 +47,12 @@
     "win": {
       "target": [
         {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
           "target": "portable",
           "arch": [
             "x64"
           ]
         }
       ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "perMachine": false,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Figaf Installer",
-      "artifactName": "Figaf-Installer-Setup-${version}-${arch}.${ext}"
     },
     "portable": {
       "artifactName": "Figaf-Installer-${version}-${arch}.${ext}"

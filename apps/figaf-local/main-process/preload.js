@@ -105,7 +105,6 @@ contextBridge.exposeInMainWorld("figaf", {
     downloadSelf:     (a) => ipcRenderer.invoke("update:downloadSelf", a || {}),
     extractSelf:      (a) => ipcRenderer.invoke("update:extractSelf", a || {}),
     pushSelf:         (a) => ipcRenderer.invoke("update:pushSelf", a || {}),
-    downloadAndInstallDesktop: (a) => ipcRenderer.invoke("update:downloadAndInstallDesktop", a || {}),
     resumeStatus:     () => ipcRenderer.invoke("update:resumeStatus"),
     detectDeployment: (a) => ipcRenderer.invoke("update:detectDeployment", a || {}),
     readCurrentConfig: (a) => ipcRenderer.invoke("update:readCurrentConfig", a || {}),

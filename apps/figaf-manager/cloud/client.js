@@ -198,7 +198,6 @@
       downloadSelf:     function (a) { return rpc("update:downloadSelf", a || {}); },
       extractSelf:      function (a) { return rpc("update:extractSelf", a || {}); },
       pushSelf:         function (a) { return rpc("update:pushSelf", a || {}); },
-      downloadAndInstallDesktop: function (a) { return rpc("update:downloadAndInstallDesktop", a || {}); },
       resumeStatus:     function ()  { return rpc("update:resumeStatus"); },
       detectDeployment: function (a) { return rpc("update:detectDeployment", a || {}); },
       readCurrentConfig: function (a) { return rpc("update:readCurrentConfig", a || {}); },

@@ -32,7 +32,7 @@ Token, no secrets.
    - `build-manager` (Linux) — stamps the version, attaches `figaf-manager-app-X.Y.Z.zip`
      **and** the CF `manifest.yml`.
    - `build-desktop` (Windows) — stamps the version, attaches the **portable**
-     `Figaf-Installer-X.Y.Z-x64.exe` (the NSIS installer is built but not published).
+     `Figaf-Installer-X.Y.Z-x64.exe` (the only Windows target built).
 
 3. **Done.** The artifacts now hang off the release. Running wizards pick
    up the update automatically:
