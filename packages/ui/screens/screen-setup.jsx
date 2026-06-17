@@ -3,6 +3,56 @@
 const fg = () => (typeof window !== "undefined" && window.figaf) || null;
 
 // ═══════════════════════════════════════════════════════════
+// Self-update check row — shown in the welcome checklist.
+// ═══════════════════════════════════════════════════════════
+// Pure view over ctx.selfUpdate (the actual check runs once in app.jsx and is
+// stored at ctx.selfUpdate.check). Maps the result to a CheckRow state:
+//   no result yet         → running  ("checking for updates…")
+//   ok:false (404/network)→ unreachable (gray — NOT an error; current build is fine)
+//   updateAvailable       → update (blue) + an "Update…" button in the meta slot
+//   up to date            → done (green)
+// Crucially this row is NOT part of ctx.prereqs, so it never gates the
+// "Continue" button — an unreachable update server must not block the wizard.
+function SelfUpdateCheckRow({ ctx, setCtx }) {
+  const flags = (typeof window !== "undefined") && window.figafModeFlags;
+  if (flags && flags.features && flags.features.selfUpdateBanner === false) return null;
+
+  const su = ctx.selfUpdate || {};
+  const check = su.check;
+
+  if (su.installing) {
+    return <CheckRow status="running" title="Installer update" sub="downloading installer…" />;
+  }
+  if (su.installError) {
+    return <CheckRow status="unreachable" title="Installer update" sub={"install failed: " + su.installError} />;
+  }
+  if (!check) {
+    return <CheckRow status="running" title="Installer version" sub="checking for updates…" />;
+  }
+  if (check.ok === false) {
+    return <CheckRow status="unreachable" title="Installer version" sub="update server unreachable" />;
+  }
+  if (check.updateAvailable) {
+    const isCloud = check.host === "cloud";
+    const hasAsset = isCloud ? !!(check.assets && check.assets.cloud) : !!(check.assets && check.assets.desktop);
+    const meta = hasAsset ? (
+      <button
+        className="btn btn-primary"
+        style={{ padding: "5px 12px", fontSize: 12 }}
+        onClick={() => window.figafTriggerSelfUpdate && window.figafTriggerSelfUpdate(check, setCtx)}
+      >
+        {isCloud ? "Update wizard…" : "Update installer…"}
+      </button>
+    ) : null;
+    const sub = hasAsset
+      ? `v${check.current} → v${check.latest}`
+      : `v${check.current} → v${check.latest} · release missing artifact`;
+    return <CheckRow status="update" title="Installer update available" sub={sub} meta={meta} />;
+  }
+  return <CheckRow status="done" title="Installer version" sub={`v${check.current} · up to date`} />;
+}
+
+// ═══════════════════════════════════════════════════════════
 // 0. Browser-auth banner (hosted-only)
 // ═══════════════════════════════════════════════════════════
 // Surfaces "your session was kicked" feedback when the cloud server has
@@ -242,6 +292,7 @@ function ScreenWelcome({ ctx, setCtx, onNext }) {
         <div className="card" style={{ padding: "4px 18px" }}>
           <div className="checklist">
             {checks.map(c => <CheckRow key={c.id} {...c} />)}
+            <SelfUpdateCheckRow ctx={ctx} setCtx={setCtx} />
           </div>
         </div>
 

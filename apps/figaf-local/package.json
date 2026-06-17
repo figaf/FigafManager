@@ -1,6 +1,6 @@
 {
   "name": "figaf-local",
-  "version": "1.0.0",
+  "version": "26.5.0",
   "private": true,
   "description": "Figaf Installer — Electron desktop wizard for SAP BTP Cloud Foundry deployment",
   "main": "main-process/main.js",

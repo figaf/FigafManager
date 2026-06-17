@@ -1,10 +1,15 @@
 # Release automation. Triggered when a Release is *published* on
 # github.com/figaf/FigafManager (Releases tab → Draft a new release → Publish).
 #
+# The git tag is the single source of truth for the version. You do NOT bump
+# package.json by hand — each build job stamps the tag's version (e.g. v26.5.1
+# → 26.5.0) into the relevant package.json *before* building, so the artifacts
+# and the self-update version they report come straight from the tag.
+#
 # Flow:
-#   verify         (ubuntu)  — tag must equal both app package.json versions; run tests.
-#   build-manager  (ubuntu)  — build figaf-manager-app-<v>.zip, attach to the release.
-#   build-desktop  (windows) — build Figaf-Installer-Setup-<v>-x64.exe, attach to the release.
+#   verify         (ubuntu)  — sanity-check the tag is semver; run unit tests (gate).
+#   build-manager  (ubuntu)  — stamp version, build figaf-manager-app-<v>.zip, attach.
+#   build-desktop  (windows) — stamp version, build Figaf-Installer-Setup-<v>-x64.exe, attach.
 #
 # Single-repo: artifacts attach to this same repo's release via the built-in
 # GITHUB_TOKEN (no PAT). `permissions: contents: write` grants the upload right.
@@ -34,20 +39,16 @@ jobs:
 
       - run: npm ci
 
-      # The tag (e.g. v1.1.0) must match BOTH app versions, because those
-      # drive the artifact filenames AND the self-update version comparison
-      # (cloud reads apps/figaf-manager/package.json; desktop uses electron's
-      # app.getVersion() = apps/figaf-local/package.json).
-      - name: Verify tag matches app versions
+      # The tag must be a valid 3-part semver (e.g. v26.5.1) — electron-builder
+      # rejects anything else, and the self-update comparison assumes it.
+      - name: Validate tag is semver
         run: |
           VERSION="${TAG#v}"
-          MGR=$(node -p "require('./apps/figaf-manager/package.json').version")
-          LOC=$(node -p "require('./apps/figaf-local/package.json').version")
-          echo "tag=$VERSION  manager=$MGR  local=$LOC"
-          if [ "$VERSION" != "$MGR" ] || [ "$VERSION" != "$LOC" ]; then
-            echo "::error::Tag $TAG (=$VERSION) must match apps/figaf-manager ($MGR) and apps/figaf-local ($LOC) package.json versions"
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::Tag '$TAG' is not a valid semver version (expected vMAJOR.MINOR.PATCH, e.g. v26.5.1)"
             exit 1
           fi
+          echo "Releasing version $VERSION"
 
       - name: Run unit tests
         run: npm test
@@ -68,9 +69,13 @@ jobs:
 
       - run: npm ci
 
-      # build-zip.js downloads the Linux btp + cf binaries, stages a
-      # self-contained tree, npm-installs prod deps, and zips. All network
-      # targets are public (tools.hana.ondemand.com, packages.cloudfoundry.org).
+      # Stamp the tag version into the manager's package.json AFTER npm ci, so
+      # build-zip.js names the artifact figaf-manager-app-<tag>.zip and the
+      # bundled package.json (read at runtime by host.cloud.js#getInstalledVersion)
+      # reports the released version.
+      - name: Stamp version from tag
+        run: npm pkg set version="${TAG#v}" -w apps/figaf-manager
+
       - name: Build cloud zip
         run: npm run build:manager
 
@@ -96,6 +101,12 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: npm ci
+
+      # electron uses apps/figaf-local/package.json version as app.getVersion(),
+      # and electron-builder uses it for the installer name. Stamp from the tag.
+      - name: Stamp version from tag
+        shell: bash
+        run: npm pkg set version="${TAG#v}" -w apps/figaf-local
 
       # electron-builder NSIS target. Unsigned (no certificate configured) —
       # users get a SmartScreen prompt on first run, which is expected.

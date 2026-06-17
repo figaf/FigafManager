@@ -1,22 +1,20 @@
 /* global React */
-// <SelfUpdateBanner/> — top-of-wizard banner that surfaces a newer Figaf
-// Installer release when GitHub has one published.
+// Self-update presentation layer.
 //
-// On mount: calls window.figaf.update.checkSelf() once. If updateAvailable,
-// renders a 1-line banner with version delta + Update button + Dismiss x.
+// The version check itself runs ONCE in app.jsx and is stored in
+// ctx.selfUpdate.check. This module provides:
 //
-// Click behavior depends on host:
-//   - cloud   → opens the existing UpdatePreflightModal (which carries the
-//               cf-target check + full download/extract/push pipeline).
-//   - desktop → window.confirm + window.figaf.update.downloadAndInstallDesktop()
-//               which downloads the installer and launches it; the current
-//               app exits.
+//   window.figafTriggerSelfUpdate(check, setCtx)
+//       Shared action used by BOTH the welcome-screen check row
+//       (<SelfUpdateCheckRow/> in screen-setup.jsx) and the floating banner.
+//       cloud   → opens the pre-flight modal (cf-target check + redeploy chain).
+//       desktop → confirm, download the installer, hand off, quit.
+//       Desktop progress/errors are mirrored into ctx.selfUpdate so whichever
+//       view is mounted (row on welcome, banner elsewhere) can render them.
 //
-// Suppression: caller passes `suppress: true` (computed via figafIsLongRunningFlow
-// in app.jsx). The banner renders nothing in that case, so we don't pester
-// operators mid-deploy.
-//
-// Per-session dismiss only — we don't persist. A page reload re-evaluates.
+//   <SelfUpdateBanner/>
+//       Floating CTA shown above non-welcome screens. On welcome the check row
+//       owns the presentation, so app.jsx suppresses the banner there.
 
 (function () {
   "use strict";
@@ -46,93 +44,85 @@
     .sub-banner.failed strong { color: var(--danger, #DC2626); }
   `;
 
-  function SelfUpdateBanner({ ctx, setCtx, currentStepId, suppress }) {
-    const [check, setCheck]         = React.useState(null);
+  // ── Shared action ──────────────────────────────────────────────────────────
+  // Returns immediately for the cloud path (opens the modal). For desktop it
+  // drives the download via ctx.selfUpdate.installing / installError so the
+  // mounted view (row or banner) can reflect progress. On success the main
+  // process quits the app, so the "installing" state is the last thing seen.
+  async function triggerSelfUpdate(check, setCtx) {
+    if (!check || !check.ok || !check.updateAvailable) return;
+    const isCloud = check.host === "cloud";
+
+    if (isCloud) {
+      if (!(check.assets && check.assets.cloud)) return;
+      setCtx(c => ({ ...c, selfUpdate: { ...(c.selfUpdate || {}), preflightOpen: true } }));
+      return;
+    }
+
+    // Desktop
+    if (!(check.assets && check.assets.desktop)) return;
+    const ok = window.confirm(
+      "Download and install Figaf Installer v" + check.latest + "?\n\n" +
+      "The current app will close and the new installer will open."
+    );
+    if (!ok) return;
+
+    setCtx(c => ({ ...c, selfUpdate: { ...(c.selfUpdate || {}), installing: true, installError: null } }));
+    try {
+      const r = await window.figaf.update.downloadAndInstallDesktop({ assetUrl: check.assets.desktop.url });
+      if (!r || r.ok === false) {
+        setCtx(c => ({ ...c, selfUpdate: { ...(c.selfUpdate || {}), installing: false, installError: (r && r.error) || "install failed" } }));
+      }
+      // On success the main process spawns the installer and quits the app —
+      // this code does not run for long.
+    } catch (e) {
+      setCtx(c => ({ ...c, selfUpdate: { ...(c.selfUpdate || {}), installing: false, installError: (e && e.message) ? e.message : String(e) } }));
+    }
+  }
+
+  window.figafTriggerSelfUpdate = triggerSelfUpdate;
+
+  // ── Floating banner (non-welcome screens) ───────────────────────────────────
+  function SelfUpdateBanner({ ctx, setCtx, suppress }) {
     const [dismissed, setDismissed] = React.useState(false);
-    const [installing, setInstalling] = React.useState(false);
-    const [installError, setInstallError] = React.useState(null);
 
-    // Run the check once on mount. Fails open: any error leaves check=null
-    // and the banner stays hidden.
-    React.useEffect(() => {
-      let cancelled = false;
-      (async () => {
-        try {
-          const r = await window.figaf.update.checkSelf();
-          if (!cancelled) setCheck(r);
-        } catch (_) { /* leave check=null */ }
-      })();
-      return () => { cancelled = true; };
-    }, []);
-
-    // Feature flag + suppression + dismiss + "do we actually have an update?"
     const flag = window.figafModeFlags && window.figafModeFlags.features && window.figafModeFlags.features.selfUpdateBanner;
     if (!flag) return null;
     if (suppress) return null;
     if (dismissed) return null;
-    if (!check || !check.ok || !check.updateAvailable) return null;
 
-    const isCloud = check.host === "cloud";
-    const hasAsset = isCloud
-      ? !!(check.assets && check.assets.cloud)
-      : !!(check.assets && check.assets.desktop);
-    if (!hasAsset) return null; // release exists but is missing our artifact
+    const su = ctx.selfUpdate || {};
+    const check = su.check;
 
-    async function onUpdate() {
-      if (isCloud) {
-        // Open the existing PR 2/3/4 modal — it runs preflight, checkSelf
-        // again (re-using the same cached state), and the full chain.
-        setCtx(c => ({ ...c, selfUpdate: { ...(c.selfUpdate || {}), preflightOpen: true } }));
-        return;
-      }
-      // Desktop: confirm, download installer, hand off, quit.
-      const ok = window.confirm(
-        "Download and install Figaf Installer v" + check.latest + "?\n\n" +
-        "The current app will close and the new installer will open."
-      );
-      if (!ok) return;
-      setInstalling(true);
-      setInstallError(null);
-      try {
-        const r = await window.figaf.update.downloadAndInstallDesktop({
-          assetUrl: check.assets.desktop.url,
-        });
-        if (!r || r.ok === false) {
-          setInstalling(false);
-          setInstallError((r && r.error) || "install failed");
-          return;
-        }
-        // On success the main process spawns the installer and quits the
-        // current app — we won't see this code run for long.
-      } catch (e) {
-        setInstalling(false);
-        setInstallError(e && e.message ? e.message : String(e));
-      }
-    }
-
-    if (installing) {
+    // Desktop install in flight / failed — surfaced from ctx so the banner
+    // reflects an action that may have been kicked off from the welcome row.
+    if (su.installing) {
       return (
         <>
           <style>{STYLE}</style>
           <div className="sub-banner installing">
-            <span className="grow">Downloading installer v{check.latest}…</span>
+            <span className="grow">Downloading installer{check ? " v" + check.latest : ""}…</span>
           </div>
         </>
       );
     }
-    if (installError) {
+    if (su.installError) {
       return (
         <>
           <style>{STYLE}</style>
           <div className="sub-banner failed">
-            <span className="grow">
-              <strong>Update failed:</strong> {installError}
-            </span>
-            <button onClick={() => { setInstallError(null); }}>Dismiss</button>
+            <span className="grow"><strong>Update failed:</strong> {su.installError}</span>
+            <button onClick={() => setCtx(c => ({ ...c, selfUpdate: { ...(c.selfUpdate || {}), installError: null } }))}>Dismiss</button>
           </div>
         </>
       );
     }
+
+    if (!check || !check.ok || !check.updateAvailable) return null;
+    const isCloud = check.host === "cloud";
+    const hasAsset = isCloud ? !!(check.assets && check.assets.cloud) : !!(check.assets && check.assets.desktop);
+    if (!hasAsset) return null;
+
     return (
       <>
         <style>{STYLE}</style>
@@ -145,7 +135,7 @@
               </>
             )}
           </span>
-          <button onClick={onUpdate}>{isCloud ? "Update wizard…" : "Update installer…"}</button>
+          <button onClick={() => triggerSelfUpdate(check, setCtx)}>{isCloud ? "Update wizard…" : "Update installer…"}</button>
           <button className="dismiss" onClick={() => setDismissed(true)} title="Dismiss until next reload">×</button>
         </div>
       </>

@@ -183,7 +183,7 @@ function WinFrame({ title = "Figaf Manager", children }) {
 }
 
 // ───────────── Stepper rail ─────────────
-function StepperRail({ steps, current, maxReached }) {
+function StepperRail({ steps, current, maxReached, version }) {
   return (
     <aside className="rail">
       <div className="rail-brand">
@@ -213,7 +213,10 @@ function StepperRail({ steps, current, maxReached }) {
       </div>
 
       <div className="rail-foot">
-        <span>v2606</span>
+        {/* Version comes from package.json via host.getInstalledVersion(),
+            surfaced through ctx.selfUpdate.check.current — never hard-coded.
+            Renders empty until the startup check resolves (sub-second). */}
+        <span>{version ? `v${version}` : ""}</span>
         <span>figaf.com</span>
       </div>
     </aside>
@@ -293,14 +296,26 @@ function TerminalDrawer({ open, onToggle, lines, currentCmd }) {
 function CheckRow({ status, title, sub, meta }) {
   const iconClass = `check-icon ${status}`;
   let icon;
+  // `update` and `unreachable` have no CSS modifier in styles.css, so we set
+  // their colours inline: blue for an available update (a positive, actionable
+  // signal — distinct from the soft-blue spinner), neutral gray for an
+  // unreachable update server (NOT a red error — the current version is still
+  // fine to use). The base .check-icon class is already gray, so unreachable
+  // only needs its icon; update needs the blue fill.
+  let iconStyle;
   if (status === "done") icon = <Ico.Check />;
   else if (status === "running") icon = <Ico.Spinner />;
   else if (status === "error") icon = <Ico.X />;
-  else icon = <Ico.Dot style={{ opacity: .5 }} />;
+  else if (status === "update") {
+    icon = <Ico.Refresh />;
+    iconStyle = { background: "var(--fg-blue)", borderColor: "var(--fg-blue)", color: "#fff" };
+  } else if (status === "unreachable") {
+    icon = <Ico.Cloud />;
+  } else icon = <Ico.Dot style={{ opacity: .5 }} />;
 
   return (
     <div className="check-row">
-      <div className={iconClass}>{icon}</div>
+      <div className={iconClass} style={iconStyle}>{icon}</div>
       <div>
         <div className="check-title">{title}</div>
         {sub && <div className="check-sub">{sub}</div>}

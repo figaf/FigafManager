@@ -1,6 +1,6 @@
 {
   "name": "figaf-installer",
-  "version": "1.0.0",
+  "version": "26.5.0",
   "private": true,
   "description": "Figaf Installer monorepo — Electron desktop installer (figaf-local) and BTP-hosted wizard (figaf-manager)",
   "workspaces": [

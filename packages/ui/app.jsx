@@ -162,6 +162,24 @@ function App() {
     };
   }, []);
 
+  // Self-update version check — runs ONCE at app start. The result feeds both
+  // the welcome-screen check row (<SelfUpdateCheckRow/>) and the floating
+  // banner (<SelfUpdateBanner/>), so we fetch once and share via ctx. Fails
+  // open: a 404/network error becomes { ok:false }, which the views render as
+  // a neutral "unreachable" state — never a hard error, never a blocked wizard.
+  React.useEffect(() => {
+    const api = typeof window !== "undefined" ? window.figaf : null;
+    if (!api || !api.update || !api.update.checkSelf) return;
+    let cancelled = false;
+    (async () => {
+      let result;
+      try { result = await api.update.checkSelf(); }
+      catch (e) { result = { ok: false, error: (e && e.message) || "check failed" }; }
+      if (!cancelled) setCtx(c => ({ ...c, selfUpdate: { ...c.selfUpdate, check: result } }));
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const baseSteps = [
     { id: "welcome",  label: "Welcome",            sub: "Check prerequisites" },
     { id: "login",    label: "Sign in",            sub: "BTP · Cloud Foundry" },
@@ -253,18 +271,31 @@ function App() {
   }
 
   const currentStepId = STEPS[currentStep] && STEPS[currentStep].id;
-  const suppressSelfUpdate = typeof window !== "undefined" && window.figafIsLongRunningFlow
-    ? window.figafIsLongRunningFlow(ctx, currentStepId)
-    : false;
+  // Suppress the floating banner during long-running flows AND on the welcome
+  // screen — on welcome the in-checklist <SelfUpdateCheckRow/> owns the
+  // presentation (and carries its own Update button), so a second floating
+  // CTA would be redundant.
+  const suppressSelfUpdate =
+    currentStepId === "welcome" ||
+    (typeof window !== "undefined" && window.figafIsLongRunningFlow
+      ? window.figafIsLongRunningFlow(ctx, currentStepId)
+      : false);
 
   return (
     <WinFrame>
-      <StepperRail steps={STEPS} current={currentStep} maxReached={maxReached} />
+      <StepperRail
+        steps={STEPS}
+        current={currentStep}
+        maxReached={maxReached}
+        version={
+          (typeof window !== "undefined" && window.figafVersion) ||
+          (ctx.selfUpdate && ctx.selfUpdate.check ? ctx.selfUpdate.check.current : null)
+        }
+      />
       <div className="pane">
         <SelfUpdateBanner
           ctx={ctx}
           setCtx={setCtx}
-          currentStepId={currentStepId}
           suppress={suppressSelfUpdate}
         />
         {Screen}

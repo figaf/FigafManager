@@ -15,6 +15,13 @@ const auth = require("./auth");
 const xsuaa = require("./xsuaa-auth");
 const XSUAA_ACTIVE = xsuaa.isXsuaaActive();
 
+// Installer version — read once at boot from the manager's package.json (CI
+// stamps it from the release tag). Injected into the page so the renderer
+// displays it instantly, with no dependency on the self-update network check.
+const APP_VERSION = (() => {
+  try { return require("../package.json").version || null; } catch { return null; }
+})();
+
 const PORT = process.env.PORT || 8080;
 // Random per-boot secret — all sessions invalidate on container restart (acceptable for wizard use-case).
 const SESSION_SECRET = crypto.randomBytes(32).toString("hex");
@@ -286,6 +293,7 @@ app.get("/", requireAuth, (req, res) => {
     `window.figafMode = "hosted";`,
     `window.figafXsuaaMode = ${XSUAA_ACTIVE ? "true" : "false"};`,
     `window.figafSession = ${JSON.stringify({ sessionId: req.sessionId })};`,
+    `window.figafVersion = ${JSON.stringify(APP_VERSION)};`,
     "</script>",
   ].join("\n");
   const html = tmpl.replace("<!-- FIGAF_MODE_INJECT -->", injection);

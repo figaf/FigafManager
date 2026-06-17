@@ -1,8 +1,15 @@
 # Cutting a release
 
 Releases are automated by GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)).
-You publish a release on GitHub; CI builds both installers and attaches them.
-No local builds, no manual uploads.
+The **git tag is the single source of truth** for the version — you do **not**
+edit `package.json` by hand. You publish a release on GitHub; CI stamps the
+tag's version into the build, builds both installers, and attaches them.
+
+## Version scheme
+
+`vMAJOR.MINOR.PATCH` — standard semver (electron-builder requires it). We use
+year-month as the major: `v26.5.0`, `v26.5.1` … as pre-production iterations,
+switching to `v26.6.0` for the first production-ready release.
 
 ## One-time setup
 
@@ -10,40 +17,33 @@ Already done — nothing to configure. Single-repo: artifacts attach to this
 repo's own Releases tab via the built-in Actions token. No Personal Access
 Token, no secrets.
 
-## Steps to release version X.Y.Z
+## Steps to release version vX.Y.Z
 
-1. **Bump the version in both app manifests** (they must match the tag):
-   - `apps/figaf-manager/package.json` → `"version": "X.Y.Z"`
-   - `apps/figaf-local/package.json` → `"version": "X.Y.Z"`
-
-   These two drive the artifact filenames *and* the self-update version
-   comparison, so they are the source of truth. (Bump the root
-   `package.json` too for tidiness; it is not hard-checked.)
-
-2. **Commit and push to `master`:**
-   ```
-   git add apps/figaf-manager/package.json apps/figaf-local/package.json package.json
-   git commit -m "chore: release vX.Y.Z"
-   git push figaf master
-   ```
-
-3. **Draft the release on GitHub:**
+1. **Draft the release on GitHub** (no code changes needed):
    - Go to https://github.com/figaf/FigafManager/releases → **Draft a new release**.
-   - **Choose a tag** → type `vX.Y.Z` → "Create new tag on publish".
-   - Title + release notes as you like.
+   - **Choose a tag** → type `vX.Y.Z` (e.g. `v26.5.1`) → "Create new tag on publish".
+   - Title + release notes as you like. Tick **"Set as a pre-release"** for
+     iterations you don't want offered as the latest (see note below).
    - Click **Publish release**.
 
-4. **Watch it build** (~10 min) under the
+2. **Watch it build** (~10 min) under the
    [Actions tab](https://github.com/figaf/FigafManager/actions):
-   - `verify` — confirms the tag matches both package.json versions, runs tests.
-     If the tag ≠ versions, the whole run fails here and nothing is attached.
-   - `build-manager` (Linux) — attaches `figaf-manager-app-X.Y.Z.zip`.
-   - `build-desktop` (Windows) — attaches `Figaf-Installer-Setup-X.Y.Z-x64.exe`.
+   - `verify` — checks the tag is valid semver, runs unit tests. Gates the builds.
+   - `build-manager` (Linux) — stamps the version, attaches `figaf-manager-app-X.Y.Z.zip`.
+   - `build-desktop` (Windows) — stamps the version, attaches `Figaf-Installer-Setup-X.Y.Z-x64.exe`.
 
-5. **Done.** The two artifacts now hang off the release. Running wizards pick
+3. **Done.** The two artifacts now hang off the release. Running wizards pick
    up the update automatically:
    - **figaf-manager** dynos and **figaf-local** installs show the update
-     banner within a page refresh (they poll `releases/latest`).
+     banner / welcome-screen row within a page refresh (they poll `releases/latest`).
+
+## The committed `package.json` version
+
+`package.json` holds the **dev/in-progress** version (currently `26.5.0`); it is
+*not* what releases use — CI overrides it from the tag at build time. After
+shipping a release you may optionally bump the committed version to the next
+planned one to keep local dev output sensible, but it is not required for the
+release pipeline.
 
 ## What each artifact is
 
@@ -54,12 +54,13 @@ Token, no secrets.
 
 ## Gotchas
 
-- **Tag must match versions.** `v1.2.0` requires both app `package.json`
-  versions to read exactly `1.2.0`. The `verify` job enforces this.
+- **Tag must be valid semver.** `vMAJOR.MINOR.PATCH` (three numeric parts,
+  e.g. `v26.5.1`). The `verify` job rejects anything else — electron-builder
+  refuses to build a non-semver version. A bare `v2606` or `v26.5` will fail.
 - **Pre-release / draft releases are skipped** by the self-update check — it
   queries `releases/latest`, which GitHub only points at published,
-  non-prerelease releases. Mark a release "pre-release" to stage artifacts
-  without offering them to users.
+  non-prerelease releases. Tick "Set as a pre-release" to stage artifacts
+  without offering them to users yet.
 - **The desktop installer is unsigned.** Windows SmartScreen will warn on
   first launch of each new version. Code signing is a separate, future task.
 - **Re-running a release** (e.g. a build job failed and you re-ran it) is

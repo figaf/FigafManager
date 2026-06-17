@@ -1,5 +1,14 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+// Installer version — read synchronously from the app's package.json (CI
+// stamps it from the release tag at build time, and electron-builder bundles
+// it into the asar). Exposed as window.figafVersion so the renderer shows it
+// instantly, mirroring the cloud server's injection. sandbox:false (see
+// main.js webPreferences) permits this require.
+const APP_VERSION = (() => {
+  try { return require("../package.json").version || null; } catch { return null; }
+})();
+
 const listeners = new Map();
 
 function on(channel, handler) {
@@ -141,3 +150,7 @@ contextBridge.exposeInMainWorld("figaf", {
 
   on,
 });
+
+// Mirror the cloud server's window.figafVersion injection so both hosts expose
+// the installed version the same way to the renderer.
+contextBridge.exposeInMainWorld("figafVersion", APP_VERSION);

@@ -1,6 +1,6 @@
 {
   "name": "figaf-manager",
-  "version": "1.0.0",
+  "version": "26.5.0",
   "private": true,
   "description": "Figaf Manager — BTP-hosted wizard for deploying Figaf to SAP BTP Cloud Foundry",
   "main": "cloud/server.js",
