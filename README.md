@@ -93,14 +93,13 @@ written.
 
 ### Desktop — figaf-local
 
-Download from the [**Releases page**](../../releases/latest). Two builds are published:
+Download the portable app from the [**Releases page**](../../releases/latest):
 
 | File | Use it when |
 |------|-------------|
 | `Figaf-Installer-<v>-x64.exe` | **Just run it** — standalone portable app. Double-click to launch, no installation, no admin rights. |
-| `Figaf-Installer-Setup-<v>-x64.exe` | You want it installed — NSIS setup wizard with Start Menu + desktop shortcuts. |
 
-Either way, launch **Figaf Installer** and follow the wizard.
+Launch **Figaf Installer** and follow the wizard. (An NSIS setup installer is also produced by the build but is **not published** — the portable needs no installation.)
 
 ### Cloud — figaf-manager
 
@@ -108,8 +107,8 @@ You need **two files**:
 
 | File | Where to get it |
 |------|----------------|
-| `figaf-manager-app-<version>.zip` | Built by `npm run build:manager` or from a release |
-| `apps/figaf-manager/manifest.yml` | Checked into this repo — use as-is |
+| `figaf-manager-app-<version>.zip` | Attached to each [release](../../releases/latest), or built by `npm run build:manager` |
+| `manifest.yml` | Attached to the same release, or `apps/figaf-manager/manifest.yml` from this repo — use as-is |
 
 Deploy via BTP Cockpit: **Space → Applications → Deploy Application**, upload the `.zip` as the application archive and `manifest.yml` as the deployment descriptor, then click **Deploy**. Once green, open the assigned URL in a browser.
 
@@ -187,7 +186,7 @@ Produces **two** artifacts in `apps/figaf-local/dist/`, both self-contained (no 
 | `Figaf-Installer-<version>-x64.exe` | **Portable** — double-click to run, no install |
 | `Figaf-Installer-Setup-<version>-x64.exe` | **Installer** — NSIS setup wizard, creates shortcuts |
 
-The BTP deployment templates are bundled as `extraResources` inside both. To distribute, attach these to a tagged **GitHub Release** (don't commit them — `dist/` is gitignored to keep the ~80 MB+ binaries out of git history).
+The BTP deployment templates are bundled as `extraResources` inside both. The release workflow publishes only the **portable** exe (it needs no installation); the NSIS installer is built but not attached. Don't commit either — `dist/` is gitignored to keep the ~80 MB+ binaries out of git history.
 
 ### Build the BTP Cockpit zip
 

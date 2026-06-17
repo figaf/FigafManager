@@ -20,12 +20,6 @@ function SelfUpdateCheckRow({ ctx, setCtx }) {
   const su = ctx.selfUpdate || {};
   const check = su.check;
 
-  if (su.installing) {
-    return <CheckRow status="running" title="Installer update" sub="downloading installer…" />;
-  }
-  if (su.installError) {
-    return <CheckRow status="unreachable" title="Installer update" sub={"install failed: " + su.installError} />;
-  }
   if (!check) {
     return <CheckRow status="running" title="Installer version" sub="checking for updates…" />;
   }
@@ -41,7 +35,7 @@ function SelfUpdateCheckRow({ ctx, setCtx }) {
         style={{ padding: "5px 12px", fontSize: 12 }}
         onClick={() => window.figafTriggerSelfUpdate && window.figafTriggerSelfUpdate(check, setCtx)}
       >
-        {isCloud ? "Update wizard…" : "Update installer…"}
+        {isCloud ? "Update wizard…" : "Download…"}
       </button>
     ) : null;
     const sub = hasAsset

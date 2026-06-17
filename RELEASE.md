@@ -29,13 +29,18 @@ Token, no secrets.
 2. **Watch it build** (~10 min) under the
    [Actions tab](https://github.com/figaf/FigafManager/actions):
    - `verify` — checks the tag is valid semver, runs unit tests. Gates the builds.
-   - `build-manager` (Linux) — stamps the version, attaches `figaf-manager-app-X.Y.Z.zip`.
-   - `build-desktop` (Windows) — stamps the version, attaches `Figaf-Installer-Setup-X.Y.Z-x64.exe`.
+   - `build-manager` (Linux) — stamps the version, attaches `figaf-manager-app-X.Y.Z.zip`
+     **and** the CF `manifest.yml`.
+   - `build-desktop` (Windows) — stamps the version, attaches the **portable**
+     `Figaf-Installer-X.Y.Z-x64.exe` (the NSIS installer is built but not published).
 
-3. **Done.** The two artifacts now hang off the release. Running wizards pick
+3. **Done.** The artifacts now hang off the release. Running wizards pick
    up the update automatically:
-   - **figaf-manager** dynos and **figaf-local** installs show the update
-     banner / welcome-screen row within a page refresh (they poll `releases/latest`).
+   - **figaf-manager** dynos show the update banner / welcome-screen row within a
+     page refresh and can redeploy themselves in place.
+   - **figaf-local** installs show the same row; clicking it opens the release
+     page so the user can download the new portable and replace their copy (a
+     running portable can't overwrite itself in place).
 
 ## The committed `package.json` version
 
@@ -50,7 +55,8 @@ release pipeline.
 | Artifact | Built by | Consumed by |
 |---|---|---|
 | `figaf-manager-app-X.Y.Z.zip` | `npm run build:manager` | The cloud wizard's self-redeploy (`update:pushSelf`) and first-time cockpit upload |
-| `Figaf-Installer-Setup-X.Y.Z-x64.exe` | `npm run build:local` | The desktop self-update (`update:downloadAndInstallDesktop`) and first-time download |
+| `manifest.yml` | committed in repo (published verbatim) | First-time cockpit "Deploy Application" deployment descriptor |
+| `Figaf-Installer-X.Y.Z-x64.exe` (portable) | `npm run build:local` | First-time download, and the desktop self-update target (matched by `DESKTOP_ASSET_REGEX`; the row opens the release page to download it) |
 
 ## Gotchas
 

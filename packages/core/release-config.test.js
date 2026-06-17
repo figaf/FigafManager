@@ -77,12 +77,14 @@ test("CLOUD_ASSET_REGEX: matches the build-zip naming", () => {
   assert.equal(CLOUD_ASSET_REGEX.exec("Figaf-Installer-Setup-1.2.3-x64.exe"), null);
 });
 
-test("DESKTOP_ASSET_REGEX: matches the NSIS installer naming", () => {
+test("DESKTOP_ASSET_REGEX: matches the PORTABLE exe naming", () => {
   const { DESKTOP_ASSET_REGEX } = loadFresh();
-  const m = DESKTOP_ASSET_REGEX.exec("Figaf-Installer-Setup-1.2.3-x64.exe");
-  assert.ok(m, "should match");
+  // The published desktop asset is the portable exe (no "Setup").
+  const m = DESKTOP_ASSET_REGEX.exec("Figaf-Installer-1.2.3-x64.exe");
+  assert.ok(m, "should match the portable name");
   assert.equal(m[1], "1.2.3");
-  // Portable artifact must NOT match (different installable flow).
-  assert.equal(DESKTOP_ASSET_REGEX.exec("Figaf-Installer-1.2.3-x64.exe"), null);
+  // The NSIS "Setup" installer is built but NOT published — must NOT match,
+  // otherwise the self-update would point at an asset that isn't there.
+  assert.equal(DESKTOP_ASSET_REGEX.exec("Figaf-Installer-Setup-1.2.3-x64.exe"), null);
   assert.equal(DESKTOP_ASSET_REGEX.exec("figaf-manager-app-1.2.3.zip"), null);
 });

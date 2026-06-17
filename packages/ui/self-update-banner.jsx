@@ -8,9 +8,10 @@
 //       Shared action used by BOTH the welcome-screen check row
 //       (<SelfUpdateCheckRow/> in screen-setup.jsx) and the floating banner.
 //       cloud   → opens the pre-flight modal (cf-target check + redeploy chain).
-//       desktop → confirm, download the installer, hand off, quit.
-//       Desktop progress/errors are mirrored into ctx.selfUpdate so whichever
-//       view is mounted (row on welcome, banner elsewhere) can render them.
+//       desktop → opens the GitHub release page in the browser. The desktop
+//                 asset is the PORTABLE exe, which a running copy can't
+//                 overwrite in place, so the operator downloads the new
+//                 portable and replaces their copy manually.
 //
 //   <SelfUpdateBanner/>
 //       Floating CTA shown above non-welcome screens. On welcome the check row
@@ -39,16 +40,13 @@
       background: transparent; color: var(--ink-3, #6B7280);
       border: 0; font-size: 16px; padding: 0 6px; cursor: pointer;
     }
-    .sub-banner.installing { background: var(--surface-2, #F8FAFC); }
-    .sub-banner.failed     { background: #FEF2F2; border-color: var(--danger, #DC2626); }
-    .sub-banner.failed strong { color: var(--danger, #DC2626); }
   `;
 
   // ── Shared action ──────────────────────────────────────────────────────────
-  // Returns immediately for the cloud path (opens the modal). For desktop it
-  // drives the download via ctx.selfUpdate.installing / installError so the
-  // mounted view (row or banner) can reflect progress. On success the main
-  // process quits the app, so the "installing" state is the last thing seen.
+  // Cloud → opens the pre-flight modal (redeploy chain). Desktop → opens the
+  // GitHub release page so the operator can download the new portable exe and
+  // replace their copy. A running portable can't overwrite itself in place, so
+  // there is no in-app download/relaunch on desktop.
   async function triggerSelfUpdate(check, setCtx) {
     if (!check || !check.ok || !check.updateAvailable) return;
     const isCloud = check.host === "cloud";
@@ -59,24 +57,21 @@
       return;
     }
 
-    // Desktop
-    if (!(check.assets && check.assets.desktop)) return;
-    const ok = window.confirm(
-      "Download and install Figaf Installer v" + check.latest + "?\n\n" +
-      "The current app will close and the new installer will open."
-    );
-    if (!ok) return;
-
-    setCtx(c => ({ ...c, selfUpdate: { ...(c.selfUpdate || {}), installing: true, installError: null } }));
+    // Desktop — send the operator to the release page to grab the new portable.
+    // Prefer the deep-link to the matched asset; fall back to the release page.
+    const url =
+      (check.assets && check.assets.desktop && check.assets.desktop.url) ||
+      check.releaseUrl ||
+      null;
+    if (!url) return;
     try {
-      const r = await window.figaf.update.downloadAndInstallDesktop({ assetUrl: check.assets.desktop.url });
-      if (!r || r.ok === false) {
-        setCtx(c => ({ ...c, selfUpdate: { ...(c.selfUpdate || {}), installing: false, installError: (r && r.error) || "install failed" } }));
+      if (window.figaf && window.figaf.shell && window.figaf.shell.openExternal) {
+        await window.figaf.shell.openExternal(url);
+      } else if (typeof window.open === "function") {
+        window.open(url, "_blank", "noopener,noreferrer");
       }
-      // On success the main process spawns the installer and quits the app —
-      // this code does not run for long.
-    } catch (e) {
-      setCtx(c => ({ ...c, selfUpdate: { ...(c.selfUpdate || {}), installing: false, installError: (e && e.message) ? e.message : String(e) } }));
+    } catch (_e) {
+      // Best-effort: opening a browser tab should never throw into the UI.
     }
   }
 
@@ -93,30 +88,6 @@
 
     const su = ctx.selfUpdate || {};
     const check = su.check;
-
-    // Desktop install in flight / failed — surfaced from ctx so the banner
-    // reflects an action that may have been kicked off from the welcome row.
-    if (su.installing) {
-      return (
-        <>
-          <style>{STYLE}</style>
-          <div className="sub-banner installing">
-            <span className="grow">Downloading installer{check ? " v" + check.latest : ""}…</span>
-          </div>
-        </>
-      );
-    }
-    if (su.installError) {
-      return (
-        <>
-          <style>{STYLE}</style>
-          <div className="sub-banner failed">
-            <span className="grow"><strong>Update failed:</strong> {su.installError}</span>
-            <button onClick={() => setCtx(c => ({ ...c, selfUpdate: { ...(c.selfUpdate || {}), installError: null } }))}>Dismiss</button>
-          </div>
-        </>
-      );
-    }
 
     if (!check || !check.ok || !check.updateAvailable) return null;
     const isCloud = check.host === "cloud";
@@ -135,7 +106,7 @@
               </>
             )}
           </span>
-          <button onClick={() => triggerSelfUpdate(check, setCtx)}>{isCloud ? "Update wizard…" : "Update installer…"}</button>
+          <button onClick={() => triggerSelfUpdate(check, setCtx)}>{isCloud ? "Update wizard…" : "Download…"}</button>
           <button className="dismiss" onClick={() => setDismissed(true)} title="Dismiss until next reload">×</button>
         </div>
       </>

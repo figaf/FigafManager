@@ -150,9 +150,9 @@ All runtime calls go through `https.get` (Node built-in). No third-party HTTP li
 | 5 | `https://hub.docker.com/v2/repositories/figaf/app/tags?name=btp&page_size=10&ordering=last_updated` | `httpsJson` | `config:dockerHubBtpTags` | both | `User-Agent: Figaf-Manager` |
 | 6 | `https://github.com/figaf/Figaf-BTP-Deployment/archive/refs/heads/btp-users.zip` (or `$FIGAF_DEPLOYMENT_ZIP_URL`) | `httpsDownload` | `resolveDeployDir` | cloud | EULA cookie; follows up to 5 redirects |
 | 7 | `https://<subdomain>.authentication.<region>.hana.ondemand.com/saml/metadata` | `httpsText` | `connect:samlSsoUrl` | both | `User-Agent: Figaf-Manager`; follows up to 5 redirects; max 512 KB body |
-| 7a | `https://api.github.com/repos/afl-figaf/figaf-manager-release/releases/latest` (or `$FIGAF_RELEASE_REPO`) | `httpsJson` | `update:checkSelf` | both | `User-Agent: Figaf-Manager`; fails open on 404/network error |
+| 7a | `https://api.github.com/repos/figaf/FigafManager/releases/latest` (or `$FIGAF_RELEASE_REPO`) | `httpsJson` | `update:checkSelf` | both | `User-Agent: Figaf-Manager`; fails open on 404/network error |
 | 7b | `<release.assets[].browser_download_url>` matching `figaf-manager-app-<v>.zip` | `httpsDownload` | `update:downloadSelf` | cloud | URL is validated server-side against the result of the most recent `update:checkSelf` — renderer cannot pass an arbitrary URL |
-| 7c | `<release.assets[].browser_download_url>` matching `Figaf-Installer-Setup-<v>-x64.exe` | `httpsDownload` | `update:downloadAndInstallDesktop` | desktop | Same server-side validation as 7b |
+| 7c | `<release.assets[].browser_download_url>` matching `Figaf-Installer-<v>-x64.exe` (portable) | `httpsDownload` | `update:downloadAndInstallDesktop` | desktop | Same server-side validation as 7b. **Currently not invoked from the UI** — the desktop self-update opens the release page instead (row 14a); handler retained for a possible future in-place install path |
 
 ### Runtime — Constructed URLs (opened in browser, not fetched by the server)
 
@@ -165,6 +165,7 @@ All runtime calls go through `https.get` (Node built-in). No third-party HTTP li
 | 12 | `https://<hostname>-internal.<domain>` | `cf:pushManagerApprouter` | Internal approuter destination env var; never fetched by Node |
 | 13 | `https://<cockpitBase>/#/globalaccount/<gaGuid>/subaccount/<subGuid>/roles` | `connect:trustConfigUrl` | Returned to UI |
 | 14 | `https://<cockpitBase>/#/globalaccount/<gaGuid>/subaccount/<subGuid>/users` | `xsuaa:assignRoleCollectionPreflight` | Returned to UI |
+| 14a | `https://github.com/figaf/FigafManager/releases/...` (release `html_url`, or matched asset `browser_download_url`) | `shell:openExternal` (desktop self-update CTA in `triggerSelfUpdate`) | Passed to `host.openExternal()`. URL comes from the `update:checkSelf` response (GitHub-provided). Opened so the operator can download the new portable exe and replace their copy — a running portable can't self-overwrite |
 
 ### Build-time — `apps/figaf-manager/scripts/build-zip.js`
 
