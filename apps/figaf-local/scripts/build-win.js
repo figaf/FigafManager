@@ -65,7 +65,14 @@ for (const target of [fsp, fs.promises]) {
 
 const { build, Platform } = require("electron-builder");
 
-build({ targets: Platform.WINDOWS.createTarget() })
+// publish: "never" — we attach artifacts ourselves via `gh release upload` in
+// .github/workflows/release.yml. Without this, electron-builder sees the git
+// tag in CI (its default is publish-on-tag), tries to publish to GitHub on its
+// own, fails to detect a `repository`, and aborts with "Cannot detect
+// repository by .git/config". It also silences the v27 implicit-publish
+// deprecation warning. We don't use electron-updater, so the latest.yml /
+// blockmap metadata that publishing would emit is not needed.
+build({ targets: Platform.WINDOWS.createTarget(), publish: "never" })
   .then((artifacts) => {
     const exes = artifacts.filter((f) => f.toLowerCase().endsWith(".exe"));
     process.stdout.write("\nBuild complete. Artifacts:\n");
