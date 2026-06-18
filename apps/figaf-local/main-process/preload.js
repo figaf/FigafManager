@@ -84,6 +84,7 @@ contextBridge.exposeInMainWorld("figaf", {
     unmapRoute:            (a) => ipcRenderer.invoke("cf:unmapRoute", a),
     restage:               (a) => ipcRenderer.invoke("cf:restage", a),
     uninstallManager:      (a) => ipcRenderer.invoke("cf:uninstallManager", a || {}),
+    cockpitUrl:            () => ipcRenderer.invoke("cf:cockpitUrl"),
   },
 
   xsuaa: {

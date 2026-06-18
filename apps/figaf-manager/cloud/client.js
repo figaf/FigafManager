@@ -184,6 +184,7 @@
       unmapRoute:            function (a) { return rpc("cf:unmapRoute", a); },
       restage:               function (a) { return rpc("cf:restage", a); },
       uninstallManager:      function (a) { return rpc("cf:uninstallManager", a || {}); },
+      cockpitUrl:           function ()  { return rpc("cf:cockpitUrl"); },
     },
 
     xsuaa: {
