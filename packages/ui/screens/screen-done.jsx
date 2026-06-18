@@ -2,6 +2,42 @@
 
 const fg = () => (typeof window !== "undefined" && window.figaf) || null;
 
+// Shared by both Finish screens: fetch the BTP cockpit deep-link for the
+// current CF space once on mount. Stays null if the orchestrator can't derive
+// it (e.g. a cf --guid lookup failed) — the cell is hidden in that case.
+function useCockpitUrl() {
+  const [url, setUrl] = React.useState(null);
+  React.useEffect(() => {
+    const api = fg();
+    if (!api || !api.cf || !api.cf.cockpitUrl) return;
+    let alive = true;
+    api.cf.cockpitUrl()
+      .then((r) => { if (alive && r && r.ok && r.url) setUrl(r.url); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  return url;
+}
+
+// "BTP Cockpit" detail cell — clickable, opens the CF space's Applications
+// page externally. Renders nothing until/unless a URL is available.
+function CockpitCell({ url }) {
+  if (!url) return null;
+  return (
+    <div className="cell" style={{ gridColumn: "1 / -1", borderRight: 0 }}>
+      <div className="k">BTP Cockpit</div>
+      <div
+        className="v"
+        style={{ color: "var(--fg-blue)", cursor: "pointer", overflowWrap: "anywhere" }}
+        onClick={() => fg()?.shell.openExternal(url)}
+        title="Open the CF space in the BTP cockpit"
+      >
+        {url}
+      </div>
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════
 // 7. Completion
 // ═══════════════════════════════════════════════════════════
@@ -32,6 +68,7 @@ function ScreenDone({ ctx, setCtx, setStep, STEPS }) {
   }
 
   const [deleteState, setDeleteState] = React.useState("idle"); // idle | running | done | error
+  const cockpitUrl = useCockpitUrl();
 
   async function handleDeleteManager() {
     const api = fg();
@@ -71,6 +108,7 @@ function ScreenDone({ ctx, setCtx, setStep, STEPS }) {
           <div className="cell"><div className="k">Auth</div><div className="v">figaf-xsuaa</div></div>
           <div className="cell"><div className="k">Org / Space</div><div className="v">{ctx.login.org || "—"} / {ctx.login.space || "—"}</div></div>
           <div className="cell"><div className="k">Location ID</div><div className="v">{ctx.config.locationId || "—"}</div></div>
+          <CockpitCell url={cockpitUrl} />
         </div>
 
         {isHosted && deleteState === "done" && (
@@ -118,6 +156,7 @@ function ScreenDoneUpdate({ ctx, setCtx, setStep }) {
   const route = verify.route;
   const url = route ? (route.startsWith("http") ? route : `https://${route}`) : null;
   const [clearing, setClearing] = React.useState(false);
+  const cockpitUrl = useCockpitUrl();
 
   function openRoute() {
     if (url) fg()?.shell.openExternal(url);
@@ -157,6 +196,7 @@ function ScreenDoneUpdate({ ctx, setCtx, setStep }) {
           <div className="cell"><div className="k">Current image</div><div className="v">{currentImage}</div></div>
           <div className="cell"><div className="k">Router</div><div className="v">{verify.routerHealth || "—"}</div></div>
           <div className="cell"><div className="k">Org / Space</div><div className="v">{ctx.login.org || "—"} / {ctx.login.space || "—"}</div></div>
+          <CockpitCell url={cockpitUrl} />
         </div>
       </div>
 
