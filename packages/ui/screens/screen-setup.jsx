@@ -9,7 +9,9 @@ const fg = () => (typeof window !== "undefined" && window.figaf) || null;
 // stored at ctx.selfUpdate.check). Maps the result to a CheckRow state:
 //   no result yet         → running  ("checking for updates…")
 //   ok:false (404/network)→ unreachable (gray — NOT an error; current build is fine)
-//   updateAvailable       → update (blue) + an "Update…" button in the meta slot
+//   updateAvailable       → update (blue). Cloud shows a "continue after login"
+//                           note (the redeploy needs a cf login from the Login
+//                           step); desktop shows a "Download…" button.
 //   up to date            → done (green)
 // Crucially this row is NOT part of ctx.prereqs, so it never gates the
 // "Continue" button — an unreachable update server must not block the wizard.
@@ -29,15 +31,27 @@ function SelfUpdateCheckRow({ ctx, setCtx }) {
   if (check.updateAvailable) {
     const isCloud = check.host === "cloud";
     const hasAsset = isCloud ? !!(check.assets && check.assets.cloud) : !!(check.assets && check.assets.desktop);
-    const meta = hasAsset ? (
-      <button
-        className="btn btn-primary"
-        style={{ padding: "5px 12px", fontSize: 12 }}
-        onClick={() => window.figafTriggerSelfUpdate && window.figafTriggerSelfUpdate(check, setCtx)}
-      >
-        {isCloud ? "Update wizard…" : "Download…"}
-      </button>
-    ) : null;
+    // Cloud self-update redeploys through the pre-flight modal, which requires
+    // an active cf login — and that only happens on the Login step. Offering an
+    // "Update wizard…" button here would just open a modal that reports "you're
+    // not logged in to cf". So on the welcome screen we keep the banner but
+    // defer the action: the floating <SelfUpdateBanner/> on post-login screens
+    // owns the actual trigger. Desktop has no such dependency (Download just
+    // opens the GitHub release page), so it keeps its button.
+    let meta = null;
+    if (hasAsset) {
+      meta = isCloud ? (
+        <span style={{ fontStyle: "italic" }}>continue with update after login on next step</span>
+      ) : (
+        <button
+          className="btn btn-primary"
+          style={{ padding: "5px 12px", fontSize: 12 }}
+          onClick={() => window.figafTriggerSelfUpdate && window.figafTriggerSelfUpdate(check, setCtx)}
+        >
+          Download…
+        </button>
+      );
+    }
     const sub = hasAsset
       ? `v${check.current} → v${check.latest}`
       : `v${check.current} → v${check.latest} · release missing artifact`;

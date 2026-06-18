@@ -250,7 +250,7 @@ function App() {
     case "config":            Screen = <ScreenConfig ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
     case "progress":          Screen = <ScreenProgress ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
     case "deploy":            Screen = <ScreenDeploy ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
-    case "xsuaa-upgrade":     Screen = <ScreenXsuaaUpgrade ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
+    case "xsuaa-upgrade":     Screen = <ScreenXsuaaUpgrade ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} setStep={setStepRaw} STEPS={STEPS} />; break;
     case "xsuaa-assign-role": Screen = <ScreenXsuaaAssignRole ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
     case "updateConfig":      Screen = <ScreenUpdateConfig ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
     case "updateProgress":    Screen = <ScreenUpdateProgress ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
@@ -273,8 +273,9 @@ function App() {
   const currentStepId = STEPS[currentStep] && STEPS[currentStep].id;
   // Suppress the floating banner during long-running flows AND on the welcome
   // screen — on welcome the in-checklist <SelfUpdateCheckRow/> owns the
-  // presentation (and carries its own Update button), so a second floating
-  // CTA would be redundant.
+  // presentation (desktop carries its own Download button; cloud defers to
+  // this banner after login), so a second floating CTA there would be
+  // redundant.
   const suppressSelfUpdate =
     currentStepId === "welcome" ||
     (typeof window !== "undefined" && window.figafIsLongRunningFlow

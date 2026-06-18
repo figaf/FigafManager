@@ -106,7 +106,7 @@
               </>
             )}
           </span>
-          <button onClick={() => triggerSelfUpdate(check, setCtx)}>{isCloud ? "Update wizard…" : "Download…"}</button>
+          <button onClick={() => triggerSelfUpdate(check, setCtx)}>{isCloud ? "Update" : "Download"}</button>
           <button className="dismiss" onClick={() => setDismissed(true)} title="Dismiss until next reload">×</button>
         </div>
       </>

@@ -40,10 +40,10 @@ test("isLongRunningFlow: all prereqs done → false", () => {
   }, null), false);
 });
 
-test("isLongRunningFlow: btp/cf login running → true", () => {
+test("isLongRunningFlow: btp/cf login running → false (banner stays visible during login)", () => {
   const w = loadFresh();
-  assert.equal(w.figafIsLongRunningFlow({ login: { btpStatus: "running" } }, null), true);
-  assert.equal(w.figafIsLongRunningFlow({ login: { cfStatus: "running" } }, null), true);
+  assert.equal(w.figafIsLongRunningFlow({ login: { btpStatus: "running" } }, null), false);
+  assert.equal(w.figafIsLongRunningFlow({ login: { cfStatus: "running" } }, null), false);
 });
 
 test("isLongRunningFlow: cf push in flight → true", () => {

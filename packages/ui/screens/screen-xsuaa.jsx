@@ -55,7 +55,7 @@ const ALL_PHASES = [
 // change just this constant; the orchestrator handler accepts the role param.
 const ASSIGN_ROLE = "FigafManagerAdmin";
 
-function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack }) {
+function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
   // Checkbox state is local to this screen — not threaded through global ctx.
   // Default on per the task spec; the operator can opt out before "Start
   // upgrade" but not mid-run (the checkbox disables once started).
@@ -79,6 +79,59 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack }) {
   // /setup (the root cause of the symptom that prompted this poll in the
   // first place).
   const [outcome, setOutcome] = React.useState(null);
+
+  // ── Pre-flight: are we targeting the SAME cf org/space the manager itself
+  // is deployed in? The upgrade pushes a sibling approuter (cf push
+  // figaf-manager-approuter) into the *current* cf target, and CF requires the
+  // approuter and the manager to live in the same space (the approuter maps
+  // the manager's internal route). If the operator's cf session has drifted to
+  // a different org/space/landscape, push-approuter fails partway and leaves a
+  // half-applied upgrade. So we gate the whole flow on a target match.
+  //
+  // Reuses update:selfTarget — the same read-only probe (`cf api` + `cf target`
+  // compared against the manager's own VCAP_APPLICATION coordinates) that the
+  // self-update pre-flight modal uses. status: "checking" | "ok" | "mismatch"
+  // | "error". Runs on mount; navigating away to login and back remounts the
+  // screen, which re-runs it (no manual re-check button needed).
+  const [spaceCheck, setSpaceCheck] = React.useState({ status: "checking", data: null, error: null });
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const api = fg();
+    if (!api || !api.update || !api.update.selfTarget) {
+      setSpaceCheck({ status: "error", data: null, error: "cf-target probe unavailable" });
+      return;
+    }
+    setSpaceCheck({ status: "checking", data: null, error: null });
+    api.update.selfTarget().then((r) => {
+      if (cancelled) return;
+      if (!r || r.ok === false) {
+        setSpaceCheck({ status: "error", data: null, error: (r && r.error) || "could not read cf target" });
+        return;
+      }
+      const m = r.mismatch || {};
+      // "Same space" = same landscape AND org AND space. A space name alone is
+      // ambiguous across orgs/landscapes, and a wrong api endpoint is just as
+      // fatal to the approuter push, so all three must match.
+      const matched = r.loggedIn && !m.apiUrl && !m.org && !m.space;
+      setSpaceCheck({ status: matched ? "ok" : "mismatch", data: r, error: null });
+    }).catch((e) => {
+      if (!cancelled) setSpaceCheck({ status: "error", data: null, error: e.message });
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // "Go to login" — jump back to the login step so the operator can re-target
+  // (the login screen's "Switch Org" re-runs cf target -o/-s). ctx.choice stays
+  // "xsuaa-upgrade", so Continue → Choice (still selected) → Begin upgrade
+  // brings them right back here, remounting and re-running the check.
+  function goToLogin() {
+    if (!setStep || !Array.isArray(STEPS)) return;
+    const i = STEPS.findIndex(s => s && s.id === "login");
+    if (i >= 0) setStep(i);
+  }
+
+  const spaceOk = spaceCheck.status === "ok";
 
   // Reflect checkbox toggles into the phase list while still in pre-run state.
   React.useEffect(() => {
@@ -110,6 +163,9 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack }) {
   }, [markPhase]);
 
   async function runUpgrade() {
+    // Defense in depth — the Start button is already disabled until the
+    // CF-target check passes, but never kick off a push into the wrong space.
+    if (spaceCheck.status !== "ok") return;
     setStarted(true);
     setError(null);
     const api = fg();
@@ -337,6 +393,60 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack }) {
   // The footer Cancel/Back buttons should disappear once the upgrade is
   // running (no graceful rollback path mid-flow).
 
+  // The CF-target pre-check, rendered as the FIRST row of the task list (above
+  // the upgrade phases) so it reads like one of the checks. On a mismatch it
+  // surfaces the manager's own org/space plus a "Go to login" button.
+  let spaceCheckRow;
+  if (spaceCheck.status === "checking") {
+    spaceCheckRow = (
+      <CheckRow key="cf-target" status="running"
+        title="Checking Cloud Foundry target"
+        sub="Confirming you're targeting the manager's space" />
+    );
+  } else if (spaceCheck.status === "ok") {
+    const t = (spaceCheck.data && spaceCheck.data.target) || {};
+    spaceCheckRow = (
+      <CheckRow key="cf-target" status="done"
+        title="Targeting the manager's space"
+        sub={`${t.orgName} / ${t.spaceName}`} />
+    );
+  } else {
+    const goBtn = (
+      <button className="btn" style={{ padding: "5px 12px", fontSize: 12 }}
+        onClick={goToLogin}
+        title="Go back to the login step to target the manager's org / space">
+        <Ico.ArrowLeft /> Go to login
+      </button>
+    );
+    if (spaceCheck.status === "error") {
+      spaceCheckRow = (
+        <CheckRow key="cf-target" status="error"
+          title="Couldn't verify Cloud Foundry target"
+          sub={spaceCheck.error || "cf target check failed"}
+          meta={goBtn} />
+      );
+    } else {
+      const d = spaceCheck.data || {};
+      const t = d.target || {};
+      const cur = d.current || {};
+      const wrongLandscape = !!(d.mismatch && d.mismatch.apiUrl);
+      const sub = (
+        <>
+          Expected <strong>{t.orgName} / {t.spaceName}</strong>{wrongLandscape ? " (different landscape)" : ""}.{" "}
+          {d.loggedIn
+            ? <>You're on <strong>{cur.orgName} / {cur.spaceName}</strong>.</>
+            : <>You're not logged in to cf.</>}
+        </>
+      );
+      spaceCheckRow = (
+        <CheckRow key="cf-target" status="error"
+          title="Wrong Cloud Foundry target"
+          sub={sub}
+          meta={goBtn} />
+      );
+    }
+  }
+
   return (
     <>
       <div className="pane-body">
@@ -378,6 +488,7 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack }) {
         )}
 
         <div className="task-list">
+          {spaceCheckRow}
           {phases.map(p => (
             <CheckRow
               key={p.id}
@@ -449,7 +560,16 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack }) {
           <>
             {onBack && <button className="btn" onClick={onBack}><Ico.ArrowLeft /> Back</button>}
             <div className="spacer" />
-            <button className="btn btn-primary" onClick={runUpgrade}>
+            <button
+              className="btn btn-primary"
+              onClick={runUpgrade}
+              disabled={!spaceOk}
+              title={
+                spaceCheck.status === "checking" ? "Verifying Cloud Foundry target…"
+                : spaceOk ? "Begin the XSUAA upgrade"
+                : "Target the manager's Cloud Foundry space first"
+              }
+            >
               <Ico.Shield /> Start upgrade
             </button>
           </>

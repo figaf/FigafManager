@@ -42,17 +42,22 @@
   };
 
   // Banner suppression helper — used by <SelfUpdateBanner/> to hide itself
-  // while the operator is mid-flow (deploying, logging in, upgrading XSUAA,
-  // etc). The reason we suppress is operator-experience: interrupting an
-  // active deploy with "hey, update the wizard?" is hostile, and a stale
-  // banner during a 10-minute service-create wait is just noise.
+  // while the operator is mid-flow (deploying, upgrading XSUAA, etc). The
+  // reason we suppress is operator-experience: interrupting an active deploy
+  // with "hey, update the wizard?" is hostile, and a stale banner during a
+  // 10-minute service-create wait is just noise.
+  //
+  // NOTE: login (btp/cf "running") is deliberately NOT a suppressing flow.
+  // Login is long-running and multi-prompt (SSO, account/org/space selection),
+  // but knowing an update is available *before* investing in login is useful,
+  // not disruptive — and toggling on the login status made the banner flicker
+  // out exactly when the operator was picking an account/org. Keep it visible.
   //
   // Add an entry here when introducing a new long-running flow rather than
   // letting the banner peek through in surprising places.
   window.figafIsLongRunningFlow = function (ctx, stepId) {
     if (!ctx) return false;
     if (ctx.prereqsStarted && (ctx.prereqs || []).some(p => p.status === "pending" || p.status === "running")) return true;
-    if (ctx.login && (ctx.login.btpStatus === "running" || ctx.login.cfStatus === "running")) return true;
     if (ctx.pushStatus === "running") return true;
     if (ctx.deployStarted && ctx.pushStatus !== "done" && ctx.pushStatus !== "error" && ctx.pushStatus !== "idle") return true;
     if (ctx.update && ctx.update.resumeState) return true;

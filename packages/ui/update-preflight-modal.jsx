@@ -246,7 +246,7 @@
       const hasUpdate = ck.ok && ck.updateAvailable && ck.assets && ck.assets.cloud;
       const summary = !clean
         ? !pf.loggedIn
-          ? "You're not logged in to cf. Log in to the manager's landscape on the Login screen, then re-run pre-flight."
+          ? "You're not logged in to cf. Log in to the manager's landscape on the Login screen, then reopen this dialog."
           : pf.mismatch.apiUrl
             ? "Your cf CLI is logged in to a different CF landscape. Log out + re-login to the manager's landscape."
             : "Your cf CLI is targeted at a different org/space. Use Switch Org on the Login screen to re-target."
@@ -278,7 +278,6 @@
             want={pf.target.spaceName} got={pf.current.spaceName} match={!pf.mismatch.space} />
 
           <div className="pf-actions">
-            <button className="btn-secondary" onClick={loadPreflight}>Re-run pre-flight</button>
             <button
               className="btn-primary"
               disabled={!clean || !hasUpdate}
