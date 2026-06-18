@@ -9,6 +9,7 @@ const {
   parseSsoUrlFromMetadata,
   cockpitBaseFromLicense,
   trustConfigUrl,
+  cockpitSpaceUrl,
   regionFromLandscape,
   findTrustOrigin,
   pickIasTenant,
@@ -60,6 +61,40 @@ test("trustConfigUrl builds the trial deep-link with GUIDs", () => {
 test("trustConfigUrl builds the productive deep-link", () => {
   const url = trustConfigUrl({ licenseType: "Subscription", gaGuid: "GA-1", subGuid: "SUB-2" });
   assert.equal(url, "https://cockpit.btp.cloud.sap/cockpit/#/globalaccount/GA-1/subaccount/SUB-2/trustConfiguration");
+});
+
+// ── cockpitSpaceUrl ──────────────────────────────────────────────────────
+test("cockpitSpaceUrl builds the trial deep-link to the space's applications page", () => {
+  const url = cockpitSpaceUrl({
+    licenseType: "TRIAL",
+    gaGuid: "1c8cdf14-d67c-4385-a3ea-5609c246ac60",
+    subGuid: "dd9a9c34-d48c-4995-854c-bdced0431e8e",
+    orgGuid: "95d285f2-9944-4be0-afb0-834b76d71d13",
+    spaceGuid: "7e292d22-2d50-45e9-8151-5321aebf27e4",
+  });
+  assert.equal(
+    url,
+    "https://cockpit.hanatrial.ondemand.com/trial/#/globalaccount/1c8cdf14-d67c-4385-a3ea-5609c246ac60/subaccount/dd9a9c34-d48c-4995-854c-bdced0431e8e/org/95d285f2-9944-4be0-afb0-834b76d71d13/space/7e292d22-2d50-45e9-8151-5321aebf27e4/applications"
+  );
+});
+
+test("cockpitSpaceUrl uses the productive base when licenseType is not TRIAL", () => {
+  const url = cockpitSpaceUrl({
+    licenseType: null,
+    gaGuid: "ga-1", subGuid: "sub-2", orgGuid: "org-3", spaceGuid: "sp-4",
+  });
+  assert.equal(
+    url,
+    "https://cockpit.btp.cloud.sap/cockpit/#/globalaccount/ga-1/subaccount/sub-2/org/org-3/space/sp-4/applications"
+  );
+});
+
+test("cockpitSpaceUrl returns null when any GUID is missing", () => {
+  const base = { licenseType: "TRIAL", gaGuid: "g", subGuid: "s", orgGuid: "o", spaceGuid: "sp" };
+  assert.equal(cockpitSpaceUrl({ ...base, gaGuid: null }), null);
+  assert.equal(cockpitSpaceUrl({ ...base, subGuid: "" }), null);
+  assert.equal(cockpitSpaceUrl({ ...base, orgGuid: undefined }), null);
+  assert.equal(cockpitSpaceUrl({ ...base, spaceGuid: null }), null);
 });
 
 // ── regionFromLandscape ──────────────────────────────────────────────────

@@ -45,6 +45,17 @@ function trustConfigUrl({ licenseType, gaGuid, subGuid }) {
   return `${base}#/globalaccount/${gaGuid}/subaccount/${subGuid}/trustConfiguration`;
 }
 
+// Cockpit deep-link to a CF space's Applications page. All four GUIDs are
+// required; returns null if any is missing so callers can hide the link rather
+// than emit a broken URL. licenseType selects the trial vs productive cockpit
+// base (see cockpitBaseFromLicense). GUIDs are [0-9a-f-] only, so no encoding
+// is needed — matching trustConfigUrl.
+function cockpitSpaceUrl({ licenseType, gaGuid, subGuid, orgGuid, spaceGuid }) {
+  if (!gaGuid || !subGuid || !orgGuid || !spaceGuid) return null;
+  const base = cockpitBaseFromLicense(licenseType);
+  return `${base}#/globalaccount/${gaGuid}/subaccount/${subGuid}/org/${orgGuid}/space/${spaceGuid}/applications`;
+}
+
 // Derive the regional XSUAA/IAS *authentication* host segment from a CF
 // landscape label. "cf-us10-001" → "us10"; a bare region passes through; empty
 // → null. The CF landscape label carries a per-cluster discriminator (-001,
@@ -139,6 +150,7 @@ module.exports = {
   parseSsoUrlFromMetadata,
   cockpitBaseFromLicense,
   trustConfigUrl,
+  cockpitSpaceUrl,
   regionFromLandscape,
   findTrustOrigin,
   pickIasTenant,
