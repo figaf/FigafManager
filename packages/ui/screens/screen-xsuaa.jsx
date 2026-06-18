@@ -602,7 +602,7 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
             */}
             {outcome.managerMode === "xsuaa" ? (
               <button className="btn btn-primary" onClick={continueToWizard} title="Reload through the approuter — you'll be prompted to sign in via SAP IAS">
-                Continue to wizard <Ico.ArrowRight />
+                Continue <Ico.ArrowRight />
               </button>
             ) : outcome.managerMode === "timeout" ? (
               <button className="btn btn-primary" onClick={continueToWizard} title="The probe timed out; the manager may or may not be ready. Click to attempt continuation anyway.">

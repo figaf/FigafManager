@@ -26,7 +26,8 @@ storage, deploy-template sourcing).
 | Install all dependencies | `npm install` |
 | Run desktop app (dev) | `npm run start:local` |
 | Run cloud app locally (dev) | `npm run start:manager` |
-| Build Windows app (installer + portable `.exe`) | `npm run build:local` |
+| Run tests | `npm test` |
+| Build Windows app (portable `.exe`) | `npm run build:local` |
 | Build BTP Cockpit `.zip` | `npm run build:manager` |
 
 ---
@@ -52,7 +53,8 @@ storage, deploy-template sourcing).
    `figaf-xsuaa` (OAuth2/role scopes), and assigns the `PI_Administrator` role
    collection to your user.
 6. **Pushes the app** — `cf push --vars-file vars.yml`, then opens the deployed
-   URL once it's live.
+   URL once it's live. The Finish screen also links straight to the new app's
+   space in the BTP Cockpit.
 
 A collapsible terminal drawer streams every CLI command in real time, so
 nothing is hidden behind the GUI. Secrets (service keys, JWTs, setup tokens) are
@@ -229,7 +231,10 @@ figaf-installer/                          ← workspace root (npm workspaces)
     │   ├── orchestrator.js                 ~38 IPC handlers + HostAdapter typedef
     │   ├── audit-log.js                     append-only audit log (with secret redaction)
     │   ├── redact-service-key.js            scrubs service-key / JWT material from output
-    │   ├── saml-connect.js                  pure SAML/IdP-trust logic (Connect flow)
+    │   ├── saml-connect.js                  pure SAML/IdP-trust + cockpit deep-link logic
+    │   ├── btp-target.js, cf-target.js      pure parsers for `btp` / `cf` target output
+    │   ├── manifest-patch.js                rewrites the manifest app name for self-update
+    │   ├── release-config.js                self-update release discovery (GitHub assets)
     │   ├── db-schemas.js                    PostgreSQL params + hyperscaler/trial defaults
     │   └── index.js
     ├── ui/                               shared React renderer (no bundler)
