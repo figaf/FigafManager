@@ -63,6 +63,8 @@ Binary resolved via `host.resolveBinary("cf")`.
 | 5 | `cf domains` | `cf:domains` | both | Filters to `cfapps.*` domains |
 | 6 | `cf marketplace -e postgresql-db` | `cf:marketplacePostgresql` | both | |
 | 7 | `cf marketplace -e <offering>` | `cf:marketplaceCheck` | both | |
+| 7a | `cf org <orgName> --guid` | `cf:cockpitUrl` | both | Resolve org GUID for the Finish-screen cockpit deep-link |
+| 7b | `cf space <spaceName> --guid` | `cf:cockpitUrl` | both | Resolve space GUID for the Finish-screen cockpit deep-link |
 
 ### Service Lifecycle
 
@@ -164,6 +166,7 @@ All runtime calls go through `https.get` (Node built-in). No third-party HTTP li
 | 12 | `https://<hostname>-internal.<domain>` | `cf:pushManagerApprouter` | Internal approuter destination env var; never fetched by Node |
 | 13 | `https://<cockpitBase>/#/globalaccount/<gaGuid>/subaccount/<subGuid>/roles` | `connect:trustConfigUrl` | Returned to UI |
 | 14 | `https://<cockpitBase>/#/globalaccount/<gaGuid>/subaccount/<subGuid>/users` | `xsuaa:assignRoleCollectionPreflight` | Returned to UI |
+| 14b | `https://<cockpitBase>/#/globalaccount/<gaGuid>/subaccount/<subGuid>/org/<orgGuid>/space/<spaceGuid>/applications` | `cf:cockpitUrl` | Returned to UI; opened via `shell.openExternal` from the Finish screens. `cockpitBase` from `cockpitBaseFromLicense(state.licenseType)` |
 | 14a | `https://github.com/figaf/FigafManager/releases/...` (release `html_url`, or matched asset `browser_download_url`) | `shell:openExternal` (desktop self-update CTA in `triggerSelfUpdate`) | Passed to `host.openExternal()`. URL comes from the `update:checkSelf` response (GitHub-provided). Opened so the operator can download the new portable exe and replace their copy — a running portable can't self-overwrite |
 
 ### Build-time — `apps/figaf-manager/scripts/build-zip.js`
@@ -180,7 +183,7 @@ All runtime calls go through `https.get` (Node built-in). No third-party HTTP li
 | Category | Count | Scope |
 |----------|-------|-------|
 | BTP CLI commands | 21 | both / cloud |
-| CF CLI commands (direct) | 41 | both / cloud |
+| CF CLI commands (direct) | 43 | both / cloud |
 | CF v3 API (`cf curl`) | 7 | cloud only |
 | Other process spawns (system) | 8 | desktop / cloud / build |
 | HTTPS fetches (runtime) | 10 | both / cloud / desktop |

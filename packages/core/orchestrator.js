@@ -12,6 +12,7 @@ const {
   parseSsoUrlFromMetadata,
   cockpitBaseFromLicense,
   trustConfigUrl,
+  cockpitSpaceUrl,
   regionFromLandscape,
   findTrustOrigin,
   pickIasTenant,
@@ -2310,6 +2311,40 @@ function createOrchestrator({ host, send, audit }) {
       const base = cockpitBaseFromLicense(state.licenseType);
       const url = `${base}#/globalaccount/${encodeURIComponent(gaGuid)}/subaccount/${encodeURIComponent(sub)}/users`;
       return { ok: true, url, roleCollection: "FigafManagerOperator" };
+    },
+
+    /**
+     * Build the cockpit deep-link to the deployed app's CF space (Applications
+     * page), shown on the Finish screens. Composed from the GA + subaccount
+     * GUIDs the wizard already holds plus the org/space GUIDs resolved live via
+     * the cf CLI. Read-only; works on desktop and cloud (no isHosted gate).
+     *
+     * Precondition: the cf CLI must already be targeted at state.org/state.space
+     * (true on the Finish screens, which run right after `cf push`). `cf space
+     * <name> --guid` resolves within the currently targeted org, so calling this
+     * before the org/space target is set could return a GUID from the wrong org.
+     */
+    async "cf:cockpitUrl"() {
+      const gaGuid = state.globalAccountGuid;
+      const subGuid = state.subaccount;
+      if (!gaGuid || !subGuid) return { ok: false, error: "missing globalAccountGuid or subaccount" };
+      if (!state.org || !state.space) return { ok: false, error: "missing org or space target" };
+
+      const GUID_RE = /^[0-9a-f-]{36}$/i;
+      async function resolveGuid(kind, name) {
+        const r = await run(resolveCf(), [kind, name, "--guid"], { source: "cf" });
+        if (r.code !== 0) return null;
+        const guid = r.stdout.trim().split(/\r?\n/).filter(Boolean).pop();
+        return guid && GUID_RE.test(guid) ? guid : null;
+      }
+
+      const orgGuid = await resolveGuid("org", state.org);
+      if (!orgGuid) return { ok: false, error: "could not resolve org GUID" };
+      const spaceGuid = await resolveGuid("space", state.space);
+      if (!spaceGuid) return { ok: false, error: "could not resolve space GUID" };
+      const url = cockpitSpaceUrl({ licenseType: state.licenseType, gaGuid, subGuid, orgGuid, spaceGuid });
+      if (!url) return { ok: false, error: "could not build cockpit URL" };
+      return { ok: true, url };
     },
 
     /**
