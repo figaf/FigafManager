@@ -1,11 +1,6 @@
 # Release automation. Triggered when a Release is *published* on
 # github.com/figaf/FigafManager (Releases tab → Draft a new release → Publish).
 #
-# The git tag is the single source of truth for the version. You do NOT bump
-# package.json by hand — each build job stamps the tag's version (e.g. v26.5.1
-# → 26.5.0) into the relevant package.json *before* building, so the artifacts
-# and the self-update version they report come straight from the tag.
-#
 # Flow:
 #   verify         (ubuntu)  — sanity-check the tag is semver; run unit tests (gate).
 #   build-manager  (ubuntu)  — stamp version, build the cloud zip, attach the zip
@@ -13,11 +8,7 @@
 #   build-desktop  (windows) — stamp version, build the desktop app, attach the
 #                              PORTABLE exe (runs without installation; the only
 #                              Windows target built).
-#
-# Single-repo: artifacts attach to this same repo's release via the built-in
-# GITHUB_TOKEN (no PAT). `permissions: contents: write` grants the upload right.
-# The two build jobs run in parallel after verify and each attach their own
-# artifact, so finish order doesn't matter.
+
 name: Release
 
 on:
@@ -95,43 +86,43 @@ jobs:
             "apps/figaf-manager/manifest.yml" \
             --clobber
 
-  build-desktop:
-    needs: verify
-    runs-on: windows-latest
-    env:
-      TAG: ${{ github.event.release.tag_name }}
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        shell: bash
-        run: npm ci
-
-      # electron uses apps/figaf-local/package.json version as app.getVersion(),
-      # and electron-builder uses it for the installer name. Stamp from the tag.
-      - name: Stamp version from tag
-        shell: bash
-        run: npm pkg set version="${TAG#v}" -w apps/figaf-local
-
-      # electron-builder builds only the portable exe (see win.target in
-      # apps/figaf-local/package.json). It's unsigned — users get a SmartScreen
-      # prompt on first run, which is expected. Portable is not an
-      # electron-updater target, so no update-metadata (latest.yml) is produced.
-      - name: Build Windows app
-        run: npm run build:local
-
-      # Publish the PORTABLE exe (Figaf-Installer-<v>-x64.exe) — it runs without
-      # installation. The desktop self-update matches this name via
-      # DESKTOP_ASSET_REGEX in packages/core/release-config.js — keep them in
-      # lockstep if the artifactName changes.
-      - name: Attach portable build to release
-        shell: bash
-        run: |
-          VERSION="${TAG#v}"
-          gh release upload "$TAG" "apps/figaf-local/dist/Figaf-Installer-$VERSION-x64.exe" --clobber
+  # build-desktop:
+  #   needs: verify
+  #   runs-on: windows-latest
+  #   env:
+  #     TAG: ${{ github.event.release.tag_name }}
+  #     GH_TOKEN: ${{ github.token }}
+  #   steps:
+  #     - uses: actions/checkout@v5
+  #
+  #     - uses: actions/setup-node@v5
+  #       with:
+  #         node-version: 22
+  #         cache: npm
+  #
+  #     - name: Install dependencies
+  #       shell: bash
+  #       run: npm ci
+  #
+  #     # electron uses apps/figaf-local/package.json version as app.getVersion(),
+  #     # and electron-builder uses it for the installer name. Stamp from the tag.
+  #     - name: Stamp version from tag
+  #       shell: bash
+  #       run: npm pkg set version="${TAG#v}" -w apps/figaf-local
+  #
+  #     # electron-builder builds only the portable exe (see win.target in
+  #     # apps/figaf-local/package.json). It's unsigned — users get a SmartScreen
+  #     # prompt on first run, which is expected. Portable is not an
+  #     # electron-updater target, so no update-metadata (latest.yml) is produced.
+  #     - name: Build Windows app
+  #       run: npm run build:local
+  #
+  #     # Publish the PORTABLE exe (Figaf-Installer-<v>-x64.exe) — it runs without
+  #     # installation. The desktop self-update matches this name via
+  #     # DESKTOP_ASSET_REGEX in packages/core/release-config.js — keep them in
+  #     # lockstep if the artifactName changes.
+  #     - name: Attach portable build to release
+  #       shell: bash
+  #       run: |
+  #         VERSION="${TAG#v}"
+  #         gh release upload "$TAG" "apps/figaf-local/dist/Figaf-Installer-$VERSION-x64.exe" --clobber

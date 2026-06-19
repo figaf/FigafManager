@@ -43,6 +43,7 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
   const [deployId, setDeployId] = React.useState(upd.deployId || "figaf-tool");
   const [detection, setDetection] = React.useState(upd.detection || null);
   const [detecting, setDetecting] = React.useState(false);
+  const [scanning, setScanning] = React.useState(true);
   const [tags, setTags] = React.useState(upd.availableTags || []);
   const [targetTag, setTargetTag] = React.useState(upd.targetTag || "");
   const [skipXsuaa, setSkipXsuaa] = React.useState(!!upd.skipXsuaa);
@@ -72,18 +73,34 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
     return {};
   }
 
+  async function rescan() {
+    setScanning(true);
+    setDetection(null);
+    try {
+      const scan = await fg()?.update.detectDeployment({});
+      if (scan) setDetection(scan);
+    } catch {}
+    setScanning(false);
+  }
+
   React.useEffect(() => {
     const api = fg();
     if (!api) return;
     (async () => {
-      try {
-        const t = await api.config.dockerHubBtpTags();
-        if (t && t.ok && Array.isArray(t.tags)) setTags(t.tags);
-      } catch {}
-      try {
-        const r = await api.update.resumeStatus();
-        if (r && r.ok && r.hasInFlight) setResume(r.state || null);
-      } catch {}
+      const [tagRes, resumeRes, scanRes] = await Promise.allSettled([
+        api.config.dockerHubBtpTags(),
+        api.update.resumeStatus(),
+        api.update.detectDeployment({}),
+      ]);
+      if (tagRes.status === "fulfilled" && tagRes.value?.ok && Array.isArray(tagRes.value.tags)) {
+        setTags(tagRes.value.tags);
+      }
+      if (resumeRes.status === "fulfilled" && resumeRes.value?.ok && resumeRes.value.hasInFlight) {
+        setResume(resumeRes.value.state || null);
+      }
+      const scan = scanRes.status === "fulfilled" ? scanRes.value : null;
+      if (scan) setDetection(scan);
+      setScanning(false);
     })();
   }, []);
 
@@ -212,22 +229,10 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
         )}
 
         <div className="card" style={{ padding: 18, marginBottom: 14 }}>
-          <label className="field-label">Deployment ID</label>
-          <div style={{ display: "flex", gap: 8 }}>
-            <input
-              className="input is-mono"
-              value={deployId}
-              onChange={(e) => setDeployId(e.target.value.trim())}
-              style={{ flex: 1 }}
-              placeholder="figaf-tool"
-            />
-            <button className="btn" onClick={detect} disabled={detecting || !deployId}>
-              {detecting ? "Detecting…" : "Detect"}
-            </button>
-          </div>
-
-          {detection && found && (
-            <div style={{ marginTop: 14, fontSize: 12.5, color: "var(--ink-2)" }}>
+          {scanning ? (
+            <div style={{ fontSize: 13, color: "var(--ink-2)" }}>Scanning for Figaf deployments…</div>
+          ) : found ? (
+            <div style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
               <div>
                 <strong style={{ color: "var(--ink-0)" }}>{detection.app.name}</strong>{" "}
                 <span className="pill green">found</span>
@@ -240,13 +245,14 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
                   ? <>Router <span className="kbd">{detection.router.name}</span> present.</>
                   : <>Router <span className="kbd">{deployId}-router</span> not found — push will create it.</>}
               </div>
+              <button className="btn" style={{ marginTop: 10, fontSize: 12 }} onClick={rescan}>
+                ← Change deployment
+              </button>
             </div>
-          )}
-
-          {detection && !found && candidates.length > 0 && (
-            <div style={{ marginTop: 14 }}>
+          ) : candidates.length > 0 ? (
+            <div>
               <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginBottom: 8 }}>
-                No app named <span className="kbd">{deployId}-app</span>. Found {candidates.length} candidate deployment{candidates.length === 1 ? "" : "s"}:
+                Found {candidates.length} Figaf deployment{candidates.length === 1 ? "" : "s"} in this space:
               </div>
               {candidates.map((c) => (
                 <button
@@ -260,12 +266,30 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
                 </button>
               ))}
             </div>
-          )}
-
-          {detection && !found && candidates.length === 0 && (
-            <div style={{ marginTop: 14, fontSize: 12.5, color: "var(--ink-3)" }}>
-              No matching deployment found in the current space. Check the ID, or switch to the Deploy flow to install fresh.
-            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 12.5, color: "var(--ink-3)", marginBottom: 12 }}>
+                No Figaf deployments found in this space. Enter the deployment ID manually.
+              </div>
+              <label className="field-label">Deployment ID</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  className="input is-mono"
+                  value={deployId}
+                  onChange={(e) => setDeployId(e.target.value.trim())}
+                  style={{ flex: 1 }}
+                  placeholder="figaf-tool"
+                />
+                <button className="btn" onClick={detect} disabled={detecting || !deployId}>
+                  {detecting ? "Detecting…" : "Detect"}
+                </button>
+              </div>
+              {detection && !found && candidates.length === 0 && (
+                <div style={{ marginTop: 10, fontSize: 12.5, color: "var(--ink-3)" }}>
+                  No matching deployment found. Check the ID, or switch to the Deploy flow to install fresh.
+                </div>
+              )}
+            </>
           )}
         </div>
 
