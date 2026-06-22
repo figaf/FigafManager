@@ -1,12 +1,11 @@
-# Figaf Installer
+# Figaf Manager
 
 [![CI](https://github.com/figaf/FigafManager/actions/workflows/ci.yml/badge.svg)](https://github.com/figaf/FigafManager/actions/workflows/ci.yml)
 
 [![Watch the figaf-manager walkthrough](https://img.youtube.com/vi/-bgWWQrEXGs/maxresdefault.jpg)](https://www.youtube.com/watch?v=-bgWWQrEXGs)
 
-A wizard that deploys the [Figaf Tool](https://figaf.com) to your **SAP BTP
-Cloud Foundry** subaccount in a few clicks — no manual CLI work, no PATH
-gymnastics.
+An app that deploys and manages the [Figaf Tool](https://figaf.com) in your **SAP BTP
+Cloud Foundry** subaccount in a few clicks, ensuring minimal BTP manual work.
 
 The repo is an npm-workspaces monorepo that ships **two** parallel installers
 sharing one orchestration layer and one React renderer:
