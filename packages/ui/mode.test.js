@@ -100,3 +100,13 @@ test("features.selfUpdateBanner: disabled when figafDisableSelfUpdate=true (air-
   const w = loadFresh({ figafDisableSelfUpdate: true });
   assert.equal(w.figafModeFlags.features.selfUpdateBanner, false);
 });
+
+test("features.cfOnlyLogin: ON in hosted mode (figaf-manager)", () => {
+  const w = loadFresh({ figafMode: "hosted" });
+  assert.equal(w.figafModeFlags.features.cfOnlyLogin, true);
+});
+
+test("features.cfOnlyLogin: OFF in desktop mode (figaf-local)", () => {
+  const w = loadFresh();
+  assert.equal(w.figafModeFlags.features.cfOnlyLogin, false);
+});

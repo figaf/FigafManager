@@ -5,9 +5,14 @@
 // ═══════════════════════════════════════════════════════════
 function ScreenChoice({ ctx, setCtx, onNext, onBack }) {
   const sel = ctx.choice;
+  // CF-only sign-in (BTP skipped): only the Update flow works without a global
+  // account, so every other action is grayed out.
+  const cfOnly = !!ctx.login.cfOnly;
   const showXsuaaUpgrade = !!(window.figafModeFlags.features && window.figafModeFlags.features.xsuaaUpgrade);
   const showUpdate = !!(window.figafModeFlags.features && window.figafModeFlags.features.updateFigafTool);
-  function pick(v) { setCtx(c => ({ ...c, choice: v })); }
+  // CF-only has no BTP landscape label — fall back to the API host / org.
+  const target = ctx.login.landscape || (ctx.login.apiUrl || "").replace(/^https?:\/\//, "") || ctx.login.org || "your space";
+  function pick(v) { if (cfOnly && v !== "update") return; setCtx(c => ({ ...c, choice: v })); }
 
   return (
     <>
@@ -16,20 +21,24 @@ function ScreenChoice({ ctx, setCtx, onNext, onBack }) {
           <div className="pane-eyebrow">Step 3 · Choose action</div>
           <h1 className="pane-title">What would you like to do?</h1>
           <p className="pane-desc">
-            Signed in as <strong>{ctx.login.user || "you"}</strong> on <span className="kbd">{ctx.login.landscape}</span>. Pick how you'd like to continue — you can do the other later.
+            Signed in as <strong>{ctx.login.user || "you"}</strong> on <span className="kbd">{target}</span>.{" "}
+            {cfOnly
+              ? "You signed in without a global account, so only Update is available."
+              : "Pick how you'd like to continue — you can do the other later."}
           </p>
         </div>
 
         <div className="choice-grid">
           {showXsuaaUpgrade && (
             <button
-              className={`choice ${sel === "xsuaa-upgrade" ? "selected" : ""}`}
+              className={`choice ${cfOnly ? "disabled" : ""} ${sel === "xsuaa-upgrade" ? "selected" : ""}`}
               onClick={() => pick("xsuaa-upgrade")}
+              disabled={cfOnly}
             >
               <div className="choice-icon"><Ico.Shield /></div>
               <div className="choice-title">
                 Enable persistent SSO login
-                <span className="pill blue">Recommended</span>
+                {cfOnly ? <span className="pill gray">Requires BTP login</span> : <span className="pill blue">Recommended</span>}
               </div>
               <div className="choice-desc">
                 Replace the one-time cockpit passcode with SAP IAS single sign-on. Provisions XSUAA + a bundled approuter in front of this wizard. Do this first — you can still deploy or connect afterwards.
@@ -38,12 +47,14 @@ function ScreenChoice({ ctx, setCtx, onNext, onBack }) {
           )}
 
           <button
-            className={`choice ${sel === "deploy" ? "selected" : ""}`}
+            className={`choice ${cfOnly ? "disabled" : ""} ${sel === "deploy" ? "selected" : ""}`}
             onClick={() => pick("deploy")}
+            disabled={cfOnly}
           >
             <div className="choice-icon"><Ico.Box /></div>
             <div className="choice-title">
               Deploy Figaf Tool
+              {cfOnly && <span className="pill gray">Requires BTP login</span>}
             </div>
             <div className="choice-desc">
               Push the Figaf Tool to your Cloud Foundry space along with its PostgreSQL and XSUAA services.
@@ -66,12 +77,14 @@ function ScreenChoice({ ctx, setCtx, onNext, onBack }) {
           )}
 
           <button
-            className={`choice ${sel === "connect" ? "selected" : ""}`}
+            className={`choice ${cfOnly ? "disabled" : ""} ${sel === "connect" ? "selected" : ""}`}
             onClick={() => pick("connect")}
+            disabled={cfOnly}
           >
             <div className="choice-icon"><Ico.Link /></div>
             <div className="choice-title">
               Connect to Integration Suite
+              {cfOnly && <span className="pill gray">Requires BTP login</span>}
             </div>
             <div className="choice-desc">
               Link an existing Figaf deployment to your SAP Integration Suite tenant for tracking & testing.

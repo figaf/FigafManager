@@ -43,6 +43,12 @@ Binary resolved via `host.resolveBinary("cf")`.
 - Desktop: persisted path in `userData/cliPaths.json`, else falls back to `$PATH`
 - Cloud: bundled at `apps/figaf-manager/bin/cf` (Linux x86-64)
 
+> **Non-command note:** `cf:suggestedApiUrl` (CF-only login pre-fill) performs no
+> spawn. It returns `VCAP_APPLICATION.cf_api` (read in-process via the host's
+> `getDeployTargetForSelf`) so the renderer can pre-fill the manual API-URL
+> field when BTP login is skipped. That value then feeds `cf login -a` (row 2 below).
+> Cloud-only; desktop returns `""`.
+
 ### Login & Targeting
 
 | # | Command | IPC handler | Scope | Notes |

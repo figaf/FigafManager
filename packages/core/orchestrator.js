@@ -1238,6 +1238,14 @@ function createOrchestrator({ host, send, audit }) {
       return { ok: true, apiUrl: target };
     },
 
+    // CF-only login (skip BTP): suggest a default CF API endpoint for the
+    // manual entry field. Hosted manager knows its own endpoint from VCAP;
+    // desktop has no ambient CF context, so this returns "" there.
+    async "cf:suggestedApiUrl"() {
+      try { return { ok: true, apiUrl: host.getDeployTargetForSelf?.()?.apiUrl || "" }; }
+      catch { return { ok: true, apiUrl: "" }; }
+    },
+
     async "cf:submitPasscode"({ code }) {
       const proc = state.cfLoginProc;
       if (!proc || proc.killed) return { ok: false, error: "No active cf login session" };

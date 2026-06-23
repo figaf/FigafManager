@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld("figaf", {
 
   cf: {
     loginStart: (apiUrl) => ipcRenderer.invoke("cf:loginStart", { apiUrl }),
+    suggestedApiUrl: () => ipcRenderer.invoke("cf:suggestedApiUrl"),
     submitPasscode: (code) => ipcRenderer.invoke("cf:submitPasscode", { code }),
     selectOrg: (index) => ipcRenderer.invoke("cf:selectOrg", { index }),
     selectSpace: (index) => ipcRenderer.invoke("cf:selectSpace", { index }),

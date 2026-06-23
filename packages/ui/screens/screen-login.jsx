@@ -2,6 +2,36 @@
 
 const fg = () => (typeof window !== "undefined" && window.figaf) || null;
 
+// Keep byte-identical with packages/core/cf-landscape.js (the renderer has no
+// bundler, so it can't require the core copy). Derives the CF landscape label
+// from a CF API URL; returns "" for custom / non-standard hosts.
+function landscapeFromApiUrl(apiUrl) {
+  try {
+    let s = String(apiUrl || "").trim();
+    if (!s) return "";
+    if (!/^[a-z]+:\/\//i.test(s)) s = "https://" + s;
+    const host = new URL(s).hostname.toLowerCase();
+    const m = /^api\.(.+)\.hana\.ondemand\.com$/.exec(host);
+    return m ? m[1] : "";
+  } catch {
+    return "";
+  }
+}
+
+// Lenient "is this a usable http(s) endpoint" check (scheme optional). Used to
+// gate the "Get passcode" button while the operator types a CF API URL.
+function isValidApiUrl(s) {
+  try {
+    let v = String(s || "").trim();
+    if (!v) return false;
+    if (!/^[a-z]+:\/\//i.test(v)) v = "https://" + v;
+    const u = new URL(v);
+    return !!u.hostname && u.hostname.includes(".");
+  } catch {
+    return false;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════
 // 2. CLI Login — SSO + passcode
 // ═══════════════════════════════════════════════════════════
@@ -16,7 +46,13 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
 
   const btpLoggedIn = login.btpStatus === "done";
   const cfLoggedIn = login.cfStatus === "done";
-  const canContinue = btpLoggedIn && cfLoggedIn;
+  // CF-only mode: BTP was skipped, so the CF section is usable on its own.
+  const cfOnly = !!login.cfOnly;
+  const cfReady = btpLoggedIn || cfOnly;
+  const canContinue = cfReady && cfLoggedIn;
+  const showCfOnly = !!(window.figafModeFlags.features && window.figafModeFlags.features.cfOnlyLogin);
+  // Display host for the CF card / passcode hint. Empty for a custom landscape.
+  const cfApiHost = login.landscape ? `api.${login.landscape.replace(/^cf-/, "cf.")}.hana.ondemand.com` : "";
 
   React.useEffect(() => {
     const api = fg();
@@ -113,6 +149,39 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     setLogin({ btpStatus: "idle" });
   }
 
+  // Skip BTP entirely and connect straight to Cloud Foundry. Pre-fills the API
+  // URL from the host (hosted manager knows its own endpoint via VCAP; desktop
+  // returns "").
+  async function enterCfOnly() {
+    const api = fg();
+    setGaChoice(null);
+    setSubaccountChoice(null);
+    setLogin({ cfOnly: true });
+    let apiUrl = "";
+    try {
+      const r = await api?.cf?.suggestedApiUrl?.();
+      if (r && r.ok) apiUrl = r.apiUrl || "";
+    } catch {}
+    setLogin({ apiUrl, landscape: apiUrl ? landscapeFromApiUrl(apiUrl) : "" });
+  }
+
+  // Back out of CF-only mode and restore the normal BTP login flow. Only
+  // offered before CF login completes, so there's no CF session to tear down.
+  function revertCfOnly() {
+    setOrgChoice(null);
+    setSpaceChoice(null);
+    setLogin({
+      cfOnly: false,
+      cfStatus: "idle",
+      apiUrl: "",
+      landscape: "",
+      passcode: "",
+      passcodeRequested: false,
+      org: "",
+      space: "",
+    });
+  }
+
   async function selectSubaccount(guid) {
     const api = fg();
     if (!api) return;
@@ -152,6 +221,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     setLogin({
       btpStatus: "running",
       cfStatus: "idle",
+      cfOnly: false,
       landscape: "", subaccount: "", subaccountName: "", subdomain: "", provider: "", org: "", space: "", user: "", apiUrl: "",
       passcode: "", passcodeRequested: false,
     });
@@ -164,7 +234,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     if (!api) return;
     await api.btp.logout();
     setLogin({
-      btpStatus: "idle", cfStatus: "idle",
+      btpStatus: "idle", cfStatus: "idle", cfOnly: false,
       landscape: "", subaccount: "", subaccountName: "", subdomain: "", provider: "", org: "", space: "", user: "", apiUrl: "",
       passcode: "", passcodeRequested: false,
     });
@@ -251,9 +321,24 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
   async function requestPasscode() {
     const api = fg();
     if (!api) return;
+    // CF-only: normalize the typed endpoint (add scheme if missing) and (re)derive
+    // the landscape so the passcode URL is right even if the user pasted+edited.
+    let apiUrl = login.apiUrl;
+    let landscape = login.landscape;
+    if (cfOnly) {
+      if (apiUrl && !/^[a-z]+:\/\//i.test(apiUrl)) apiUrl = "https://" + apiUrl;
+      landscape = landscapeFromApiUrl(apiUrl);
+      if (apiUrl !== login.apiUrl || landscape !== login.landscape) setLogin({ apiUrl, landscape });
+    }
+    if (!apiUrl && landscape) {
+      apiUrl = `https://api.${landscape.replace(/^cf-/, "cf.")}.hana.ondemand.com`;
+    }
     setLogin({ passcodeRequested: true });
-    await api.shell.openPasscodeUrl(login.landscape);
-    await api.cf.loginStart(login.apiUrl || `https://api.${login.landscape.replace(/^cf-/, 'cf.')}.hana.ondemand.com`);
+    // Open the passcode page only when we know the landscape. On a custom /
+    // sovereign host we couldn't derive it — skip the auto-open (the operator
+    // fetches the passcode from their own SSO page) but never block login.
+    if (landscape) await api.shell.openPasscodeUrl(landscape);
+    await api.cf.loginStart(apiUrl);
   }
 
   async function submitPasscode() {
@@ -323,7 +408,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink-0)" }}>SAP BTP CLI</div>
-              <div style={{ fontSize: 12, color: "var(--ink-3)" }}>cli.btp.cloud.sap</div>
+              <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{cfOnly && !btpLoggedIn ? "Skipped — Cloud Foundry only" : "cli.btp.cloud.sap"}</div>
             </div>
             {btpLoggedIn && <span className="pill green"><Ico.Check /> Connected</span>}
             {btpLoggedIn && (
@@ -342,15 +427,30 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
             {!btpLoggedIn && login.btpStatus === "running" && !gaChoice && !subaccountChoice && (
               <span className="pill blue"><Ico.Spinner /> Connecting…</span>
             )}
-            {login.btpStatus === "idle" && (
+            {showCfOnly && !cfOnly && !btpLoggedIn && (login.btpStatus === "idle" || login.btpStatus === "error") && (
+              <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={enterCfOnly} title="No global account? Connect straight to Cloud Foundry.">
+                Skip BTP login
+              </button>
+            )}
+            {!cfOnly && login.btpStatus === "idle" && (
               <button className="btn btn-primary" onClick={startBtpLogin}>
                 Sign in with SSO <Ico.External />
               </button>
             )}
-            {login.btpStatus === "error" && (
+            {!cfOnly && login.btpStatus === "error" && (
               <button className="btn btn-primary" onClick={startBtpLogin}>
                 Retry <Ico.External />
               </button>
+            )}
+            {cfOnly && !btpLoggedIn && (
+              <>
+                <span className="pill gray">Skipped</span>
+                {!cfLoggedIn && (
+                  <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={revertCfOnly}>
+                    Use BTP login instead
+                  </button>
+                )}
+              </>
             )}
           </div>
 
@@ -483,7 +583,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
           )}
         </div>
 
-        <div className="card" style={{ opacity: btpLoggedIn ? 1 : 0.55 }}>
+        <div className="card" style={{ opacity: cfReady ? 1 : 0.55 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
             <div style={{ width: 36, height: 36, borderRadius: 8, background: "var(--fg-blue-soft)", color: "var(--fg-blue)", display: "grid", placeItems: "center" }}>
               <Ico.Box />
@@ -491,7 +591,11 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink-0)" }}>Cloud Foundry CLI</div>
               <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                {btpLoggedIn ? `api.${login.landscape.replace(/^cf-/, 'cf.')}.hana.ondemand.com` : "Detected after BTP login"}
+                {btpLoggedIn
+                  ? cfApiHost
+                  : cfOnly
+                    ? (login.apiUrl ? login.apiUrl.replace(/^https?:\/\//, "") : "Enter your CF API URL below")
+                    : "Detected after BTP login"}
               </div>
             </div>
             {cfLoggedIn && <span className="pill green"><Ico.Check /> Connected</span>}
@@ -507,16 +611,39 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
             )}
           </div>
 
-          {btpLoggedIn && !cfLoggedIn && !cfSwitchingOrg && (
+          {cfReady && !cfLoggedIn && !cfSwitchingOrg && (
             <div className="slide-in">
               {!login.passcodeRequested ? (
-                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <button className="btn btn-primary" onClick={requestPasscode}>
-                    Get passcode in browser <Ico.External />
-                  </button>
-                  <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                    Opens <span className="kbd">login.{login.landscape.replace(/^cf-/, 'cf.')}.hana.ondemand.com/passcode</span>
-                  </span>
+                <div>
+                  {cfOnly && (
+                    <div className="field" style={{ marginBottom: 12 }}>
+                      <label className="field-label">
+                        Cloud Foundry API URL <span className="field-required">*</span>
+                      </label>
+                      <input
+                        className="input is-mono"
+                        placeholder="https://api.cf.us10.hana.ondemand.com"
+                        value={login.apiUrl}
+                        onChange={(e) => {
+                          const v = e.target.value.trim();
+                          setLogin({ apiUrl: v, landscape: landscapeFromApiUrl(v) });
+                        }}
+                      />
+                      <div className="field-hint">
+                        From the BTP cockpit, open your subaccount → <span className="kbd">Cloud Foundry · Environment</span> and copy the API endpoint.
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <button className="btn btn-primary" onClick={requestPasscode} disabled={cfOnly && !isValidApiUrl(login.apiUrl)}>
+                      Get passcode in browser <Ico.External />
+                    </button>
+                    <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                      {cfApiHost
+                        ? <>Opens <span className="kbd">login.{login.landscape.replace(/^cf-/, "cf.")}.hana.ondemand.com/passcode</span></>
+                        : "Then open your CF passcode page and paste the one-time code."}
+                    </span>
+                  </div>
                 </div>
               ) : (
                 <ScrollReveal>
@@ -524,7 +651,9 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                   <div className="sso-mock" style={{ marginBottom: 12 }}>
                     <div className="sso-mock-icon"><Ico.Shield /></div>
                     <div style={{ flex: 1, fontSize: 12, color: "var(--ink-2)" }}>
-                      Browser opened to get a one-time passcode. Copy it from SAP and paste below.
+                      {login.landscape
+                        ? "Browser opened to get a one-time passcode. Copy it from SAP and paste below."
+                        : "Open your Cloud Foundry passcode page, copy the one-time passcode, and paste it below."}
                     </div>
                   </div>
                   <div className="field">
@@ -556,7 +685,10 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                       </button>
                     </div>
                     <div className="field-hint">
-                      Passcodes expire after a few minutes. <button className="btn-link" onClick={() => fg()?.shell.openPasscodeUrl(login.landscape)}>Get a new one</button>
+                      Passcodes expire after a few minutes.{" "}
+                      {login.landscape
+                        ? <button className="btn-link" onClick={() => fg()?.shell.openPasscodeUrl(login.landscape)}>Get a new one</button>
+                        : "Reopen your CF passcode page for a new one."}
                     </div>
                   </div>
                 </div>

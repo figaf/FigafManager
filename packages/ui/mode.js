@@ -24,6 +24,9 @@
       diskCheck:     !hosted,           // figaf-local: free-disk prereq probe
       windowChrome:  !hosted,           // figaf-local: frameless titlebar + drag region
       selfDelete:    hosted,            // figaf-manager: "Delete this manager app" button on Done
+      // figaf-manager: "Skip BTP login" affordance. Lets an operator without a
+      // global account connect straight to Cloud Foundry (Update-only flow).
+      cfOnlyLogin:   hosted,
       // v2: in hosted+token mode (the upgrade hasn't run yet), surface the
       // "Enable persistent SSO login" button on the Done screen. In XSUAA
       // mode the upgrade is already done — flag is false. In Electron the

@@ -32,6 +32,9 @@ function App() {
     login: {
       btpStatus: "idle",
       cfStatus: "idle",
+      // CF-only mode: operator skipped BTP login and connects straight to
+      // Cloud Foundry. Gates the choice screen down to Update-only.
+      cfOnly: false,
       passcodeRequested: false,
       passcode: "",
       user: "",
