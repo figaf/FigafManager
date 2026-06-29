@@ -440,10 +440,10 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
                 <input
                   className="input is-mono"
                   value={vars.dbServiceName ?? "figaf-db"}
-                  onChange={(e) => setVar({ dbServiceName: e.target.value })}
-                  placeholder="figaf-db"
+                  readOnly
+                  style={{ opacity: 0.7, cursor: "default" }}
                 />
-                <div className="field-hint">PostgreSQL service instance bound to the app. Auto-detected from the live deployment.</div>
+                <div className="field-hint">PostgreSQL service instance bound to the app. Auto-detected from the live deployment — cannot be changed during an update.</div>
               </div>
 
               <div className="field" style={{ marginTop: 14 }}>
