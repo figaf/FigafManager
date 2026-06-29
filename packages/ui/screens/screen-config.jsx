@@ -215,6 +215,7 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
       cloudConnectorDestinationNameForSmtpIntegration: cfg.cloudConnectorDestinationNameForSmtpIntegration,
       enableConnectivity: cfg.enableConnectivity,
       enableDestination: cfg.enableDestination,
+      dbServiceName: cfg.dbServiceName || "figaf-db",
     });
     if (!r || !r.ok) { setWriting(false); return; }
     const r2 = await api.config.writeDbConfig({
@@ -424,13 +425,13 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
         <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", margin: "0 0 12px" }}>CF services</div>
 
         <div style={{ fontSize: 12, color: "var(--ink-2)", marginBottom: 12 }}>
-          Select the Cloud Foundry services to bind in <span className="kbd">manifest.yml</span>. <strong>figaf-db</strong> and <strong>figaf-xsuaa</strong> are always required. <strong>figaf-connectivity</strong> and <strong>figaf-destination</strong> are needed for PI/PO integration via SAP Cloud Connector — if the services do not already exist, they will be created durring the next step.
+          Select the Cloud Foundry services to bind in <span className="kbd">manifest.yml</span>. Your database service and <strong>figaf-xsuaa</strong> are always required. <strong>figaf-connectivity</strong> and <strong>figaf-destination</strong> are needed for PI/PO integration via SAP Cloud Connector — if the services do not already exist, they will be created during the next step.
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 4 }}>
           <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "not-allowed", opacity: 0.6, fontSize: 13 }}>
             <input type="checkbox" checked disabled style={{ cursor: "not-allowed" }} />
-            <span><span className="kbd">figaf-db</span> <span className="pill gray">required</span></span>
+            <span><span className="kbd">{cfg.dbServiceName || "figaf-db"}</span> <span className="pill gray">required</span></span>
           </label>
           <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "not-allowed", opacity: 0.6, fontSize: 13 }}>
             <input type="checkbox" checked disabled style={{ cursor: "not-allowed" }} />
@@ -461,6 +462,17 @@ function ScreenConfig({ ctx, setCtx, onNext, onBack, appendLog }) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "0 0 12px" }}>
           <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)" }}>PostgreSQL service</div>
           <span className="pill gray">postgresql-db · from marketplace</span>
+        </div>
+
+        <div className="field" style={{ marginBottom: 14 }}>
+          <label className="field-label">Database service name</label>
+          <input
+            className="input is-mono"
+            value={cfg.dbServiceName ?? "figaf-db"}
+            onChange={(e) => setCfg({ dbServiceName: e.target.value })}
+            placeholder="figaf-db"
+          />
+          <div className="field-hint">Name for the PostgreSQL service instance to create and bind. Change this if you want a custom name or already have an existing service.</div>
         </div>
 
         <div className="field">

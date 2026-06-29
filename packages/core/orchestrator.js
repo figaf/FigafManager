@@ -1853,12 +1853,15 @@ function createOrchestrator({ host, send, audit }) {
       }
       await fsp.writeFile(file, text, "utf8");
 
-      // Toggle figaf-connectivity / figaf-destination in manifest.yml
+      // Patch manifest.yml: toggle optional services and rename the DB service if needed.
       const manifestFile = path.join(deployDir, "manifest.yml");
       try {
         let manifest = await fsp.readFile(manifestFile, "utf8");
         manifest = patchManifestService(manifest, "figaf-connectivity", !!vars.enableConnectivity);
         manifest = patchManifestService(manifest, "figaf-destination", !!vars.enableDestination);
+        if (vars.dbServiceName && vars.dbServiceName !== "figaf-db") {
+          manifest = manifest.replace(/^(\s*- )figaf-db(\s*)$/m, `$1${vars.dbServiceName}$2`);
+        }
         await fsp.writeFile(manifestFile, manifest, "utf8");
       } catch { /* manifest may not exist yet during early setup */ }
 
@@ -2536,10 +2539,9 @@ function createOrchestrator({ host, send, audit }) {
         partial = true;
       }
 
-      // Detect if figaf-connectivity / figaf-destination are currently bound.
-      // CF v3 API returns service_credential_bindings for the app; the
-      // include=service_instance param embeds service instance names so we
-      // avoid a second round-trip per binding.
+      // Detect bound service instances: figaf-connectivity, figaf-destination,
+      // and the DB service (anything that isn't a known non-DB service).
+      const NON_DB_SERVICES = new Set(["figaf-xsuaa", "figaf-connectivity", "figaf-destination"]);
       const sb = await run(resolveCf(), ["curl", `/v3/service_credential_bindings?app_guids=${guid}&include=service_instance`], { source: "cf" });
       if (sb.code === 0) {
         try {
@@ -2548,6 +2550,13 @@ function createOrchestrator({ host, send, audit }) {
           const names = instances.map((i) => i.name);
           if (names.includes("figaf-connectivity")) vars.enableConnectivity = true;
           if (names.includes("figaf-destination")) vars.enableDestination = true;
+          const dbCandidates = names.filter((n) => !NON_DB_SERVICES.has(n));
+          if (dbCandidates.length === 1) {
+            vars.dbServiceName = dbCandidates[0];
+          } else {
+            // Zero or multiple candidates — can't auto-select; let the UI warn.
+            partial = true;
+          }
         } catch { partial = true; }
       } else {
         partial = true;

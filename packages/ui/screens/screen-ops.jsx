@@ -28,13 +28,14 @@ function ScreenProgress({ ctx, setCtx, onNext, onBack, appendLog }) {
       mark("vars", { status: "done", sub: "vars.yml updated" });
 
       // 2. db creation runs fully in parallel — no dependency on XSUAA.
+      const dbName = ctx.config.dbServiceName || "figaf-db";
       const dbPromise = (async () => {
-        mark("db", { status: "running" });
+        mark("db", { status: "running", title: `Create PostgreSQL service (${dbName})` });
         const c1 = await api.cf.createService({
-          offering: "postgresql-db", plan: ctx.config.dbPlan, name: "figaf-db", configFile: "db.json",
+          offering: "postgresql-db", plan: ctx.config.dbPlan, name: dbName, configFile: "db.json",
         });
         if (!c1.ok) { mark("db", { status: "error", sub: c1.stderr || "create-service failed" }); return; }
-        const p1 = await api.cf.pollService("figaf-db");
+        const p1 = await api.cf.pollService(dbName);
         mark("db", { status: p1.ok ? "done" : "error", sub: p1.status });
       })();
 
