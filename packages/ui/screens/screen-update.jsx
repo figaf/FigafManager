@@ -437,13 +437,30 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
 
               <div className="field" style={{ marginTop: 14 }}>
                 <label className="field-label">Database service name</label>
-                <input
-                  className="input is-mono"
-                  value={vars.dbServiceName ?? "figaf-db"}
-                  readOnly
-                  style={{ opacity: 0.7, cursor: "default" }}
-                />
-                <div className="field-hint">PostgreSQL service instance bound to the app. Auto-detected from the live deployment — cannot be changed during an update.</div>
+                {vars.dbServiceName ? (
+                  <>
+                    <input
+                      className="input is-mono"
+                      value={vars.dbServiceName}
+                      readOnly
+                      style={{ opacity: 0.7, cursor: "default" }}
+                    />
+                    <div className="field-hint">PostgreSQL service instance bound to the app. Auto-detected from the live deployment — cannot be changed during an update.</div>
+                  </>
+                ) : (
+                  <>
+                    <input
+                      className="input is-mono"
+                      value={vars.dbServiceName ?? ""}
+                      onChange={(e) => setVar({ dbServiceName: e.target.value.trim() })}
+                      placeholder="e.g. figaf-db"
+                      style={{ borderColor: "var(--error, #e11d48)" }}
+                    />
+                    <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: 6, background: "rgba(225,29,72,0.07)", border: "1px solid rgba(225,29,72,0.3)", fontSize: 12, color: "var(--ink-1)" }}>
+                      <strong style={{ color: "var(--error, #e11d48)" }}>Database name not detected.</strong> Enter the exact name of the PostgreSQL service instance bound to <span className="kbd">{deployId}-app</span>. Getting this wrong could cause the updated app to bind to a different database.
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="field" style={{ marginTop: 14 }}>
@@ -484,7 +501,7 @@ function ScreenUpdateConfig({ ctx, setCtx, onNext, onBack }) {
       <WizardFooter
         onBack={onBack}
         onNext={startUpdate}
-        nextDisabled={!targetTag || !found}
+        nextDisabled={!targetTag || !found || !vars.dbServiceName}
         nextLabel="Start update"
       />
     </>
