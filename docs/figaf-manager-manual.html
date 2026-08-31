@@ -1,0 +1,1502 @@
+<title>Figaf Manager — User Manual</title>
+
+<style>
+  /* ─── Tokens ────────────────────────────────────────────────────────────
+     Palette inherited from the product's own design tokens
+     (packages/ui/styles.css): Figaf blue #1565D8 on cool blue-biased
+     neutrals, near-black navy ink. Mono is a working face here, not a
+     flourish — nearly every noun in this document is a service name,
+     an app name, a command or an env var. */
+  :root {
+    --paper:      #FBFCFE;
+    --paper-2:    #F2F5FA;
+    --paper-3:    #E9EEF6;
+    --ink:        #0B1220;
+    --ink-2:      #354054;
+    --ink-3:      #616C82;
+    --rule:       rgba(11, 18, 32, 0.11);
+    --rule-soft:  rgba(11, 18, 32, 0.06);
+    --accent:     #1565D8;
+    --accent-ink: #0F4EAB;
+    --accent-bg:  rgba(21, 101, 216, 0.07);
+    --warn:       #92400E;
+    --warn-bg:    rgba(217, 119, 6, 0.10);
+    --warn-rule:  rgba(217, 119, 6, 0.30);
+    --danger:     #9F1239;
+    --danger-bg:  rgba(190, 18, 60, 0.07);
+    --danger-rule:rgba(190, 18, 60, 0.26);
+    --ok:         #15803D;
+
+    --sans: ui-sans-serif, "Segoe UI Variable Text", "Segoe UI", system-ui,
+            -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", "SF Mono",
+            "Consolas", "Liberation Mono", monospace;
+
+    --rail: 15.5rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:      #0C1017;
+      --paper-2:    #131923;
+      --paper-3:    #1B2330;
+      --ink:        #E7EBF3;
+      --ink-2:      #B2BCCE;
+      --ink-3:      #8592A8;
+      --rule:       rgba(231, 235, 243, 0.14);
+      --rule-soft:  rgba(231, 235, 243, 0.07);
+      --accent:     #5D9BF6;
+      --accent-ink: #8FBBFA;
+      --accent-bg:  rgba(93, 155, 246, 0.11);
+      --warn:       #E9B355;
+      --warn-bg:    rgba(217, 119, 6, 0.14);
+      --warn-rule:  rgba(233, 179, 85, 0.32);
+      --danger:     #F19AAF;
+      --danger-bg:  rgba(190, 18, 60, 0.15);
+      --danger-rule:rgba(241, 154, 175, 0.30);
+      --ok:         #5FD08A;
+    }
+  }
+  /* Viewer's explicit toggle must win over the OS preference, both ways. */
+  :root[data-theme="dark"] {
+    --paper: #0C1017; --paper-2: #131923; --paper-3: #1B2330;
+    --ink: #E7EBF3; --ink-2: #B2BCCE; --ink-3: #8592A8;
+    --rule: rgba(231,235,243,0.14); --rule-soft: rgba(231,235,243,0.07);
+    --accent: #5D9BF6; --accent-ink: #8FBBFA; --accent-bg: rgba(93,155,246,0.11);
+    --warn: #E9B355; --warn-bg: rgba(217,119,6,0.14); --warn-rule: rgba(233,179,85,0.32);
+    --danger: #F19AAF; --danger-bg: rgba(190,18,60,0.15); --danger-rule: rgba(241,154,175,0.30);
+    --ok: #5FD08A;
+  }
+  :root[data-theme="light"] {
+    --paper: #FBFCFE; --paper-2: #F2F5FA; --paper-3: #E9EEF6;
+    --ink: #0B1220; --ink-2: #354054; --ink-3: #616C82;
+    --rule: rgba(11,18,32,0.11); --rule-soft: rgba(11,18,32,0.06);
+    --accent: #1565D8; --accent-ink: #0F4EAB; --accent-bg: rgba(21,101,216,0.07);
+    --warn: #92400E; --warn-bg: rgba(217,119,6,0.10); --warn-rule: rgba(217,119,6,0.30);
+    --danger: #9F1239; --danger-bg: rgba(190,18,60,0.07); --danger-rule: rgba(190,18,60,0.26);
+    --ok: #15803D;
+  }
+
+  /* ─── Base ──────────────────────────────────────────────────────────── */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:hover { color: var(--accent-ink); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+  code, kbd, samp, pre { font-family: var(--mono); font-variant-ligatures: none; }
+  :not(pre) > code {
+    font-size: 0.855em;
+    background: var(--paper-3);
+    border: 1px solid var(--rule-soft);
+    border-radius: 3px;
+    padding: 0.1em 0.34em;
+    white-space: nowrap;
+  }
+  pre {
+    margin: 0;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    font-size: 0.84rem;
+    line-height: 1.6;
+    color: var(--ink-2);
+  }
+
+  /* ─── Shell ─────────────────────────────────────────────────────────── */
+  .shell {
+    display: grid;
+    grid-template-columns: var(--rail) minmax(0, 1fr);
+    gap: 0 3.5rem;
+    max-width: 80rem;
+    margin: 0 auto;
+    padding: 0 1.5rem 6rem;
+    align-items: start;
+  }
+
+  /* ─── Masthead ──────────────────────────────────────────────────────── */
+  .masthead {
+    grid-column: 1 / -1;
+    border-bottom: 2px solid var(--ink);
+    padding: 3.5rem 0 1.35rem;
+    margin-bottom: 3rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem 2rem;
+  }
+  .masthead h1 {
+    margin: 0;
+    font-size: clamp(2rem, 4.4vw, 3rem);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.04;
+    text-wrap: balance;
+  }
+  .masthead p {
+    margin: 0.5rem 0 0;
+    font-size: 1.0625rem;
+    color: var(--ink-2);
+    max-width: 46ch;
+  }
+  .stamp {
+    font-family: var(--mono);
+    font-size: 0.94rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    text-align: right;
+    line-height: 1.9;
+    white-space: nowrap;
+  }
+  .stamp b { color: var(--accent); font-weight: 600; }
+
+  /* ─── Contents rail ─────────────────────────────────────────────────── */
+  .rail {
+    position: sticky;
+    top: 1.5rem;
+    max-height: calc(100vh - 3rem);
+    overflow-y: auto;
+    font-size: 0.8125rem;
+    padding-bottom: 1rem;
+  }
+  .rail h2 {
+    font-family: var(--mono);
+    font-size: 0.94rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 0.9rem;
+    font-weight: 600;
+  }
+  .rail ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+  .rail li { display: block; }
+  .rail a {
+    display: grid;
+    grid-template-columns: 1.75rem 1fr;
+    gap: 0.35rem;
+    padding: 0.3rem 0.4rem 0.3rem 0;
+    color: var(--ink-2);
+    text-decoration: none;
+    border-radius: 3px;
+    line-height: 1.35;
+  }
+  .rail a:hover { color: var(--accent); background: var(--accent-bg); }
+  .rail .n {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+    padding-top: 0.06em;
+  }
+  .rail a:hover .n { color: var(--accent); }
+  .rail .grp {
+    font-family: var(--mono);
+    font-size: 0.94rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 1.1rem 0 0.35rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--rule-soft);
+  }
+  .rail .grp:first-of-type { margin-top: 0; padding-top: 0; border-top: 0; }
+
+  /* ─── Article ───────────────────────────────────────────────────────── */
+  .doc { min-width: 0; }
+  .doc > * { margin-inline: 0; }
+
+  section { padding-top: 0.5rem; }
+  section + section { margin-top: 3.75rem; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.94rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 0.5rem;
+    font-weight: 600;
+  }
+  h2.sec {
+    margin: 0 0 1.1rem;
+    font-size: clamp(1.5rem, 2.6vw, 1.9rem);
+    font-weight: 750;
+    letter-spacing: -0.022em;
+    line-height: 1.15;
+    text-wrap: balance;
+  }
+  h3 {
+    margin: 2.4rem 0 0.7rem;
+    font-size: 1.0625rem;
+    font-weight: 700;
+    letter-spacing: -0.008em;
+    line-height: 1.3;
+    text-wrap: balance;
+  }
+  h4 {
+    margin: 1.7rem 0 0.5rem;
+    font-family: var(--mono);
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--ink);
+  }
+  /* ─── Collapsible groups ────────────────────────────────────────────── */
+  details.fold {
+    border-top: 1px solid var(--rule-soft);
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  details.fold + details.fold { border-top: none; }
+  details.fold > summary {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    list-style: none;
+    cursor: pointer;
+    padding: 0.8rem 0;
+    font-family: var(--mono);
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--ink);
+  }
+  details.fold > summary::-webkit-details-marker { display: none; }
+  details.fold > summary::before {
+    content: "";
+    flex: none;
+    width: 0.4rem;
+    height: 0.4rem;
+    border-right: 1.6px solid var(--ink-3);
+    border-bottom: 1.6px solid var(--ink-3);
+    transform: rotate(-45deg);
+    transition: transform 0.18s ease, border-color 0.18s ease;
+  }
+  details.fold[open] > summary::before { transform: rotate(45deg); }
+  details.fold > summary:hover { color: var(--accent); }
+  details.fold > summary:hover::before { border-color: var(--accent); }
+  details.fold > .fold-body { padding: 0.1rem 0 1.15rem; }
+  details.fold > .fold-body > *:last-child { margin-bottom: 0; }
+  details.fold > .fold-body > .tw:last-child { border-bottom: none; margin-bottom: 0; }
+
+  p { margin: 0 0 1rem; }
+  .doc > section > p:last-child { margin-bottom: 0; }
+  .lede { font-size: 1.0625rem; color: var(--ink-2); }
+
+  ul, ol { margin: 0 0 1rem; padding-left: 1.35rem; }
+  li { margin-bottom: 0.4rem; }
+  li > ul, li > ol { margin-top: 0.4rem; margin-bottom: 0.2rem; }
+  ol.steps { padding-left: 1.5rem; }
+  ol.steps > li { margin-bottom: 0.55rem; }
+
+  /* ─── Tables ────────────────────────────────────────────────────────── */
+  .tw { overflow-x: auto; margin: 0 0 1.35rem; border-bottom: 1px solid var(--rule); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.875rem; min-width: 30rem; }
+  thead th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 600;
+    padding: 0 0.9rem 0.55rem 0;
+    border-bottom: 1px solid var(--ink);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 0.62rem 0.9rem 0.62rem 0;
+    border-top: 1px solid var(--rule-soft);
+    vertical-align: top;
+    line-height: 1.5;
+  }
+  tbody tr:first-child td { border-top: 0; }
+  thead th:last-child, tbody td:last-child { padding-right: 0; }
+  tbody td:first-child { color: var(--ink); }
+  table.narrow tbody td:first-child { white-space: nowrap; }
+
+  /* ─── Callouts ──────────────────────────────────────────────────────── */
+  .call {
+    margin: 0 0 1.35rem;
+    padding: 0.95rem 1.1rem;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    font-size: 0.9375rem;
+  }
+  .call > :last-child { margin-bottom: 0; }
+  .call .tag {
+    display: block;
+    font-family: var(--mono);
+    font-size: 0.94rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-bottom: 0.4rem;
+    color: var(--ink-3);
+  }
+  .call.note  { background: var(--accent-bg); border-color: rgba(21,101,216,0.20); }
+  .call.note .tag { color: var(--accent); }
+  .call.warn  { background: var(--warn-bg);  border-color: var(--warn-rule); }
+  .call.warn .tag { color: var(--warn); }
+  .call.stop  { background: var(--danger-bg); border-color: var(--danger-rule); }
+  .call.stop .tag { color: var(--danger); }
+  :root[data-theme="dark"] .call.note, :root[data-theme="dark"] .call.warn { border-color: var(--rule); }
+  @media (prefers-color-scheme: dark) {
+    .call.note { border-color: rgba(93,155,246,0.28); }
+  }
+
+  /* ─── Screenshot placeholders ───────────────────────────────────────────
+     Crop-mark corners rather than a dashed box: this is a slot in a layout
+     waiting for an image, and it says so with its own filename. */
+  figure.shot { margin: 1.5rem 0 1.6rem; }
+  /* A filled slot: the image carries its own thin rule where the placeholder
+     had crop marks, so both states sit the same way in the column. */
+  figure.shot img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+  }
+  figure.shot.wide { width: 100%; }
+  .frame {
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-height: 8.5rem;
+    padding: 1.75rem 1rem;
+    background:
+      repeating-linear-gradient(135deg,
+        var(--rule-soft) 0 1px, transparent 1px 9px);
+    background-color: var(--paper-2);
+  }
+  .frame::before, .frame::after {
+    content: "";
+    position: absolute;
+    width: 1.1rem; height: 1.1rem;
+    border: 1.5px solid var(--accent);
+    opacity: 0.55;
+  }
+  .frame::before { top: 0; left: 0; border-right: 0; border-bottom: 0; }
+  .frame::after  { bottom: 0; right: 0; border-left: 0; border-top: 0; }
+  .frame .file {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.02em;
+    color: var(--ink-3);
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 0.3rem 0.55rem;
+    text-align: center;
+    word-break: break-all;
+  }
+  figure.shot figcaption {
+    margin-top: 0.6rem;
+    font-size: 0.8125rem;
+    color: var(--ink-3);
+    line-height: 1.55;
+  }
+  figure.shot figcaption b { color: var(--ink-2); font-weight: 600; }
+
+  /* ─── Pills ─────────────────────────────────────────────────────────── */
+  .pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    vertical-align: 0.08em;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .pill.rec  { background: var(--accent-bg); color: var(--accent); }
+  .pill.stub { background: var(--warn-bg);   color: var(--warn); }
+
+  footer.colophon {
+    grid-column: 1 / -1;
+    margin-top: 4.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    color: var(--ink-3);
+    line-height: 1.9;
+  }
+
+  /* ─── Narrow ────────────────────────────────────────────────────────── */
+  @media (max-width: 62rem) {
+    .shell { grid-template-columns: minmax(0, 1fr); gap: 0; padding-bottom: 4rem; }
+    .rail {
+      position: static; max-height: none; overflow: visible;
+      margin-bottom: 2.75rem; padding: 1.1rem 1.2rem;
+      background: var(--paper-2); border: 1px solid var(--rule); border-radius: 6px;
+    }
+    .rail ol { grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); }
+    .masthead { padding-top: 2.5rem; margin-bottom: 2rem; }
+    .stamp { text-align: left; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <div>
+      <h1>Figaf Manager</h1>
+      <p>Deploying and managing the Figaf Tool on SAP BTP Cloud Foundry.</p>
+    </div>
+    <div class="stamp">
+      User manual<br>
+      Audience · <b>BTP administrator</b><br>
+      Scope · <b>BTP-hosted installer</b>
+    </div>
+  </header>
+
+  <nav class="rail" aria-label="Contents">
+    <h2>Contents</h2>
+    <div class="grp">Orientation</div>
+    <ol>
+      <li><a href="#s1"><span class="n">1</span><span>About Figaf Manager</span></a></li>
+      <li><a href="#s2"><span class="n">2</span><span>Before you start</span></a></li>
+    </ol>
+    <div class="grp">Getting in</div>
+    <ol>
+      <li><a href="#s3"><span class="n">3</span><span>Deploying Figaf Manager</span></a></li>
+      <li><a href="#s4"><span class="n">4</span><span>Signing in</span></a></li>
+    </ol>
+    <div class="grp">Actions</div>
+    <ol>
+      <li><a href="#s5"><span class="n">5</span><span>Choose action</span></a></li>
+      <li><a href="#s6"><span class="n">6</span><span>Persistent SSO login</span></a></li>
+      <li><a href="#s7"><span class="n">7</span><span>Deploying the Figaf Tool</span></a></li>
+      <li><a href="#s8"><span class="n">8</span><span>Updating the Figaf Tool</span></a></li>
+      <li><a href="#s9"><span class="n">9</span><span>Connecting Integration Suite</span></a></li>
+    </ol>
+    <div class="grp">Maintenance</div>
+    <ol>
+      <li><a href="#s10"><span class="n">10</span><span>Updating the manager-app itself</span></a></li>
+      <li><a href="#s11"><span class="n">11</span><span>Removing Figaf Manager</span></a></li>
+    </ol>
+    <div class="grp">Back matter</div>
+    <ol>
+      <li><a href="#s12"><span class="n">12</span><span>Troubleshooting</span></a></li>
+      <li><a href="#s13"><span class="n">13</span><span>Reference</span></a></li>
+    </ol>
+  </nav>
+
+  <article class="doc">
+
+    <section id="s1">
+      <p class="eyebrow">Section 1</p>
+      <h2 class="sec">About Figaf Manager</h2>
+
+      <div class="call note">
+        <span class="tag">Scope</span>
+        <p>Simplifying the process of deploying, updating and managing the Figaf Tool by replacing a long sequence of manual btp and cf commands.</p>
+      </div>
+      
+      
+      <figure class="shot wide">
+        <img src="manual-images/01-00-preview.png" alt="BTP cockpit Deploy Application dialog">
+        <figcaption>The route assigned to <code>figaf-manager</code>. Copy it — this is the
+        manager-app's address.</figcaption>
+      </figure>
+
+      <p class="lede">Figaf Manager is a web application built to be deployed into a Cloud
+      Foundry space in your BTP subaccount. It signs you in to SAP BTP and Cloud Foundry, creates the services the Figaf Tool
+      needs, pushes the Figaf Tool, and later updates or connects it.</p>
+
+      <p>When you are finished, your space contains two groups of applications:</p>
+
+      <div class="tw">
+        <table class="narrow">
+          <tbody>
+            <tr>
+              <td><code>figaf-manager</code><br><code>figaf-manager-router</code></td>
+              <td>The app itself. Small (128 MB). It can be deleted when the service is no longer needed, or
+              kept for updating with the upcoming Figaf releases.</td>
+              
+              
+            </tr>
+            <tr>
+              <td><code>&lt;ID&gt;-app</code><br><code>&lt;ID&gt;-router</code></td>
+              <td>The <b>Figaf Tool</b>. <code>&lt;ID&gt;</code> is the Application ID you
+              choose. </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>plus the services they are bound to — a PostgreSQL database (<code>figaf-db</code>
+      by default) and an XSUAA instance (<code>figaf-xsuaa</code>) that carries the Figaf
+      Tool's roles.</p>
+
+      <p>The collapsible bar along the bottom opens a terminal that
+      shows the exact <code>btp</code> and <code>cf</code> commands being run and their
+      output as they happen. Click it to expand. Passwords, service keys and tokens are
+      filtered out of that stream before you see them.</p>
+
+    <figure class="shot wide">
+        <img src="manual-images/01-01-layout.png" alt="The expanded CLI details bar">
+        <figcaption>The expanded CLI details bar</figcaption>
+      </figure>
+
+    <section id="s2">
+      <p class="eyebrow">Section 2</p>
+      <h2 class="sec">Before you start</h2>
+
+      <p>Make sure you have the necessary entitlements and resources available.</p>
+
+      <h3>In your BTP subaccount</h3>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Check</th><th>Detail</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Cloud Foundry environment</td>
+              <td>The subaccount needs a Cloud Foundry environment instance, with at least one
+              org and space. Subaccounts without one are visible in the manager-app but cannot be
+              selected.</td>
+            </tr>
+            <tr>
+              <td>Your role in the space</td>
+              <td><b>Space Developer.</b> You need it to push applications <i>and</i> to read
+              the application log that carries the setup token. Space Auditor can read logs
+              but cannot deploy.</td>
+            </tr>
+            <tr>
+              <td>PostgreSQL entitlement</td>
+              <td>Service <code>postgresql-db</code>. On a trial account you get the
+              <code>trial</code> plan; on a paid account, typically <code>development</code>
+              or <code>standard</code>. The manager-app reads the plans available to you from the
+              marketplace — if the list is empty, the entitlement is missing.</td>
+            </tr>
+            <tr>
+              <td>XSUAA entitlement</td>
+              <td>Service <code>xsuaa</code>, plan <code>application</code>. One instance for
+              the Figaf Tool (<code>figaf-xsuaa</code>). Enabling persistent login
+              (section 6) creates a second one (<code>figaf-manager-xsuaa</code>).</td>
+            </tr>
+            <tr>
+              <td>Memory quota</td>
+              <td>Minimum: <b>128 MB</b> for the Manager App. <b>3.7 GB</b> for the Figaf Tool app (the
+              default), 128 MB for its router, and another 128 MB if you enable persistent
+              login. The 4GB of trial should be sufficient for demo purposes.</td>
+            </tr>
+            <tr>
+              <td>Disk quota</td>
+              <td>Minimum: <b>512 MB</b> for the Manager App. The Figaf Tool application requests <b>10 GB</b> of disk. Separate from the
+              memory quota and rarely a problem, but check it if a push fails on disk rather
+              than memory.</td>
+            </tr>
+            <tr>
+              <td>Integration Suite <i>(optional)</i></td>
+              <td>Only needed for section 9. The <code>it-rt</code> service offering must be
+              available in the subaccount.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    <section id="s3">
+      <p class="eyebrow">Section 3</p>
+      <h2 class="sec">Deploying Figaf Manager into your space</h2>
+
+      <p>This is the one step you do by hand in the BTP cockpit.</p>
+
+      <h3>3.1 &nbsp;Get the two files</h3>
+      <p>From the Figaf Manager <a href="https://github.com/figaf/FigafManager/releases">release on github</a>, take <b>both</b> assets:</p>
+      <div class="tw">
+        <table class="narrow">
+          <tbody>
+            <tr><td><code>figaf-manager-app-&lt;version&gt;.zip</code></td><td>The application archive.</td></tr>
+            <tr><td><code>manifest.yml</code></td><td>The deployment descriptor. Use it as-is.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      
+      <h3>3.2 &nbsp;Deploy from the cockpit</h3>
+      <ol class="steps">
+        <li>In the SAP BTP cockpit, open your <b>subaccount → Cloud Foundry → Spaces →</b> your space.</li>
+        <li>Go to <b>Applications</b> and choose <b>Deploy Application</b>.</li>
+        <li>For <b>Application Archive</b>, upload <code>figaf-manager-app-&lt;version&gt;.zip</code>.</li>
+        <li>For <b>Deployment Descriptor</b>, upload <code>manifest.yml</code>.</li>
+        <li>Click <b>Deploy</b>.</li>
+        <li>Open the deployed <code>figaf-manager</code> application and note its <b>Application Routes</b> — see below.</li>
+      </ol>
+
+      <figure class="shot wide">
+        <img src="manual-images/03-01-cockpit-deploy.png" alt="BTP cockpit Deploy Application dialog">
+        <figcaption>Deploy Application Screen</figcaption>
+      </figure>
+
+
+      <p>The manifest creates a single application named
+      <code>figaf-manager</code> with 128 MB memory, 512 MB disk, and
+      a randomly generated route.</p>
+
+      <details class="fold">
+        <summary>Manifest variables</summary>
+        <div class="fold-body">
+      <p>Relevant variables you can change in the manifest:</p>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Variable</th><th>Effect</th></tr></thead>
+          <tbody>
+            <tr><td><code>memory</code></td><td>Memory quota for the application. Minimum 128 MB.</td></tr>
+            <tr><td><code>disk_quota</code></td><td>Disk quota for the application. Minimum 512 MB.</td></tr>
+            <tr><td><code>FIGAF_LOG_LEVEL</code></td><td>Verbosity of the manager-app's own logging: <code>off</code>, <code>cli</code> (default — every external command), <code>ipc</code>, <code>net</code>.</td></tr>
+            <tr><td><code>FIGAF_IDLE_SELF_DESTRUCT_HOURS</code></td><td>Have the manager-app remove itself after this many hours with no activity. Off by default.</td></tr>
+            <tr><td><code>FIGAF_IDLE_SELF_DESTRUCT_GRACE</code></td><td>Minutes of warning logged before that happens. Default 30.</td></tr>
+        </tbody>
+        </table>
+      </div>
+        </div>
+      </details>
+
+
+      <p>Open the <code>figaf-manager</code> application in the cockpit and look at
+      <b>Application Routes</b>. Because the manifest uses a random route, the hostname is
+      generated — something like
+      <code>figaf-manager-cheerful-antelope.cfapps.&lt;region&gt;.hana.ondemand.com</code>.
+      That is the address you will use for everything that follows.</p>
+
+      <figure class="shot wide">
+        <img src="manual-images/03-03-application-overview.png" alt="BTP cockpit Deploy Application dialog">
+        <figcaption>The route assigned to <code>figaf-manager</code>. Copy it — this is the
+        manager-app's address.</figcaption>
+      </figure>
+
+      <h3>3.3 &nbsp;Access - Get the Setup Token</h3>
+
+      <p>The app's route is publicly accessible, it requires authentication. On its first start it
+      generates a one-time <b>setup token</b>, prints it once to its own application log. It is required to claim the token to proceed. Only somebody who can read your space's logs can get that token.</p>
+
+     
+      <ol class="steps">
+        <li>Cockpit → your space → <b>Applications → <code>figaf-manager</code></b>.</li>
+        <li>Open the <b>Logs</b> tab.</li>
+        <li>Find the most recent line beginning with <code>[SETUP] Token</code>. Claim it as soon as possible.</li>
+     
+        <figure class="shot wide">
+         <img src="manual-images/04-01-cockpit-log-token.png" alt="The [SETUP] Token: line in the application log. Copy the token
+        value only.">
+        <figcaption>The <code>[SETUP] Token:</code> line in the application log. Copy the token
+        value only.</figcaption>
+       </figure>
+
+        <li>Open <code>figaf-manager</code> → Application Overview → Mapped Routes → <code>https://&lt;your-route&gt;/</code></li>
+        <li>Paste the token into <b>Setup token</b>.</li>
+        <li>Click <b>Claim and continue</b>.</li>
+        <li>On success the page opens the Figaf Manager app.</li>
+     
+     
+      </ol>
+
+      <p>Your browser now holds a session that lasts 8 hours. The token is single use. The first successful claim consumes it; any later
+      attempt is refused.</p>
+
+
+
+      <div class="call warn">
+        <span class="tag">Who else can see the token</span>
+        <p>The token is written to the application log, so anyone who can read the space's
+        logs — Space Developer or Space Auditor — can claim this installer. If the space has a
+        log drain configured (an SIEM, a Loggregator forwarder, the Application Logging
+        Service), the token was forwarded there too. Treat those systems as trusted, or
+        restage to rotate the token.</p>
+      </div>
+
+      <div class="call note">
+        <span class="tag">Getting a fresh token</span>
+        <p>Cockpit → your space → <b>Applications → <code>figaf-manager</code> → ⋯ →
+        Restage.</b> The application comes back up, writes a new <code>[SETUP] Token:</code>
+        line to the log, and you claim it exactly as above.</p>
+      </div>
+
+    </section>
+
+    <section id="s4">
+      <p class="eyebrow">Section 4</p>
+      <h2 class="sec">Signing in</h2>
+
+      <h3>4.1 &nbsp; Welcome</h3>
+      <p>The app runs a few checks its environment before letting you move forward. Click <b>Continue</b>.</p>
+
+      <details class="fold">
+        <summary>What each check means</summary>
+        <div class="fold-body">
+      <div class="tw">
+        <table>
+          <thead><tr><th>Row</th><th>What it means</th></tr></thead>
+          <tbody>
+            <tr><td>SAP BTP CLI</td><td>Reads <i>bundled in container</i> — the tool ships inside the app, so there is nothing to install.</td></tr>
+            <tr><td>Cloud Foundry CLI</td><td>Likewise bundled.</td></tr>
+            <tr><td>Docker Hub reachable</td><td>The real check. The manager-app contacts <code>hub.docker.com</code> and reports the latest Figaf image tag it found. If this fails, the space has no outbound access to Docker Hub and the deployment cannot pull the image.</td></tr>
+            <tr><td>Container ready</td><td>A filesystem sanity check.</td></tr>
+            <tr><td>Installer version</td><td>Whether a newer Figaf Manager exists. This row never blocks you — see section 10.</td></tr>
+          </tbody>
+        </table>
+      </div>
+        </div>
+      </details>
+
+      
+
+      <h3>4.2 &nbsp;Sign in</h3>
+      <figure class="shot wide">
+        <img src="manual-images/04-02-login.png" alt="Step 2 · Authenticate — the SAP BTP CLI card above the Cloud Foundry CLI
+        card.">
+        <figcaption>Step 2 · Authenticate — the SAP BTP CLI card above the Cloud Foundry CLI
+        card.</figcaption>
+      </figure>
+
+
+      <h3>SAP BTP Login</h3>
+      <ol class="steps">
+        <li>Click <b>Sign in with SSO</b>. A browser tab opens for SAP sign-in. Requires <b>Global Account</b>.</li>
+      </ol>
+
+      <div class="call note">
+        <span class="tag">No global account?</span>
+        <p>Skipping this step will only allow you to update an <b>already existing</b> deployment of the Figaf Tool.</p>
+        <p>You will then need to supply the API endpoint yourself for the CF Login. Subaccount → Cloud Foundry Environment → API endpoint (for example https://api.cf.us10.hana.ondemand.com).</p>
+      </div>
+
+      <ol class="steps" start="2">
+        <li>Choose a <b>global account</b>. If your user has access to more than one global account.</li>
+        <li>Then choose a <b>subaccount</b>. Subaccounts without a Cloud Foundry
+        environment are listed but greyed out and tagged <b>No CF</b>.</li>
+      </ol>
+
+      <p>On success the card shows <b>Connected</b> with a summary: global account, subaccount,
+      subaccount ID, org, landscape and API endpoint. <b>Switch Account</b> restarts the
+      picker; <b>Sign out</b> clears the session.</p>
+
+      <h3>Cloud Foundry Login</h3>
+      
+      <ol class="steps">
+        <li>Click <b>Get passcode in browser</b>. A tab opens on your landscape's passcode
+        page (<code>login.&lt;region&gt;.hana.ondemand.com/passcode</code>).</li>
+        <li>Copy the code shown there.</li>
+        <li>Paste the <b>One-time passcode</b> back into the app and </li>
+      </ol>
+
+
+
+
+
+      <ol class="steps" start="4">
+        <li>If your user can see several orgs, <b>Choose a Cloud Foundry org</b> matching your BTP subaccount. This is also usually marked as <b>Recommended</b></li>
+        <li>Then <b>Choose a space</b>.</li>
+        <li>Click <b>Next</b>.</li>
+      </ol>
+
+      <p>The card shows <b>Connected</b> with your org and space. <b>Switch Org</b> lets you
+      re-target later without signing out; <b>Sign out</b> ends the CF session. Once both
+      cards are connected, <b>Next</b> is enabled.</p>
+    </section>
+
+    <section id="s5">
+      <p class="eyebrow">Section 5</p>
+      <h2 class="sec">Choose action</h2>
+
+      <figure class="shot wide">
+        <img src="manual-images/05-01-choices.png" alt="Step 3 · Choose action. The heading confirms who you are signed in as and
+        where.">
+        <figcaption>Step 3 · Choose action. The heading confirms who you are signed in as and
+        where.</figcaption>
+      </figure>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>Tile</th><th>Pick it when</th><th>See</th></tr></thead>
+          <tbody>
+            <tr><td>Enable persistent SSO login <span class="pill rec">Recommended</span></td><td>Replaces the cockpit-log token with SAP IAS single sign-on.</td><td><a href="#s6">§6</a></td></tr>
+            <tr><td>Deploy Figaf Tool</td><td>Fresh installation.</td><td><a href="#s7">§7</a></td></tr>
+            <tr><td>Update Figaf Tool</td><td>You already run Figaf and want a newer image.</td><td><a href="#s8">§8</a></td></tr>
+            <tr><td>Connect to Integration Suite</td><td>You already run Figaf and want to wire it to your Integration Suite tenant.</td><td><a href="#s9">§9</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+
+    </section>
+
+    <section id="s6">
+      <p class="eyebrow">Section 6</p>
+      <h2 class="sec">Enabling persistent SSO login</h2>
+
+      <p class="lede">With persistent SSO, you won't need to restage and generate a new token each time you want to access the Figaf Manager.
+      An SAP approuter is deployed in front of the app and takes over the public route.
+      From then on every request is authenticated against your subaccount's identity provider
+      before it reaches the manager-app.</p>
+
+      <h3>6.1 &nbsp;What changes</h3>
+      <div class="tw">
+        <table>
+          <thead><tr><th></th><th>Before</th><th>After</th></tr></thead>
+          <tbody>
+            <tr><td>Authentication</td><td>One-time token from the cockpit log</td><td><b>SAP IAS single sign-on</b></td></tr>
+            <tr><td>Who can get in</td><td>User who submits the token</td><td>Anyone you assign <code>FigafManagerAdmin</code> to</td></tr>
+            <tr><td>If you lose your session</td><td>Restage to create a new token</td><td>Sign in again</td></tr>
+            <tr><td>Extra objects in your space</td><td>—</td><td><code>figaf-manager-approuter</code> (128 MB) and the <code>figaf-manager-xsuaa</code> service</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      
+
+      <h3>6.2 &nbsp;Before you press Start</h3>
+
+
+
+      <figure class="shot wide">
+        <img src="manual-images/06-01-xsuaa-before.png" alt="The upgrade screen: the Cloud Foundry target check, the role-assignment
+        option, and the phase list.">
+        <figcaption>The upgrade screen: the Cloud Foundry target check, the role-assignment
+        option, and the phase list.</figcaption>
+      </figure>
+
+      <p><b>The Cloud Foundry target check</b> is the first row of the list. The approuter has
+      to be pushed into the same org and space the manager-app itself runs in, so the manager-app
+      verifies that first.</p>
+      <ul>
+      
+        <li><b>Wrong Cloud Foundry target</b> — it shows what it expected versus where you
+        actually are. Click <b>Go to login</b>, use <b>Switch Org</b> on the sign-in screen to
+        re-target, then come back through <b>Choose action → Begin upgrade</b>.</li>
+        <li><b>Couldn't verify Cloud Foundry target</b> — same remedy.</li>
+      </ul>
+      <p><b>Start upgrade</b> stays disabled until this check passes.</p>
+
+      <p><b>Assign me FigafManagerAdmin after upgrade</b> is ticked by default. Leave it
+      ticked. Without it you will be signed in but rejected with a <i>403</i> until you assign
+      the role to yourself.</p>
+
+      <h3>6.3 &nbsp;Running the upgrade</h3>
+      <p>Click <b>Start upgrade</b>. Five phases run in order:</p>
+      <details class="fold">
+        <summary>The five phases</summary>
+        <div class="fold-body">
+      <div class="tw">
+        <table>
+          <thead><tr><th>Phase</th><th>What happens</th></tr></thead>
+          <tbody>
+            <tr><td>Create XSUAA service</td><td>Creates <code>figaf-manager-xsuaa</code>, which also materialises the <code>FigafManagerAdmin</code> and <code>FigafManagerOperator</code> role collections in your subaccount.</td></tr>
+            <tr><td>Assign role collection</td><td>Grants you <code>FigafManagerAdmin</code>. Skipped if you unticked the option.</td></tr>
+            <tr><td>Deploy authentication proxy</td><td>Deploys <code>figaf-manager-approuter</code> and binds it to the XSUAA service.</td></tr>
+            <tr><td>Hand off public route</td><td>The approuter takes over the public URL; the manager-app moves to an internal route behind it.</td></tr>
+            <tr><td>Restage manager</td><td>The manager-app rebinds to XSUAA and restarts. <b>Expect 30–90 seconds offline here.</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+        </div>
+      </details>
+
+
+      <figure class="shot wide">
+        <img src="manual-images/06-02-xsuaa-running.png" alt="Phases completing in sequence. The restage row is where the manager-app goes
+        briefly offline.">
+        <figcaption>Phases completing in sequence. The restage row is where the manager-app goes
+        briefly offline.</figcaption>
+      </figure>
+
+      <h3>6.4 &nbsp;Coming back</h3>
+      <p>When the phases finish you see a success panel. <b>Continue is deliberately
+      locked</b> with <i>Waiting for manager to come back…</i> while the manager-app confirms it is
+      actually back up in the new mode. This prevents you from landing on the old setup page
+      mid-restart. It usually unlocks within a minute.</p>
+
+      <p>Click <b>Continue</b>. The page reloads through the approuter and you are sent to SAP
+      IAS to sign in.</p>
+
+
+      <p>If the role assignment failed, or to assign roles to other users, you can do it in the cockpit: Cockpit → your subaccount → <b>Users</b> → the person → <b>Role Collections</b>:</p>
+      <div class="tw">
+        <table class="narrow">
+          <tbody>
+            <tr><td><code>FigafManagerAdmin</code></td><td>Full use of the manager-app;</td></tr>
+            <tr><td><code>FigafManagerOperator</code></td><td>Non-destructive operations only.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="s7">
+      <p class="eyebrow">Section 7</p>
+      <h2 class="sec">Deploying the Figaf Tool</h2>
+
+      <p>From <b>Choose action</b>, pick <b>Deploy Figaf Tool</b> and click <b>Configure
+      deployment</b>.</p>
+
+      <h3>7.1 &nbsp;Step 4 — Configuration</h3>
+      <p>This is the only screen with real decisions on it. Most fields are already filled in
+      from what the manager-app detected.</p>
+
+
+       <figure class="shot wide">
+        <img src="manual-images/07-01-config-general.png" alt="Phases completing in sequence. The restage row is where the manager-app goes
+        briefly offline.">
+        <figcaption>Step 4 · Configuration — the General and Application settings
+        groups.</figcaption>
+      </figure>
+
+
+      <details class="fold">
+        <summary>General</summary>
+        <div class="fold-body">
+        <div class="tw">
+          <table>
+            <thead><tr><th>Field</th><th>What to enter</th></tr></thead>
+            <tbody>
+              <tr><td>Application ID <b>*</b></td><td>The name of your deployment. It becomes the public hostname and both application names (<code>&lt;ID&gt;-app</code>, <code>&lt;ID&gt;-router</code>). Lowercase, no spaces, no underscores. Default <code>figaf-tool</code>. A company-ish prefix such as <code>acme-figaf</code> is a good convention.</td></tr>
+              <tr><td>Location ID</td><td>Leave empty unless you will connect a PI/PO system or a local SMTP server through SAP Cloud Connector, in which case it must match the location ID configured there.</td></tr>
+              <tr><td>Landscape apps domain <b>*</b></td><td>Detected from your space. Normally only one entry, e.g. <code>cfapps.eu10-004.hana.ondemand.com</code>.</td></tr>
+              <tr><td>Docker image version <b>*</b></td><td>Pre-filled with the newest <code>figaf/app</code> tag ending in <code>-btp</code>. Pick another from the dropdown or type one.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        </div>
+      </details>
+
+      <details class="fold">
+        <summary>Application settings</summary>
+        <div class="fold-body">
+        <div class="tw">
+          <table>
+            <thead><tr><th>Field</th><th>Guidance</th></tr></thead>
+            <tbody>
+              <tr><td>Instance memory <b>*</b></td><td>Default <code>3700M</code>, sized to fit a trial org. For production use <b>4 G or more</b> — 4 G is the product minimum. Units: <code>K</code>, <code>M</code>, <code>G</code>.</td></tr>
+              <tr><td>Max RAM percentage <b>*</b></td><td>Share of the instance memory used as the maximum heap. <code>50</code> is the default.</td></tr>
+              <tr><td>Logs total size cap <b>*</b></td><td>The application's own log folder. Default <code>2GB</code>.</td></tr>
+              <tr><td>Enable instance monitoring</td><td>The <b>Enable Glowroot monitoring</b> checkbox — adds a monitoring agent and its endpoint. On by default.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        </div>
+      </details>
+
+      <details class="fold">
+        <summary>Cloud connector settings</summary>
+        <div class="fold-body">
+        <p><b>Use cloud connector for SMTP integration</b> — leave <b>No</b> unless your mail
+        server is on-premise and reached through SAP Cloud Connector. Choosing <b>Yes</b>
+        reveals <b>Cloud connector destination name</b>, which must match a destination you
+        configured in the SAP BTP Destination service.</p>
+        </div>
+      </details>
+
+      <details class="fold">
+        <summary>CF services</summary>
+        <div class="fold-body">
+        <div class="tw">
+          <table class="narrow">
+            <thead><tr><th>Service</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td>Your database service<br>(<code>figaf-db</code> by default)</td><td>Always bound. Cannot be unchecked.</td></tr>
+              <tr><td><code>figaf-xsuaa</code></td><td>Always bound. Carries the Figaf Tool's roles.</td></tr>
+              <tr><td><code>figaf-connectivity</code></td><td>Optional. Only for PI/PO integration. Created for you in the next step if you tick it.</td></tr>
+              <tr><td><code>figaf-destination</code></td><td>Optional, same purpose.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        </div>
+      </details>
+
+      <details class="fold">
+        <summary>PostgreSQL service</summary>
+        <div class="fold-body">
+        <div class="tw">
+          <table>
+            <thead><tr><th>Field</th><th>Guidance</th></tr></thead>
+            <tbody>
+              <tr><td>Database service name</td><td>Default <code>figaf-db</code>. Change it to use a custom name, or to point at a PostgreSQL instance that already exists in the space.</td></tr>
+              <tr><td>Service plan <b>*</b></td><td>Read live from your marketplace. <code>trial</code> is free and shared; paid plans differ in storage, availability and backups. If the list is empty or missing the plan you expect, the entitlement is not assigned to the subaccount.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        </div>
+      </details>
+
+      <details class="fold">
+        <summary>PostgreSQL parameters</summary>
+        <div class="fold-body">
+        <p>The PostgreSQL service broker accepts different parameters on trial and paid
+        accounts, so the manager-app shows different fields.</p>
+
+        <p><b>Trial subaccount</b> is ticked automatically when your global account subdomain
+        contains "trial". Trial brokers accept only two parameters: <b>Engine version</b>
+        (<code>16</code>) and <b>Locale</b> (<code>en_US</code>).</p>
+
+        <p>Untick it for a paid account and you get the commonly tuned settings for your
+        hyperscaler — <b>Storage (GB)</b>, <b>Memory (GB)</b>, <b>Backup retention (days)</b>,
+        <b>Public access</b>, and either <b>Multi-AZ</b> (AWS/Azure) or <b>Cross-region
+        backup</b> (GCP).</p>
+
+        <div class="call warn">
+          <span class="tag">Provider couldn't be detected</span>
+          <p>An amber warning meaning the manager-app could not tell which hyperscaler your
+          subaccount is on, so it does not know which parameter set to write. Either tick
+          <b>Trial subaccount</b>, or go back to the sign-in step and select a subaccount whose
+          region it recognises.</p>
+        </div>
+        </div>
+      </details>
+
+      <p>Click <b>Start deployment</b>. The manager-app writes your choices to the deployment files
+      and moves on.</p>
+
+      <h3>7.2 &nbsp;Provisioning</h3>
+
+      <p>Creates necessary services. If a row goes red, expand
+      <b>CLI details</b> to see exactly which command failed. When all rows are green, click
+      <b>Continue to deploy</b>.</p>
+
+      <figure class="shot wide">
+        <img src="manual-images/07-03-provision.png" alt="Step 5 · Provisioning — services being created, most of them in
+        parallel.">
+        <figcaption>Step 5 · Provisioning — services being created, most of them in
+        parallel.</figcaption>
+      </figure>
+
+      <details class="fold">
+        <summary>What each row does</summary>
+        <div class="fold-body">
+      <div class="tw">
+        <table>
+          <thead><tr><th>Row</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>Update vars.yml</td><td>Updates the variables file with the selected configuration from the previous step.</td></tr>
+            <tr><td>Create PostgreSQL service</td><td>Creating the database - can take several minutes.</td></tr>
+            <tr><td>Create XSUAA service</td><td>Used for authentication. Creating it also materialises all of the Figaf Tool's <code>IRT*</code> role collections in your subaccount.</td></tr>
+            <tr><td>Assign role collection</td><td>Grants you the <code>IRTAdmin</code> role - full access to the Figaf Tool. This runs <i>after</i> XSUAA finishes, because the role collection does not exist until then.</td></tr>
+            <tr><td>Create Connectivity / Destination service</td><td>Only if you ticked them on the previous screen.</td></tr>
+          </tbody>
+        </table>
+      </div>
+        </div>
+      </details>
+
+
+      <h3>7.3 &nbsp;Deploy and Finish</h3>
+      <figure class="shot wide">
+        <img src="manual-images/07-04-deploy.png" alt="Step 6 · Deploy — uploading, staging and starting.">
+        <figcaption>Step 6 · Deploy — uploading, staging and starting.</figcaption>
+      </figure>
+
+      <p>The manager-app pushes both applications. This uploads the Docker image, binds the
+      services and starts the instances — <b>typically 2 to 5 minutes</b>.</p>
+
+      <p>If it fails, the heading reads <b>Deployment failed</b> and the CLI drawer holds the
+      error. The most common cause is an org memory quota that cannot fit the new app - see
+      <a href="#s12">Troubleshooting</a>.</p>
+
+
+      <figure class="shot">
+        <img src="manual-images/07-05-done.png" alt="Step 7 · Finish — the deployment summary and the link to your new Figaf
+        Tool.">
+        <figcaption>Step 7 · Finish — the deployment summary and the link to your new Figaf
+        Tool.</figcaption>
+      </figure>
+
+      <p>The summary shows your <b>App URL</b>, the image tag deployed, the database and its
+      plan, the auth service, the org and space, the location ID, and a <b>BTP Cockpit</b>
+      link that opens the space's application list.</p>
+
+      <details class="fold">
+        <summary>Buttons on this screen</summary>
+        <div class="fold-body">
+      <div class="tw">
+        <table class="narrow">
+          <thead><tr><th>Button</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td>Open Figaf Tool</td><td>Opens the Figaf tool. Can take some minutes to respond.</td></tr>
+            <tr><td>Back to actions</td><td>Returns to <b>Choose action</b> so you can run another flow.</td></tr>
+            <tr><td>Enable persistent SSO login</td><td>Shortcut into <a href="#s6">section 6</a>, if you have not done it yet.</td></tr>
+            <tr><td>Delete this manager app</td><td>Removes the manager-app. See <a href="#s11">section 11</a> before using it.</td></tr>
+          </tbody>
+        </table>
+      </div>
+        </div>
+      </details>
+
+      <p>For a full descriptions of how the application works, see the 
+      <a href="https://figaf.com/help/irt-doc/latest/">Figaf
+      user-management documentation</a>.</p>
+    </section>
+
+    <section id="s8">
+      <p class="eyebrow">Section 8</p>
+      <h2 class="sec">Updating the Figaf Tool</h2>
+
+      <p>From <b>Choose action</b>, pick <b>Update Figaf Tool</b> and click <b>Configure
+      update</b>. This refreshes an existing deployment onto a newer Docker image, pulling the
+      latest deployment templates from GitHub first.</p>
+
+      <h3>8.1 &nbsp;Configure update</h3>
+      <figure class="shot">
+        <img src="manual-images/08-01-update-config.png" alt="Step 4 · Configure update — the detected deployment, target tag, and
+        strategy choice.">
+        <figcaption>Step 4 · Configure update — the detected deployment, target tag, and
+        strategy choice.</figcaption>
+      </figure>
+
+      <p><b>Choose your deployment.</b> The manager-app scans the space for a figaf deployment. <b>Click on the deployment</b> found, or manually enter the Deployment ID(without the <code>-app</code> suffix) and click <b>Detect</b>.</p>
+    
+
+      <p><b>Target Docker image tag</b> - choose from the available releases.</p>
+
+      <p><b>Skip XSUAA update</b> - tick this if you have hand-edited the Figaf Tool's role
+      collections in the cockpit and do not want them reset to the shipped defaults. Otherwise
+      leave it off.</p>
+
+      <p><b>Deployment strategy</b> - Recreate (reccommended) or Rolling (requires more resources, less downtime)</p>
+    
+
+      <p><b>Advanced — deployment variables</b> (collapsed) holds the remaining settings —
+      domain, location ID, memory, RAM percentage, log cap, monitoring, SMTP, and the optional
+      PI services. These are loaded from the live application. Open it if you want to modify properties.</p>
+      <ul>
+        <li>An warning note appears if some live values could not be read; Make sure a deployment is selected.</li>
+        <li><b>Database service name</b> is read-only during an update — it is detected from
+        the running application and must not change. If detection failed, the field turns red
+        and you must type the exact name of the bound PostgreSQL instance; getting it wrong
+        would point the updated app at a different database.</li>
+      </ul>
+
+      <p>Click <b>Start update</b>.</p>
+
+      <div class="call note">
+        <span class="tag">Resuming</span>
+        <p>If a previous update stopped part-way, a banner offers <b>Resume</b> (picking up at
+        the phase that failed) or <b>Discard &amp; start over</b>.</p>
+      </div>
+
+      <h3>8.2 &nbsp;Apply update</h3>
+      <figure class="shot">
+        <img src="manual-images/08-02-update-apply.png" alt="Step 5 · Apply update — phases running in sequence.">
+        <figcaption>Step 5 · Apply update — phases running in sequence.</figcaption>
+      </figure>
+
+      <details class="fold">
+        <summary>The seven phases</summary>
+        <div class="fold-body">
+      <div class="tw">
+        <table class="narrow">
+          <thead><tr><th>Phase</th><th>What happens</th></tr></thead>
+          <tbody>
+            <tr><td>Refresh deploy templates</td><td>Fetches the current deployment templates.</td></tr>
+            <tr><td>Update XSUAA service</td><td>Re-applies the role definitions. Skipped if you ticked the option.</td></tr>
+            <tr><td>Delete current apps</td><td>Recreate strategy only — frees quota before staging.</td></tr>
+            <tr><td>Create PI services</td><td>Only if connectivity/destination are selected.</td></tr>
+            <tr><td>Push app</td><td>The Figaf Tool itself.</td></tr>
+            <tr><td>Push router</td><td>The approuter.</td></tr>
+            <tr><td>Verify deployment</td><td>Confirms the new image is live and the route responds.</td></tr>
+          </tbody>
+        </table>
+      </div>
+        </div>
+      </details>
+
+      <p>On failure the heading reads "Update halted", and you get "Retry from failed
+      phase" (state is preserved, so it resumes rather than restarting) or "Abort &amp;
+      clear state".</p>
+
+      <h3>8.3 &nbsp;Finish</h3>
+      <p>The summary shows the deployment ID, App URL, the previous and current
+      image, router health, and the org/space. "Start another action" clears the update
+      state and returns you to "Choose action".</p>
+    </section>
+
+    <section id="s9">
+      <p class="eyebrow">Section 9</p>
+      <h2 class="sec">Connecting to SAP Integration Suite</h2>
+
+      <p>From <b>Choose action</b>, pick <b>Connect to Integration Suite</b>.
+      <p>In this step, you will work along the Figaf Tool, helping you to provide the necessary data for connecting it to Integration Suite. In Figaf, go to Configuration -> Agent -> Create CPI Agent.</p>
+
+
+      <h3>9.1 &nbsp;Provision</h3>
+      <figure class="shot">
+        <img src="manual-images/09-01-connect-provision.png" alt="Step 4 · Provision — the four provisioning steps and the two resulting keys.">
+        <figcaption>Step 4 · Provision — the four provisioning steps and the two resulting key
+        cards.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <img src="manual-images/09-011-Figaf-Create-CPI-Agent.png" alt="Step 4 · Provision — the four provisioning steps and the two resulting keys.">
+        <figcaption>Figaf Tool — Create CPI Agent</figcaption>
+      </figure>
+
+      <p>The manager-app first checks that the <code>it-rt</code> service offering is available. If
+      not, the heading reads <b>Integration Suite not entitled</b> — subscribe the Integration
+      Suite tenant to this subaccount in the cockpit, then click <b>Retry</b>.</p>
+
+      <p>Otherwise it creates two services and their access keys:</p>
+      <details class="fold">
+        <summary>What gets created</summary>
+        <div class="fold-body">
+      <div class="tw">
+        <table class="narrow">
+          <thead><tr><th>Row</th><th>Result</th></tr></thead>
+          <tbody>
+            <tr><td>Create it-rt/api service</td><td><code>figaf-api</code></td></tr>
+            <tr><td>Create it-rt/integration-flow service</td><td><code>figaf-iflow</code></td></tr>
+            <tr><td>Create + fetch API service key</td><td><code>key-api</code></td></tr>
+            <tr><td>Create + fetch iFlow service key</td><td><code>key-iflow</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+        </div>
+      </details>
+
+      <p>When all four are green, two key cards appear. Copy each key block into the
+      matching fields coming next in the Figaf Tool setup</p>
+
+      <p>Click <b>Continue to BTP access</b>.</p>
+
+      <h3>9.2 &nbsp;BTP access</h3>
+      <figure class="shot wide">
+        <img src="manual-images/09-02-connect-btp-access.png" alt="Step 5 · BTP access — pick the identity model. Only Custom IDP is complete.">
+        <figcaption>Step 5 · BTP access — pick the identity model. Only <b>Custom IDP</b> is
+        complete.</figcaption>
+      </figure>
+      <p>Choose how the Figaf Tool authenticates against BTP. The options are: <b>Custom IDP</b> (recommended), S-User,SAP Passport, SAP User Identity Service.</p>
+      <p>Each option's page explains its characteristics and the steps required to configure it.</p>
+
+      <h3>9.3 &nbsp;Custom IDP option</h3>
+      <p>This is the one manual cockpit step in the flow — BTP has no command-line way to
+      import a SAML trust.</p>
+
+      <ol class="steps">
+        <li>In the <b>Figaf Tool</b>, download the entity description file, selecting <b>Custom
+        IDP</b> as the authentication mode.</li>
+        <li>In the manager-app, click <b>Open</b> to go to the <b>Trust Configuration</b> page of your subaccount (Btp -> Security -> Trust Configuration)</li>
+        <li>Choose <b>Add SAML Trust</b>, upload the downloaded file, and <b>untick
+        Available for User Logon</b>. The <b>?</b> next to this step shows a reference
+        screenshot of the page.</li>
+
+        <p>Then enter the <b>IDP name</b> exactly as you named it in the cockpit — default
+        <code>figaf-saml</code> — and click <b>Continue</b>.</p>
+
+       <p>The manager-app assigns three role collections to the <code>Admin</code> group of your new
+      trust — <code>PI_Administrator</code>, <code>PI_Business_Expert</code>,
+      <code>PI_Integration_Developer</code> — and fetches the <b>SSO URL</b>.</p>
+      <ul>
+        <li>If a role fails, <b>Retry failed</b> re-runs just that one. You can still finish
+        and assign the remainder in the cockpit later.</li>
+        <li>If your BTP session expired mid-flow the row says so — go <b>Back</b> and sign in
+        again.</li>
+      </ul>
+      <li><p>Copy the <b>SSO URL</b> and paste it into the Figaf Tool. Then click
+      <b>Finish</b>.</p></li>
+      </ol>
+
+      
+    </section>
+
+    <section id="s10">
+      <p class="eyebrow">Section 10</p>
+      <h2 class="sec">Keeping Figaf Manager itself up to date</h2>
+
+      <p>If a newer version is available, the option to update the manager-app appears as a
+      notification at the top of the screen, with a link to the release notes.</p>
+
+      <figure class="shot wide">
+        <img src="manual-images/10-01-update-banner.png" alt="The update notification above the sign-in screen, offering release notes and an Update button.">
+        <figcaption>The update notification, shown once you are signed in.</figcaption>
+      </figure>
+
+      Make sure you are signed into the correct Cloud Foundry instance before you start the update. 
+      
+      <p>Click <b>Update</b> to open the update dialog. It first confirms that your Cloud
+      Foundry session points at the same landscape, org and space as the manager-app itself.
+      If a row is marked ✗, sign in or use <b>Switch Org</b> on the sign-in screen —
+      <b>Update now</b> stays disabled until all three match.</p>
+
+      <figure class="shot wide">
+        <img src="manual-images/10-02-update.png" alt="The update dialog checking landscape, org and space, then running through its update steps.">
+        <figcaption>The dialog before and after <b>Update now</b> is pressed.</figcaption>
+      </figure>
+
+      <p>From there it runs on its own: it fetches the new version and redeploys the
+      manager-app in place. Nothing you have already set up is affected.</p>
+
+      <div class="call note">
+        <span class="tag">Refresh needed</span>
+        <p>You will need to refresh the page after the update is complete, and sign in again with the new token from the application's logs</p>
+      </div>
+
+     
+    </section>
+
+    <section id="s11">
+      <p class="eyebrow">Section 11</p>
+      <h2 class="sec">Removing Figaf Manager</h2>
+
+      <p>You can leave the manager-app deployed — it is small, and it is what you will use for
+      future updates. If you would rather not leave it deployed, here is how to take it down
+      cleanly.</p>
+
+      <h3>11.1 &nbsp;The in-app button</h3>
+      <p>The Finish screens have <b>Delete this manager app</b>. </p>
+
+      <div class="call note">
+        <span class="tag">What it deletes</span>
+        <p>Only the figaf-manager application. Anything the
+        manager-app deployed — your Figaf Tool, its database, its services — is not affected.</p>
+      </div>
+
+      <h3>11.2 &nbsp;Delete from BTP Cockpit</h3>
+      <details class="fold">
+        <summary>Manual removal from the cockpit</summary>
+        <div class="fold-body">
+      <p>To remove the manager-app and its XSUAA service from the space, you can also do it
+      manually in the cockpit or with the Cloud Foundry CLI. The steps are:</p>
+      <ol class="steps">
+        <li><b>Unbind</b> the XSUAA service from <code>figaf-manager-approuter</code>.</li>
+        <li><b>Delete</b> the <code>figaf-manager-approuter</code> application.</li>
+        <li><b>Delete</b> the <code>figaf-manager-xsuaa</code> service instance.</li>
+        <li>Optionally delete the <code>FigafManagerAdmin</code> and
+        <code>FigafManagerOperator</code> role collections from the subaccount.</li>
+      </ol>
+
+      <pre>cf unbind-service figaf-manager-approuter figaf-manager-xsuaa
+cf delete figaf-manager-approuter -r -f
+cf delete-service figaf-manager-xsuaa -f</pre>
+        </div>
+      </details>
+
+      <h3>11.3 &nbsp;Automatic removal</h3>
+      <p>If you set <code>FIGAF_IDLE_SELF_DESTRUCT_HOURS</code> on the application, the manager-app
+      removes itself after that many hours with no activity — the approuter, the manager-app, and
+      the <code>figaf-manager-xsuaa</code> service, all in one go. A warning is written to the
+      log <code>FIGAF_IDLE_SELF_DESTRUCT_GRACE</code> minutes beforehand (default 30).</p>
+
+      
+    </section>
+
+    <section id="s12">
+      <p class="eyebrow">Section 12</p>
+      <h2 class="sec">Troubleshooting</h2>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
+          <tbody>
+            <tr><td>Setup page reports the installer <i>has already been claimed</i></td><td>The session cookie is no longer valid — it expired after 8 hours, or the public IP address or browser it was issued to changed. The token itself is consumed by the first claim and cannot be reused while the application keeps running.</td><td>Restage the application and claim the new token, as in <a href="#s3">3.3</a>. Do not clear cookies first: with the application still running that leads straight back to this page, and it also discards any sign-in progress. After the persistent SSO upgrade (<a href="#s6">&#167;6</a>) no token is issued at all — sign in through SAP IAS instead.</td></tr>
+            <tr><td>No <code>[SETUP] Token:</code> line in the log</td><td>Wrong application, the log view no longer covers the last start, or persistent SSO login is already enabled.</td><td>Restage and read the newest lines. With persistent SSO enabled the log reads <code>[INFO] XSUAA mode active</code> instead; sign in through SAP IAS.</td></tr>
+            <tr><td><b>403</b> after signing in through SAP IAS</td><td><code>FigafManagerAdmin</code> is not assigned, or the token was issued before the assignment.</td><td>Assign the role collection in the cockpit, then sign in again from a private window, or after clearing cookies for the hostname.</td></tr>
+            <tr><td>Signed out of Cloud Foundry mid-session, with no error message</td><td>The wizard session is renewed after 4 hours. The renewal resets the Cloud Foundry login and any downloaded deployment templates. The browser session lasts 8 hours, so the wizard itself stays open.</td><td>Sign in to Cloud Foundry again and continue. Start long deployments on a fresh session.</td></tr>
+            <tr><td><b>Wrong Cloud Foundry target</b> on the upgrade or self-update screen</td><td>The <code>cf</code> session targets a different org, space or landscape. All browser sessions share one <code>cf</code> login, so another tab can change it.</td><td>Different org or space: <b>Go to login</b> &#8594; <b>Switch Org</b>. Different landscape: sign out and sign in again to the manager-app's own landscape.</td></tr>
+            <tr><td>Persistent-login upgrade does not confirm within 5 minutes</td><td>The health probe did not report XSUAA mode in time. The upgrade has usually succeeded regardless.</td><td>Click <b>Continue</b>. If the old setup page appears, the service bind failed — check <code>figaf-manager-xsuaa</code> in the cockpit and re-run the upgrade. Repeating it is safe.</td></tr>
+            <tr><td>Passcode rejected</td><td>Expired, or already used.</td><td>Click <b>Get a new one</b> and paste it immediately.</td></tr>
+            <tr><td><b>Docker Hub reachable</b> check is red</td><td>The space has no outbound access to <code>hub.docker.com</code>, which the manager-app queries for the image tag list.</td><td>Fix egress. The Welcome step cannot be passed until the check succeeds.</td></tr>
+            <tr><td>PostgreSQL service fails to create, or never leaves <i>create in progress</i> (15-minute limit)</td><td><code>postgresql-db</code> or the selected plan is not entitled to the subaccount, or the parameters do not match the account type. When the marketplace lookup fails the plan list falls back to generic defaults, so an unavailable plan can still be offered.</td><td>Confirm the entitlement in the cockpit (global account &#8594; <b>Entitlements</b>), then go <b>Back</b> and <b>Continue</b> to re-read the plan list. Check that <b>Trial subaccount</b> matches reality — trial brokers accept only engine version and locale.</td></tr>
+            <tr><td><i>Provider (AWS / Azure / GCP) couldn't be detected</i></td><td>The hyperscaler cannot be inferred from the subaccount region.</td><td>Tick <b>Trial subaccount</b>, or go back and select a subaccount with a recognised region.</td></tr>
+            <tr><td><code>cf push</code> fails on memory / <i>staging requires NNNNM</i></td><td>The org quota cannot fit the new instance.</td><td>Lower <b>Instance memory</b> — it is by far the largest allocation. For updates, keep the <b>Recreate</b> strategy (the default); <b>Rolling</b> needs roughly twice the memory free. Otherwise delete unused applications.</td></tr>
+            <tr><td>Update: <i>Database name not detected</i></td><td>The bound PostgreSQL instance could not be read from the live application.</td><td>Enter the exact service instance name bound to <code>&lt;ID&gt;-app</code>. An incorrect name binds the updated application to a different database.</td></tr>
+            <tr><td><b>Integration Suite not entitled</b></td><td>The <code>it-rt</code> offering is not available in the subaccount.</td><td>Subscribe the Integration Suite tenant, then click <b>Retry</b>.</td></tr>
+            <tr><td>Custom IDP: the trust cannot be found</td><td>Name mismatch, or the trust was not saved.</td><td>Correct the <b>IDP name</b> against the list of trusts reported on screen, or save the trust in the cockpit and click <b>Continue</b> again.</td></tr>
+            <tr><td>A step turns red and the message is not enough</td><td>&#8212;</td><td>Expand <b>CLI details</b> at the bottom of the screen for the exact command and its full output.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="s13">
+      <p class="eyebrow">Section 13</p>
+      <h2 class="sec">Reference</h2>
+
+      <h3>Applications and services</h3>
+      <div class="tw">
+        <table class="narrow">
+          <thead><tr><th>Name</th><th>What it is</th><th>Created by</th></tr></thead>
+          <tbody>
+            <tr><td><code>figaf-manager</code></td><td>The manager-app</td><td>You, from the cockpit (§3)</td></tr>
+            <tr><td><code>figaf-manager-approuter</code></td><td>Authentication proxy in front of the manager-app</td><td>Persistent SSO login (§6)</td></tr>
+            <tr><td><code>figaf-manager-xsuaa</code></td><td>Auth service for the manager-app</td><td>Persistent SSO login (§6)</td></tr>
+            <tr><td><code>&lt;ID&gt;-app</code></td><td>The Figaf Tool</td><td>Deploy (§7)</td></tr>
+            <tr><td><code>&lt;ID&gt;-router</code></td><td>The Figaf Tool's approuter — serves the public URL</td><td>Deploy (§7)</td></tr>
+            <tr><td><code>figaf-db</code> <i>(configurable)</i></td><td>PostgreSQL database for the Figaf Tool</td><td>Deploy (§7)</td></tr>
+            <tr><td><code>figaf-xsuaa</code></td><td>Auth service and role definitions for the Figaf Tool</td><td>Deploy (§7)</td></tr>
+            <tr><td><code>figaf-connectivity</code><br><code>figaf-destination</code></td><td>Optional, for PI/PO via SAP Cloud Connector</td><td>Deploy / Update, if selected</td></tr>
+            <tr><td><code>figaf-api</code><br><code>figaf-iflow</code></td><td>Integration Suite access</td><td>Connect (§9)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Role collections</h3>
+      <div class="tw">
+        <table class="narrow">
+          <thead><tr><th>Role collection</th><th>Applies to</th><th>Grants</th></tr></thead>
+          <tbody>
+            <tr><td><code>FigafManagerAdmin</code></td><td>The manager-app</td><td>Full use, including deletion</td></tr>
+            <tr><td><code>FigafManagerOperator</code></td><td>The manager-app</td><td>Non-destructive operations</td></tr>
+            <tr><td><code>IRTAdmin</code></td><td>The Figaf Tool</td><td>Full access</td></tr>
+            <tr><td><code>IRTUser</code>, <code>IRTConfigurator</code>, <code>IRTOperator</code>, <code>IRTManager</code>, <code>IRTDevOps*</code>, <code>IRTSensitivePayloadViewer</code>, and others</td><td>The Figaf Tool</td><td>See <a href="https://figaf.com/help/irt-doc/latest/configuration/user-management.html#irt-roles-and-permissions">Figaf user management</a></td></tr>
+            <tr><td><code>PI_Administrator</code>, <code>PI_Business_Expert</code>, <code>PI_Integration_Developer</code></td><td>Integration Suite access</td><td>Assigned by the Connect flow</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Environment variables on <code>figaf-manager</code></h3>
+      <div class="tw">
+        <table class="narrow">
+          <thead><tr><th>Variable</th><th>Default</th><th>Effect</th></tr></thead>
+          <tbody>
+    
+            <tr><td><code>FIGAF_LOG_LEVEL</code></td><td><code>cli</code></td><td><code>off</code> | <code>cli</code> | <code>ipc</code> | <code>net</code></td></tr>
+            <tr><td><code>FIGAF_IDLE_SELF_DESTRUCT_HOURS</code></td><td>off</td><td>Remove the manager-app after N idle hours</td></tr>
+            <tr><td><code>FIGAF_IDLE_SELF_DESTRUCT_GRACE</code></td><td><code>30</code></td><td>Minutes of warning first</td></tr>
+            <tr><td><code>FIGAF_DISABLE_SELF_UPDATE</code></td><td>off</td><td>Turn off the update check</td></tr>
+            <tr><td><code>FIGAF_DEPLOYMENT_ZIP_URL</code></td><td>GitHub</td><td>Use your own deployment-template mirror</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Outbound hosts</h3>
+      <div class="tw">
+        <table class="narrow">
+          <thead><tr><th>Host</th><th>Used for</th></tr></thead>
+          <tbody>
+            <tr><td><code>hub.docker.com</code></td><td>Image tag lookup</td></tr>
+            <tr><td>Docker registry</td><td>Image pull during deployment</td></tr>
+            <tr><td><code>api.github.com</code>, <code>github.com</code></td><td>Deployment templates, manager-app update check</td></tr>
+            <tr><td><code>cli.btp.cloud.sap</code></td><td>BTP sign-in</td></tr>
+            <tr><td><code>api.cf.&lt;region&gt;.hana.ondemand.com</code></td><td>Cloud Foundry API</td></tr>
+            <tr><td><code>login.&lt;region&gt;.hana.ondemand.com</code></td><td>One-time passcode page</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </article>
+
+  <footer class="colophon">
+    Figaf Manager · user manual · BTP-hosted installer<br>
+    Screenshot slots are marked with their filename — see <code>docs/manual-images/README.md</code> for the shot list.
+  </footer>
+
+</div>
