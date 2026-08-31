@@ -1,6 +1,9 @@
 # Figaf Manager
 
 [![CI](https://github.com/figaf/FigafManager/actions/workflows/ci.yml/badge.svg)](https://github.com/figaf/FigafManager/actions/workflows/ci.yml)
+[![User manual](https://img.shields.io/badge/docs-user%20manual-0b7285)](https://figaf.github.io/FigafManager/)
+
+📖 **[Read the user manual](https://figaf.github.io/FigafManager/)** — every screen of the cloud installer, in order, with screenshots.
 
 [![Watch the figaf-manager walkthrough](https://img.youtube.com/vi/-bgWWQrEXGs/maxresdefault.jpg)](https://www.youtube.com/watch?v=-bgWWQrEXGs)
 
@@ -116,6 +119,9 @@ You need **two files**:
 Deploy via BTP Cockpit: **Space → Applications → Deploy Application**, upload the `.zip` as the application archive and `manifest.yml` as the deployment descriptor, then click **Deploy**. Once green, open the assigned URL in a browser.
 
 > **Tip:** `FIGAF_MANAGER_MAINTENANCE: 1` is set in `manifest.yml` by default. Comment it out before deploying to make the wizard immediately accessible.
+
+The [**user manual**](https://figaf.github.io/FigafManager/) walks through everything from here — claiming the
+installer with the setup token, signing in to BTP, and each wizard step.
 
 ---
 
