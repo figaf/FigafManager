@@ -3,10 +3,12 @@
 // remove / configure / health for Figaf L3 applications.
 //
 // Architecture:
-//   - A "channel" directory (host.resolveL3ArtifactsDir()) holds catalog.json
-//     plus one zip artifact per CF app. For the PoC the channel is bundled
-//     inside the manager build; the seam is this one host method, so a remote
-//     source (Cloudflare R2, GitHub releases) is a later swap.
+//   - An artifact-store directory (host.resolveL3ArtifactsDir()) holds one
+//     RELEASE: catalog.json plus one zip artifact per CF app. ("Release" =
+//     the versioned set; the store is where releases live — the word
+//     "channel" is retired, 2026-09-01.) For the PoC the release is bundled
+//     inside the manager build; the seam is this one host method, so a
+//     remote store (Cloudflare R2, GitHub releases) is a later swap.
 //   - One catalog "app" (e.g. B2B Archiving Setup) maps to 1..n CF apps
 //     (backend, frontend), deployed in catalog order with `cf push`.
 //   - Bindings go to EXISTING service instances named in the catalog
@@ -129,7 +131,7 @@ function createL3Handlers(ctx) {
 
   function requireApp(appId) {
     const dir = artifactsDir();
-    if (!dir) return { error: "No L3 artifact channel on this host (l3-artifacts/ missing)" };
+    if (!dir) return { error: "No L3 artifact store on this host (l3-artifacts/ missing)" };
     const c = loadCatalog(dir);
     if (!c.ok) return { error: c.error };
     const app = c.catalog.apps.find((a) => a.id === appId);
@@ -279,12 +281,14 @@ function createL3Handlers(ctx) {
   return {
     async "l3:catalog"() {
       const dir = artifactsDir();
-      if (!dir) return { ok: false, error: "No L3 artifact channel on this host (l3-artifacts/ missing)" };
+      if (!dir) return { ok: false, error: "No L3 artifact store on this host (l3-artifacts/ missing)" };
       const c = loadCatalog(dir);
       if (!c.ok) return c;
       return {
         ok: true,
-        channelVersion: c.catalog.channelVersion || null,
+        // releaseVersion is the name; releases built before 2026-09-01 carry
+        // only the legacy field channelVersion (kept as a read fallback).
+        releaseVersion: c.catalog.releaseVersion || c.catalog.channelVersion || null,
         apps: c.catalog.apps.map((a) => ({
           id: a.id,
           name: a.name || a.id,
@@ -300,7 +304,7 @@ function createL3Handlers(ctx) {
 
     async "l3:status"() {
       const dir = artifactsDir();
-      if (!dir) return { ok: false, error: "No L3 artifact channel on this host" };
+      if (!dir) return { ok: false, error: "No L3 artifact store on this host" };
       const c = loadCatalog(dir);
       if (!c.ok) return c;
 

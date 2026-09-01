@@ -35,7 +35,7 @@ const {
 // ─── fixtures ────────────────────────────────────────────────────────────────
 
 const CATALOG = {
-  channelVersion: "0.2.0",
+  releaseVersion: "0.2.0",
   apps: [
     {
       id: "arch",
@@ -361,13 +361,13 @@ test("l3:figafSystems: finds app+router pairs running figaf/app images, returns 
   ]);
 });
 
-test("handlers report a friendly error when the host has no artifact channel", async () => {
+test("handlers report a friendly error when the host has no artifact store", async () => {
   const { ctx } = makeCtx(null, () => ({ code: 0, stdout: "" }));
   ctx.host.resolveL3ArtifactsDir = () => null;
   const handlers = createL3Handlers(ctx);
   for (const ch of ["l3:catalog", "l3:status"]) {
     const r = await handlers[ch]({});
     assert.equal(r.ok, false);
-    assert.match(r.error, /artifact channel/);
+    assert.match(r.error, /artifact store/);
   }
 });

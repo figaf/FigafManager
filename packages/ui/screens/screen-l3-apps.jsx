@@ -100,7 +100,7 @@ function L3AppRow({ app, status, busy, busyLabel, figafSystems, onAction }) {
         <div className="spacer" style={{ flex: 1 }} />
         <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
           installed: <span className="kbd">{(status && status.installedVersion) || "—"}</span>
-          {" · "}channel: <span className="kbd">{app.version}</span>
+          {" · "}available: <span className="kbd">{app.version}</span>
           {updateAvailable && <span className="pill blue" style={{ marginLeft: 6 }}>update available</span>}
         </div>
       </div>
@@ -207,7 +207,7 @@ function L3AppRow({ app, status, busy, busyLabel, figafSystems, onAction }) {
 }
 
 function ScreenL3Apps({ ctx, setCtx, onBack, onConnections }) {
-  const [catalog, setCatalog] = React.useState(null);   // { channelVersion, apps } | { error }
+  const [catalog, setCatalog] = React.useState(null);   // { releaseVersion, apps } | { error }
   const [statuses, setStatuses] = React.useState({});   // appId → status row
   const [refreshing, setRefreshing] = React.useState(false);
   const [busyApp, setBusyApp] = React.useState(null);   // appId currently running an action
@@ -288,8 +288,8 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections }) {
           <h1 className="pane-title">Figaf L3 applications</h1>
           <p className="pane-desc">
             Installed into <span className="kbd">{ctx.login.org || "?"} / {ctx.login.space || "?"}</span>.
-            Artifacts come from the bundled channel
-            {catalog && catalog.channelVersion ? <> (version <span className="kbd">{catalog.channelVersion}</span>)</> : null}.
+            Apps install from the bundled release
+            {catalog && catalog.releaseVersion ? <> (version <span className="kbd">{catalog.releaseVersion}</span>)</> : null}.
             Every action runs plain <span className="kbd">cf</span> commands — open the terminal drawer to follow along.
           </p>
         </div>
