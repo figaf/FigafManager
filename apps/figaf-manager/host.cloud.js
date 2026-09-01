@@ -54,6 +54,10 @@ function createHost({ sessionId }) {
     getDeployTargetForSelf: () => (VCAP_TARGET ? { ...VCAP_TARGET } : null),
 
     resolveBinary(name) {
+      // The bundled bin/ binaries are Linux builds (packed into the cloud
+      // zip). A CF container is always Linux, so win32 can only be a dev
+      // machine — use the CLIs from PATH there even when bin/ is populated.
+      if (process.platform === "win32") return name;
       const bundled = path.join(__dirname, "bin", name);
       if (!fs.existsSync(bundled) && process.env.NODE_ENV !== "production") {
         // Dev fallback: rely on PATH (Mac/Windows dev machines)

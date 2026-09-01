@@ -34,3 +34,8 @@ docs/*
 # Logs
 logs/
 .graphify_python
+
+# Playwright e2e harness state and reports
+e2e/.auth/
+test-results/
+playwright-report/
