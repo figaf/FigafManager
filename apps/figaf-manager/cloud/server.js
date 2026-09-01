@@ -323,6 +323,14 @@ app.post("/rpc/:channel", requireAuth, async (req, res) => {
   if (channel === "login:storeManagementUser" && auditArgs && typeof auditArgs === "object" && "password" in auditArgs) {
     auditArgs = { ...auditArgs, password: "<value hidden>" };
   }
+  // connections:saveFigaf / connections:saveSystem carry client secrets (and
+  // a pasted service-key JSON) — hide the values, keep the field names.
+  if (channel.startsWith("connections:save") && auditArgs && typeof auditArgs === "object") {
+    auditArgs = { ...auditArgs };
+    for (const k of ["clientSecret", "accessClientSecret", "serviceKeyJson"]) {
+      if (k in auditArgs) auditArgs[k] = "<value hidden>";
+    }
+  }
   const rpcHandle = sess.audit.beginRpc({ channel, args: auditArgs, user, source: "http" });
   if (!handler) {
     rpcHandle.out({ ok: false, error: `Unknown channel: ${channel}` });

@@ -167,6 +167,33 @@ async function readCredential(binding, opts = {}, fetchImpl = fetch) {
   };
 }
 
+/**
+ * Delete one password-type credential. A missing credential (HTTP 404) is
+ * treated as success — delete is idempotent. Throws on any other failure
+ * with a safe (secret-free) message.
+ */
+async function deleteCredential(binding, opts = {}, fetchImpl = fetch) {
+  const namespace = opts.namespace || MANAGEMENT_NAMESPACE;
+  const name = opts.name || MANAGEMENT_CREDENTIAL;
+  const baseUrl = String(binding.url || "").replace(/\/+$/, "");
+  if (!baseUrl || !binding.username || !binding.password) {
+    throw new Error("credstore binding is missing url/username/password (was the instance created with basic authentication?)");
+  }
+  const response = await fetchImpl(`${baseUrl}/password?name=${encodeURIComponent(name)}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: "Basic " + Buffer.from(`${binding.username}:${binding.password}`).toString("base64"),
+      "sapcp-credstore-namespace": namespace,
+    },
+  });
+  if (!response.ok && response.status !== 404) {
+    throw new Error(
+      `credstore delete failed: HTTP ${response.status}` +
+      (response.status === 429 ? " (rate limit — wait a minute and retry)" : "")
+    );
+  }
+}
+
 module.exports = {
   MANAGEMENT_NAMESPACE,
   MANAGEMENT_CREDENTIAL,
@@ -176,4 +203,5 @@ module.exports = {
   encryptJweCompact,
   readCredential,
   writeCredential,
+  deleteCredential,
 };

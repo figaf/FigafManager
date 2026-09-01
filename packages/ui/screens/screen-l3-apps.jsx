@@ -206,7 +206,7 @@ function L3AppRow({ app, status, busy, busyLabel, figafSystems, onAction }) {
   );
 }
 
-function ScreenL3Apps({ ctx, setCtx, onBack }) {
+function ScreenL3Apps({ ctx, setCtx, onBack, onConnections }) {
   const [catalog, setCatalog] = React.useState(null);   // { channelVersion, apps } | { error }
   const [statuses, setStatuses] = React.useState({});   // appId → status row
   const [refreshing, setRefreshing] = React.useState(false);
@@ -328,6 +328,11 @@ function ScreenL3Apps({ ctx, setCtx, onBack }) {
 
       <div className="pane-foot">
         <div className="spacer" />
+        {onConnections && (
+          <button className="btn" onClick={onConnections} disabled={!!busyApp}>
+            Connections
+          </button>
+        )}
         <button className="btn" onClick={onBack} disabled={!!busyApp}>
           <Ico.ArrowLeft /> Back
         </button>

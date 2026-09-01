@@ -147,6 +147,18 @@ contextBridge.exposeInMainWorld("figaf", {
     health:    (a) => ipcRenderer.invoke("l3:health", a || {}),
   },
 
+  // System connections (decision 0006) — surface parity with the cloud client.
+  // On desktop these need a credstore binding, which does not exist → the
+  // handlers answer with a friendly error.
+  connections: {
+    figafStatus:  ()  => ipcRenderer.invoke("connections:figafStatus"),
+    saveFigaf:    (a) => ipcRenderer.invoke("connections:saveFigaf", a || {}),
+    deleteFigaf:  ()  => ipcRenderer.invoke("connections:deleteFigaf"),
+    listAgents:   ()  => ipcRenderer.invoke("connections:listAgents"),
+    saveSystem:   (a) => ipcRenderer.invoke("connections:saveSystem", a || {}),
+    deleteSystem: (a) => ipcRenderer.invoke("connections:deleteSystem", a || {}),
+  },
+
   connect: {
     templatePath: (name) => ipcRenderer.invoke("connect:templatePath", { name }),
     integrationSuiteUrl: () => ipcRenderer.invoke("connect:integrationSuiteUrl"),

@@ -237,6 +237,18 @@
       health:    function (a) { return rpc("l3:health", a || {}); },
     },
 
+    // System connections (decision 0006): Figaf tool + SAP systems in the
+    // Credential Store. Save calls carry secrets — HTTPS body only, redacted
+    // in the RPC audit (server.js).
+    connections: {
+      figafStatus:  function ()  { return rpc("connections:figafStatus"); },
+      saveFigaf:    function (a) { return rpc("connections:saveFigaf", a || {}); },
+      deleteFigaf:  function ()  { return rpc("connections:deleteFigaf"); },
+      listAgents:   function ()  { return rpc("connections:listAgents"); },
+      saveSystem:   function (a) { return rpc("connections:saveSystem", a || {}); },
+      deleteSystem: function (a) { return rpc("connections:deleteSystem", a || {}); },
+    },
+
     connect: {
       templatePath:         function (name) { return rpc("connect:templatePath", { name: name }); },
       integrationSuiteUrl:  function ()     { return rpc("connect:integrationSuiteUrl"); },

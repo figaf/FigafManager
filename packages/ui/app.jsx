@@ -6,7 +6,7 @@
    ScreenConnectProvision, ScreenConnectIdp,
    ScreenConnectIdpSuser, ScreenConnectIdpPassport, ScreenConnectIdpIas,
    ScreenConnectIdpCustomTrust, ScreenConnectIdpCustomAssign,
-   ScreenL3Apps,
+   ScreenL3Apps, ScreenConnections,
    UpdatePreflightModal, SelfUpdateBanner */
 
 function App() {
@@ -166,11 +166,14 @@ function App() {
     };
   }, []);
 
-  // Lane-1 routing: `#/apps` is the L3 dashboard's own address. The target is
-  // remembered here and consumed by the navigation effect below once a cf
-  // login exists (resumed, auto, or manual).
+  // Lane-1 routing: `#/apps` is the L3 dashboard's own address and
+  // `#/connections` the system-connections page's. The target is remembered
+  // here and consumed by the navigation effect below once a cf login exists
+  // (resumed, auto, or manual).
   const pendingRoute = React.useRef(
-    typeof window !== "undefined" && window.location.hash === "#/apps" ? "manage" : null
+    typeof window === "undefined" ? null :
+    window.location.hash === "#/apps" ? "manage" :
+    window.location.hash === "#/connections" ? "connections" : null
   );
 
   // Session resume — runs ONCE at app start. A page reload must not force an
@@ -243,14 +246,16 @@ function App() {
     return () => { cancelled = true; };
   }, []);
 
-  // Navigation effect for the #/apps deep link: the moment a cf login exists
-  // (resumed, stored-user, or typed passcode), consume the pending target and
-  // open the L3 dashboard directly.
+  // Navigation effect for the #/apps and #/connections deep links: the moment
+  // a cf login exists (resumed, stored-user, or typed passcode), consume the
+  // pending target and open the right manage-lane page directly.
   React.useEffect(() => {
-    if (ctx.login.cfStatus !== "done" || pendingRoute.current !== "manage") return;
+    if (ctx.login.cfStatus !== "done" || !pendingRoute.current) return;
+    const target = pendingRoute.current;
     pendingRoute.current = null;
     setCtx(c => ({ ...c, choice: "manage" }));
-    setStepRaw(3); // baseSteps(3) + manageSteps → index 3 = l3-apps
+    // baseSteps(3) + manageSteps → index 3 = l3-apps, index 4 = l3-connections
+    setStepRaw(target === "connections" ? 4 : 3);
   }, [ctx.login.cfStatus]);
 
 
@@ -315,9 +320,10 @@ function App() {
     { id: "done",           label: "Finish",           sub: "New image live" },
   ];
 
-  // L3 App Manager (PoC): a single dashboard step, not a wizard tail.
+  // L3 App Manager (PoC): dashboard + connections, not a wizard tail.
   const manageSteps = [
-    { id: "l3-apps", label: "Manage apps", sub: "Install · update · disable" },
+    { id: "l3-apps",        label: "Manage apps", sub: "Install · update · disable" },
+    { id: "l3-connections", label: "Connections", sub: "Figaf tool · SAP systems" },
   ];
 
   // The stepper rail shows only the 3 base steps (Welcome / Sign in / Choose
@@ -350,7 +356,8 @@ function App() {
     case "deploy":            Screen = <ScreenDeploy ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
     case "xsuaa-upgrade":     Screen = <ScreenXsuaaUpgrade ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} setStep={setStepRaw} STEPS={STEPS} />; break;
     case "xsuaa-assign-role": Screen = <ScreenXsuaaAssignRole ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
-    case "l3-apps":           Screen = <ScreenL3Apps ctx={ctx} setCtx={setCtx} onBack={back} />; break;
+    case "l3-apps":           Screen = <ScreenL3Apps ctx={ctx} setCtx={setCtx} onBack={back} onConnections={next} />; break;
+    case "l3-connections":    Screen = <ScreenConnections ctx={ctx} setCtx={setCtx} onBack={back} />; break;
     case "updateConfig":      Screen = <ScreenUpdateConfig ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
     case "updateProgress":    Screen = <ScreenUpdateProgress ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
     case "connect-provision": Screen = <ScreenConnectProvision ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
@@ -371,13 +378,16 @@ function App() {
 
   const currentStepId = STEPS[currentStep] && STEPS[currentStep].id;
 
-  // Keep the address bar honest: the L3 dashboard carries #/apps; leaving it
-  // clears the hash. replaceState avoids polluting the browser history.
+  // Keep the address bar honest: the L3 dashboard carries #/apps, the
+  // connections page #/connections; leaving them clears the hash.
+  // replaceState avoids polluting the browser history.
   React.useEffect(() => {
     if (typeof window === "undefined") return;
-    if (currentStepId === "l3-apps") {
-      if (window.location.hash !== "#/apps") window.history.replaceState(null, "", "#/apps");
-    } else if (window.location.hash === "#/apps" && !pendingRoute.current) {
+    const OWN_HASHES = { "l3-apps": "#/apps", "l3-connections": "#/connections" };
+    const wanted = OWN_HASHES[currentStepId];
+    if (wanted) {
+      if (window.location.hash !== wanted) window.history.replaceState(null, "", wanted);
+    } else if (Object.values(OWN_HASHES).includes(window.location.hash) && !pendingRoute.current) {
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
     }
   }, [currentStepId]);

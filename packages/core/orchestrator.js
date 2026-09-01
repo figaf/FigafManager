@@ -23,6 +23,7 @@ const { parseCfApi, parseCfTarget, normalizeApiUrl } = require("./cf-target");
 const { patchManifestName } = require("./manifest-patch");
 const releaseConfig = require("./release-config");
 const { createL3Handlers } = require("./l3-apps");
+const { createConnectionsHandlers } = require("./connections");
 const credstoreClient = require("./credstore-client");
 
 const DEPLOYMENT_ZIP_URL =
@@ -632,6 +633,13 @@ function createOrchestrator({ host, send, audit }) {
         }).on("error", reject);
       }),
     }),
+
+    // System connections (decision 0006 slice): the manager verifies and
+    // writes Figaf-tool / SAP-system connection entries to the Credential
+    // Store; L3 app backends read them at runtime. Implemented in
+    // connections.js; requires the manager to be BOUND to the credstore
+    // instance (same precondition as the stored management user).
+    ...createConnectionsHandlers({ log }),
 
     // stored management user + session resume (L3 App Manager PoC) ───────────
     // "Option B" (Aug 31 decision): the manager's cf login can come from a
