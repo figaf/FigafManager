@@ -6,6 +6,7 @@
    ScreenConnectProvision, ScreenConnectIdp,
    ScreenConnectIdpSuser, ScreenConnectIdpPassport, ScreenConnectIdpIas,
    ScreenConnectIdpCustomTrust, ScreenConnectIdpCustomAssign,
+   ScreenL3Apps,
    UpdatePreflightModal, SelfUpdateBanner */
 
 function App() {
@@ -165,6 +166,94 @@ function App() {
     };
   }, []);
 
+  // Lane-1 routing: `#/apps` is the L3 dashboard's own address. The target is
+  // remembered here and consumed by the navigation effect below once a cf
+  // login exists (resumed, auto, or manual).
+  const pendingRoute = React.useRef(
+    typeof window !== "undefined" && window.location.hash === "#/apps" ? "manage" : null
+  );
+
+  // Session resume — runs ONCE at app start. A page reload must not force an
+  // authenticated operator back through Welcome/Sign-in: if the server-side
+  // session still holds a working cf login (verified with a real `cf target`),
+  // seed the login context and open directly on "What would you like to do?".
+  // Resumes in CF-only mode; the operator can still go Back to add BTP login.
+  React.useEffect(() => {
+    const api = typeof window !== "undefined" ? window.figaf : null;
+    if (!api || !api.session || !api.session.state) return;
+    let cancelled = false;
+    (async () => {
+      let s = null;
+      try { s = await api.session.state(); } catch { return; }
+      if (cancelled) return;
+      // Deep link without a live session: try the stored management user, so
+      // a bookmarked #/apps opens hands-free. Safe: the page itself is behind
+      // IAS SSO + the operator role, and the button does the same in one click.
+      if ((!s || !s.ok || !s.cfLoggedIn) && pendingRoute.current && api.login) {
+        try {
+          const st = await api.login.storedUserStatus();
+          if (!cancelled && st && st.available) {
+            const r = await api.login.withStoredUser();
+            if (!cancelled && r && r.ok) {
+              const m2 = /^https?:\/\/api\.(.+)\.hana\.ondemand\.com/i.exec(r.apiUrl || "");
+              setCtx(c => ({
+                ...c,
+                login: {
+                  ...c.login,
+                  cfOnly: true,
+                  cfStatus: "done", // the navigation effect below routes to #/apps
+                  user: r.user || "",
+                  org: r.org || "",
+                  space: r.space || "",
+                  apiUrl: r.apiUrl || "",
+                  landscape: m2 ? m2[1] : c.login.landscape,
+                },
+              }));
+            }
+          }
+        } catch { /* fall through to the normal flow */ }
+        return;
+      }
+      if (!s || !s.ok || !s.cfLoggedIn) return;
+      const apiUrl = s.apiUrl || "";
+      const m = /^https?:\/\/api\.(.+)\.hana\.ondemand\.com/i.exec(apiUrl);
+      // When the server session also holds a BTP login, resume it too — so
+      // Deploy / Connect / SSO-upgrade stay available after a reload.
+      const btp = s.btp && s.btp.loggedIn ? s.btp : null;
+      setCtx(c => ({
+        ...c,
+        login: {
+          ...c.login,
+          cfOnly: !btp,
+          cfStatus: "done",
+          btpStatus: btp ? "done" : c.login.btpStatus,
+          landscape: (btp && btp.landscape) || (m ? m[1] : c.login.landscape),
+          subaccount: (btp && btp.subaccount) || c.login.subaccount,
+          subdomain: (btp && btp.subdomain) || c.login.subdomain,
+          provider: (btp && btp.provider) || c.login.provider,
+          user: s.user || "",
+          org: s.org || "",
+          space: s.space || "",
+          apiUrl,
+        },
+      }));
+      if (!pendingRoute.current) setStepRaw(2); // baseSteps: 0 welcome · 1 login · 2 choice
+      // (with a pending #/apps target, the navigation effect below jumps further)
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Navigation effect for the #/apps deep link: the moment a cf login exists
+  // (resumed, stored-user, or typed passcode), consume the pending target and
+  // open the L3 dashboard directly.
+  React.useEffect(() => {
+    if (ctx.login.cfStatus !== "done" || pendingRoute.current !== "manage") return;
+    pendingRoute.current = null;
+    setCtx(c => ({ ...c, choice: "manage" }));
+    setStepRaw(3); // baseSteps(3) + manageSteps → index 3 = l3-apps
+  }, [ctx.login.cfStatus]);
+
+
   // Self-update version check — runs ONCE at app start. The result feeds both
   // the welcome-screen check row (<SelfUpdateCheckRow/>) and the floating
   // banner (<SelfUpdateBanner/>), so we fetch once and share via ctx. Fails
@@ -226,6 +315,11 @@ function App() {
     { id: "done",           label: "Finish",           sub: "New image live" },
   ];
 
+  // L3 App Manager (PoC): a single dashboard step, not a wizard tail.
+  const manageSteps = [
+    { id: "l3-apps", label: "Manage apps", sub: "Install · update · disable" },
+  ];
+
   // The stepper rail shows only the 3 base steps (Welcome / Sign in / Choose
   // action) until the operator picks an option on the choice screen. As soon
   // as ctx.choice flips, STEPS expands to include the chosen branch's tail.
@@ -234,6 +328,7 @@ function App() {
     ctx.choice === "connect"       ? [...baseSteps, ...connectSteps] :
     ctx.choice === "xsuaa-upgrade" ? [...baseSteps, ...xsuaaSteps] :
     ctx.choice === "update"        ? [...baseSteps, ...updateSteps] :
+    ctx.choice === "manage"        ? [...baseSteps, ...manageSteps] :
     baseSteps;
 
   const currentStep = Math.min(step, STEPS.length - 1);
@@ -255,6 +350,7 @@ function App() {
     case "deploy":            Screen = <ScreenDeploy ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
     case "xsuaa-upgrade":     Screen = <ScreenXsuaaUpgrade ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} setStep={setStepRaw} STEPS={STEPS} />; break;
     case "xsuaa-assign-role": Screen = <ScreenXsuaaAssignRole ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
+    case "l3-apps":           Screen = <ScreenL3Apps ctx={ctx} setCtx={setCtx} onBack={back} />; break;
     case "updateConfig":      Screen = <ScreenUpdateConfig ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
     case "updateProgress":    Screen = <ScreenUpdateProgress ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
     case "connect-provision": Screen = <ScreenConnectProvision ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
@@ -274,6 +370,17 @@ function App() {
   }
 
   const currentStepId = STEPS[currentStep] && STEPS[currentStep].id;
+
+  // Keep the address bar honest: the L3 dashboard carries #/apps; leaving it
+  // clears the hash. replaceState avoids polluting the browser history.
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (currentStepId === "l3-apps") {
+      if (window.location.hash !== "#/apps") window.history.replaceState(null, "", "#/apps");
+    } else if (window.location.hash === "#/apps" && !pendingRoute.current) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+  }, [currentStepId]);
   // Suppress the floating banner during long-running flows AND on the welcome
   // screen — on welcome the in-checklist <SelfUpdateCheckRow/> owns the
   // presentation (desktop carries its own Download button; cloud defers to
@@ -291,6 +398,7 @@ function App() {
         steps={STEPS}
         current={currentStep}
         maxReached={maxReached}
+        onNavigate={(i) => setStep(i)}
         version={
           (typeof window !== "undefined" && window.figafVersion) ||
           (ctx.selfUpdate && ctx.selfUpdate.check ? ctx.selfUpdate.check.current : null)

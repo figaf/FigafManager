@@ -91,11 +91,21 @@ function httpsGet(url, destPath, onProgress) {
   });
 }
 
-function extractTarGz(tarPath, destDir, stripComponents = 1) {
-  const result = spawnSync("tar", [
+function extractTarGz(tarPath, destDir, stripComponents = 1, excludes = []) {
+  // On Windows, pin the System32 tar (bsdtar): it understands `C:\` paths.
+  // A GNU tar found on PATH (e.g. Git for Windows) parses the drive letter
+  // as a remote host ("Cannot connect to C: resolve failed").
+  const tarBin = process.platform === "win32"
+    ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe")
+    : "tar";
+  const result = spawnSync(tarBin, [
     "-xzf", tarPath,
     "-C", destDir,
     `--strip-components=${stripComponents}`,
+    // --exclude entries: the cf CLI tarball ships `cf` as a symlink to `cf8`;
+    // Windows tar cannot create symlinks ("Can't create ...: Invalid
+    // argument"), and we rename cf8 → cf ourselves right after extraction.
+    ...excludes.map((e) => `--exclude=${e}`),
   ], { stdio: "inherit" });
   if (result.status !== 0) throw new Error(`tar extraction failed (exit ${result.status})`);
 }
@@ -134,9 +144,10 @@ async function ensureBinaries() {
       total ? process.stdout.write(`\r[cf]  ${Math.round((got / total) * 100)}%   `) : null);
     process.stdout.write("\n");
     log("[cf]  Extracting…");
-    extractTarGz(tmpTar, BIN_DIR, 0);
+    extractTarGz(tmpTar, BIN_DIR, 0, ["cf"]);
     const cf8 = path.join(BIN_DIR, "cf8");
     if (fs.existsSync(cf8)) fs.renameSync(cf8, cfBin);
+    if (!fs.existsSync(cfBin)) throw new Error("cf binary missing after extraction (expected cf8 in the tarball)");
     fs.chmodSync(cfBin, "755");
     try { fs.unlinkSync(tmpTar); } catch {}
     log("[cf]  Done.");
@@ -156,6 +167,17 @@ async function stage() {
   copyDir(BIN_DIR,                     path.join(STAGE_DIR, "bin"));
   fs.copyFileSync(path.join(APP_DIR, "host.cloud.js"),    path.join(STAGE_DIR, "host.cloud.js"));
   fs.copyFileSync(path.join(APP_DIR, "manifest.yml"),     path.join(STAGE_DIR, "manifest.yml"));
+
+  // L3 App Manager (PoC): bundle the artifact channel (catalog.json + per-app
+  // zips) when present. Each artifact is one zip file, so the cockpit's
+  // 5,000-resource cap is not a concern here.
+  const l3Dir = path.join(APP_DIR, "l3-artifacts");
+  if (fs.existsSync(path.join(l3Dir, "catalog.json"))) {
+    log("[stage] Bundling l3-artifacts/ (L3 app channel)…");
+    copyDir(l3Dir, path.join(STAGE_DIR, "l3-artifacts"));
+  } else {
+    log("[stage] l3-artifacts/ not present — L3 App Manager ships without a channel.");
+  }
 
   // Staged package.json strategy for @figaf/* workspace packages:
   //

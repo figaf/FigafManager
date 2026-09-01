@@ -75,6 +75,19 @@ function createHost({ sessionId }) {
     }),
 
     /**
+     * L3 App Manager (PoC): directory holding catalog.json + per-app zip
+     * artifacts. Bundled into the cockpit zip by build-zip.js; in dev it is
+     * apps/figaf-manager/l3-artifacts/ (populated by the build-artifacts
+     * script in the figaf-l3-l4 repo). FIGAF_L3_ARTIFACTS_DIR overrides.
+     * Returns null when no channel is present — the l3:* handlers then
+     * report a friendly "no artifact channel" error.
+     */
+    resolveL3ArtifactsDir() {
+      const dir = process.env.FIGAF_L3_ARTIFACTS_DIR || path.join(__dirname, "l3-artifacts");
+      return fs.existsSync(path.join(dir, "catalog.json")) ? dir : null;
+    },
+
+    /**
      * v2 XSUAA upgrade: bundled manager-approuter directory. In the cloud
      * zip the build-zip pipeline stages it as a single tarball entry
      * (manager-approuter.tar.gz, sibling of host.cloud.js) so the cockpit

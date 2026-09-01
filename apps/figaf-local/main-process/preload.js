@@ -120,6 +120,33 @@ contextBridge.exposeInMainWorld("figaf", {
     verify:           (a) => ipcRenderer.invoke("update:verify", a || {}),
   },
 
+  // Stored management user + session resume (surface parity with the cloud
+  // client; on desktop the credstore binding is absent → friendly errors).
+  login: {
+    storedUserStatus:    () => ipcRenderer.invoke("login:storedUserStatus"),
+    withStoredUser:      () => ipcRenderer.invoke("login:withStoredUser"),
+    storeManagementUser: (a) => ipcRenderer.invoke("login:storeManagementUser", a || {}),
+  },
+  session: {
+    state: () => ipcRenderer.invoke("session:state"),
+  },
+
+  // L3 App Manager (PoC) — surface parity with the cloud client. On desktop
+  // the handlers work too when an artifact channel dir is configured via
+  // host.resolveL3ArtifactsDir (not implemented yet → friendly error).
+  l3: {
+    catalog:   () => ipcRenderer.invoke("l3:catalog"),
+    status:    () => ipcRenderer.invoke("l3:status"),
+    figafSystems: () => ipcRenderer.invoke("l3:figafSystems"),
+    install:   (a) => ipcRenderer.invoke("l3:install", a || {}),
+    update:    (a) => ipcRenderer.invoke("l3:update", a || {}),
+    disable:   (a) => ipcRenderer.invoke("l3:disable", a || {}),
+    enable:    (a) => ipcRenderer.invoke("l3:enable", a || {}),
+    remove:    (a) => ipcRenderer.invoke("l3:remove", a || {}),
+    configure: (a) => ipcRenderer.invoke("l3:configure", a || {}),
+    health:    (a) => ipcRenderer.invoke("l3:health", a || {}),
+  },
+
   connect: {
     templatePath: (name) => ipcRenderer.invoke("connect:templatePath", { name }),
     integrationSuiteUrl: () => ipcRenderer.invoke("connect:integrationSuiteUrl"),

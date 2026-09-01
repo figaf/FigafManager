@@ -22,6 +22,8 @@ const { parseGlobalAccountTree } = require("./btp-target");
 const { parseCfApi, parseCfTarget, normalizeApiUrl } = require("./cf-target");
 const { patchManifestName } = require("./manifest-patch");
 const releaseConfig = require("./release-config");
+const { createL3Handlers } = require("./l3-apps");
+const credstoreClient = require("./credstore-client");
 
 const DEPLOYMENT_ZIP_URL =
   process.env.FIGAF_DEPLOYMENT_ZIP_URL ||
@@ -174,24 +176,44 @@ function createOrchestrator({ host, send, audit }) {
 
   // ─── subprocess helpers ────────────────────────────────────────────────────
 
+  // Session-scoped CLI state (hosted mode only). Without this, ~/.cf and the
+  // btp client config live in $HOME and are SHARED by every wizard session in
+  // the same dyno: after one user completes cf login, every other session —
+  // including an attacker's — inherits the authenticated CLI. Scoping CF_HOME
+  // and BTP_CLIENTCONFIG to the per-session user-data dir closes that hole.
+  // Desktop (Electron) is single-user and keeps the OS-default CLI state.
+  function cliEnv(extra) {
+    let scoped = {};
+    if (host.isHosted) {
+      const base = path.join(host.getUserDataDir(), "cli");
+      try { fs.mkdirSync(base, { recursive: true }); } catch {}
+      scoped = { CF_HOME: base, BTP_CLIENTCONFIG: path.join(base, "btp-config.json") };
+    }
+    return { ...process.env, ...scoped, ...(extra || {}) };
+  }
+
   function run(cmd, args, opts = {}) {
     return new Promise((resolve) => {
       const proc = spawn(cmd, args, {
         shell: false,
         windowsHide: true,
         cwd: opts.cwd,
-        env: { ...process.env, ...(opts.env || {}) },
+        env: cliEnv(opts.env),
       });
       let stdout = "";
       let stderr = "";
+      // opts.auditArgs replaces the argv recorded in the audit log — used when
+      // an argument carries a secret (e.g. cf set-env <app> KEY <value>).
       const auditHandle = auditor.beginCli({
         cmd,
-        args,
+        args: opts.auditArgs || args,
         cwd: opts.cwd,
         user: state.user,
       });
 
-      log("cmd", "cmd", `${cmd} ${args.join(" ")}`);
+      // opts.logCmd replaces the command line echoed to the terminal drawer —
+      // same secret-masking purpose as auditArgs.
+      log("cmd", "cmd", opts.logCmd || `${cmd} ${args.join(" ")}`);
 
       proc.stdout.on("data", (buf) => {
         const text = buf.toString();
@@ -532,7 +554,7 @@ function createOrchestrator({ host, send, audit }) {
       const btpBin = resolveBtp();
       const args = ["target", "--hierarchy", "true"];
       log("cmd", "cmd", `${btpBin} ${args.join(" ")}`);
-      const proc = spawn(btpBin, args, { shell: false, windowsHide: true });
+      const proc = spawn(btpBin, args, { shell: false, windowsHide: true, env: cliEnv() });
       const ansiRe = /\x1b\[[0-9;?]*[a-zA-Z]/g;
       let clean = "";
       let parsed = null;
@@ -585,6 +607,207 @@ function createOrchestrator({ host, send, audit }) {
   // ─── handlers ─────────────────────────────────────────────────────────────
 
   const handlers = {
+
+    // L3 App Manager (PoC) — catalog-driven install/manage of L3 apps.
+    // Implemented in l3-apps.js; spread here so both hosts wire the channels
+    // automatically (ipc-bridge iterates the map; server.js looks up per RPC).
+    ...createL3Handlers({
+      host,
+      run: (...a) => run(...a),
+      log,
+      send,
+      resolveCf: () => resolveCf(),
+      extractZip: (zip, dest) => extractZip(zip, dest),
+      httpsText: (url) => httpsText(url),
+      // GET that resolves body + status even on non-2xx — health endpoints
+      // (e.g. /health/connections) return 503 WITH a diagnostic JSON body.
+      httpsBody: (url) => new Promise((resolve, reject) => {
+        https.get(url, { headers: { "User-Agent": "Figaf-Manager" } }, (res) => {
+          let data = "";
+          res.on("data", (c) => {
+            data += c;
+            if (data.length > 512 * 1024) res.destroy(new Error("response too large (>512 KB)"));
+          });
+          res.on("end", () => resolve({ status: res.statusCode, body: data }));
+        }).on("error", reject);
+      }),
+    }),
+
+    // stored management user + session resume (L3 App Manager PoC) ───────────
+    // "Option B" (Aug 31 decision): the manager's cf login can come from a
+    // technical user stored in SAP Credential Store, instead of a per-session
+    // SSO passcode. Requires the manager app to be BOUND to the credstore
+    // instance; the credential lives at namespace "figaf-manager", name
+    // "cf-management-user" (password + username field).
+
+    /**
+     * Probe: is a stored management user available on this host?
+     * Cached for 60s — credstore reads are rate-limited on the free plan.
+     */
+    async "login:storedUserStatus"() {
+      if (state.storedUserProbe && Date.now() - state.storedUserProbe.at < 60000) {
+        return state.storedUserProbe.result;
+      }
+      const binding = credstoreClient.findCredstoreBinding();
+      let result;
+      if (!binding) {
+        result = { ok: true, available: false, bindingPresent: false, reason: "no credential-store binding" };
+      } else {
+        try {
+          const cred = await credstoreClient.readCredential(binding);
+          result = cred && cred.value && cred.username
+            ? { ok: true, available: true, bindingPresent: true, username: cred.username }
+            : { ok: true, available: false, bindingPresent: true, reason: "management credential not stored" };
+        } catch (e) {
+          result = { ok: true, available: false, bindingPresent: true, reason: e.message };
+        }
+      }
+      state.storedUserProbe = { at: Date.now(), result };
+      return result;
+    },
+
+    /**
+     * Store (or replace) the management user — the UI path, so no script is
+     * needed. The candidate credentials are FIRST verified against Cloud
+     * Foundry in a throw-away CF_HOME (the operator's own session login is
+     * untouched), then written encrypted to the Credential Store. The
+     * password exists only in this request and the child-process env — the
+     * RPC audit redacts it (see server.js) and the terminal shows masked
+     * command lines only.
+     */
+    async "login:storeManagementUser"({ username, password } = {}) {
+      if (!username || !password) return { ok: false, error: "username and password are required" };
+      if (String(username).length > 256 || String(password).length > 512) {
+        return { ok: false, error: "username/password too long" };
+      }
+      const binding = credstoreClient.findCredstoreBinding();
+      if (!binding) return { ok: false, error: "the manager is not bound to a Credential Store instance" };
+      const target = host.getDeployTargetForSelf && host.getDeployTargetForSelf();
+      if (!target || !target.apiUrl || !target.orgName || !target.spaceName) {
+        return { ok: false, error: "cannot derive the CF target from VCAP_APPLICATION (not running in CF?)" };
+      }
+
+      // 1. Verify: login + space access, in a scratch CF_HOME.
+      const scratch = path.join(host.getUserDataDir(), "verify-cli");
+      try {
+        fs.rmSync(scratch, { recursive: true, force: true });
+        fs.mkdirSync(scratch, { recursive: true });
+      } catch {}
+      const scratchEnv = { CF_HOME: scratch };
+      try {
+        let r = await run(resolveCf(), ["api", target.apiUrl], {
+          source: "cf", quiet: true, env: scratchEnv,
+          logCmd: `cf api ${target.apiUrl}  (management-user verification)`,
+        });
+        if (r.code !== 0) return { ok: false, error: "cf api failed during verification" };
+        r = await run(resolveCf(), ["auth"], {
+          source: "cf", quiet: true,
+          logCmd: "cf auth <candidate management user>  (verification)",
+          env: { ...scratchEnv, CF_USERNAME: username, CF_PASSWORD: password },
+        });
+        if (r.code !== 0) {
+          return { ok: false, error: "login check failed — wrong password, 2FA enabled, or the account is not registered" };
+        }
+        r = await run(resolveCf(), ["target", "-o", target.orgName, "-s", target.spaceName], {
+          source: "cf", quiet: true, env: scratchEnv,
+          logCmd: `cf target -o ${target.orgName} -s ${target.spaceName}  (verification)`,
+        });
+        if (r.code !== 0) {
+          return { ok: false, error: `the user logs in, but has no role in ${target.orgName} / ${target.spaceName} — add it as Space Developer first` };
+        }
+      } finally {
+        try { fs.rmSync(scratch, { recursive: true, force: true }); } catch {}
+      }
+
+      // 2. Store encrypted; refresh the availability probe.
+      try {
+        await credstoreClient.writeCredential(binding, { username, value: password });
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+      state.storedUserProbe = null;
+      log("cf", "ok", `Management user verified and stored in the Credential Store (${username})`);
+      return { ok: true, username };
+    },
+
+    /**
+     * Log the session's cf CLI in with the stored management user and target
+     * the manager's own org/space. The password travels only via the child
+     * process env (CF_USERNAME/CF_PASSWORD — supported by `cf auth`), so it
+     * never appears in the command line, the terminal stream, or the audit log.
+     */
+    async "login:withStoredUser"() {
+      const binding = credstoreClient.findCredstoreBinding();
+      if (!binding) return { ok: false, error: "the manager is not bound to a Credential Store instance" };
+      let cred;
+      try {
+        cred = await credstoreClient.readCredential(binding);
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+      if (!cred || !cred.value || !cred.username) {
+        return { ok: false, error: "management user not found in the credential store (namespace figaf-manager, name cf-management-user)" };
+      }
+      const target = host.getDeployTargetForSelf && host.getDeployTargetForSelf();
+      if (!target || !target.apiUrl || !target.orgName || !target.spaceName) {
+        return { ok: false, error: "cannot derive the CF target from VCAP_APPLICATION (not running in CF?)" };
+      }
+      // A pending interactive cf login would fight over the same CF_HOME.
+      if (state.cfLoginProc && !state.cfLoginProc.killed) {
+        try { state.cfLoginProc.kill(); } catch {}
+        state.cfLoginProc = null;
+      }
+      let r = await run(resolveCf(), ["api", target.apiUrl], { source: "cf" });
+      if (r.code !== 0) return { ok: false, error: "cf api failed" };
+      r = await run(resolveCf(), ["auth"], {
+        source: "cf",
+        quiet: true,
+        logCmd: `cf auth <stored management user ${cred.username}>`,
+        env: { CF_USERNAME: cred.username, CF_PASSWORD: cred.value },
+      });
+      if (r.code !== 0) {
+        return { ok: false, error: "cf auth with the stored user failed — check the stored password and that the account has no 2FA" };
+      }
+      r = await run(resolveCf(), ["target", "-o", target.orgName, "-s", target.spaceName], { source: "cf" });
+      if (r.code !== 0) {
+        return { ok: false, error: `cf target -o ${target.orgName} -s ${target.spaceName} failed — does the management user have a Space role there?` };
+      }
+      state.user = cred.username;
+      state.org = target.orgName;
+      state.space = target.spaceName;
+      log("cf", "ok", `Signed in as the stored management user (${cred.username}) — org ${target.orgName}, space ${target.spaceName}`);
+      return { ok: true, user: cred.username, org: target.orgName, space: target.spaceName, apiUrl: target.apiUrl };
+    },
+
+    /**
+     * Session resume: does this server-side session already hold a usable cf
+     * login? Verified with a real `cf target` (catches expired tokens). The UI
+     * calls this on page load to skip the wizard's login steps.
+     */
+    async "session:state"() {
+      const r = await run(resolveCf(), ["target"], { source: "cf", quiet: true });
+      if (r.code !== 0) return { ok: true, cfLoggedIn: false };
+      const t = parseCfTarget(r.stdout || "");
+      if (!t.loggedIn || !t.orgName || !t.spaceName) {
+        return { ok: true, cfLoggedIn: false };
+      }
+      // BTP context survives in the server-side session too (session-scoped
+      // BTP_CLIENTCONFIG + in-memory state). Resuming it keeps the BTP-gated
+      // flows (Deploy / Connect / SSO upgrade) available after a page reload.
+      const btp = state.landscape && state.subaccount
+        ? {
+            loggedIn: true,
+            landscape: state.landscape,
+            subaccount: state.subaccount,
+            subdomain: state.globalAccountSubdomain || "",
+            provider: state.provider || "",
+          }
+        : { loggedIn: false };
+      state.user = t.user;
+      state.org = t.orgName;
+      state.space = t.spaceName;
+      return { ok: true, cfLoggedIn: true, user: t.user, org: t.orgName, space: t.spaceName, apiUrl: t.apiUrl || null, btp };
+    },
 
     // prerequisites ───────────────────────────────────────────────────────────
 
@@ -804,7 +1027,7 @@ function createOrchestrator({ host, send, audit }) {
       await run(resolveBtp(), ["set", "config", "--login.showglobalaccounts", "true"], { source: "btp" });
       const btpBin = resolveBtp();
       const args = ["login", "--url", "https://cli.btp.cloud.sap", "--sso"];
-      const proc = spawn(btpBin, args, { shell: false, windowsHide: true });
+      const proc = spawn(btpBin, args, { shell: false, windowsHide: true, env: cliEnv() });
       state.btpLoginProc = proc;
       log("cmd", "cmd", `${btpBin} ${args.join(" ")}`);
 
@@ -1135,7 +1358,7 @@ function createOrchestrator({ host, send, audit }) {
         try { state.cfLoginProc.kill(); } catch {}
       }
       const cfBin = resolveCf();
-      const proc = spawn(cfBin, ["login", "-a", target, "--sso"], { shell: false, windowsHide: true });
+      const proc = spawn(cfBin, ["login", "-a", target, "--sso"], { shell: false, windowsHide: true, env: cliEnv() });
       state.cfLoginProc = proc;
       state.cfOrgList = null;
       state.cfSpaceList = null;
@@ -1463,7 +1686,7 @@ function createOrchestrator({ host, send, audit }) {
       return new Promise((resolve) => {
         const cfBin = resolveCf();
         log("cmd", "cmd", `${cfBin} service-key ${service} ${key}`);
-        const proc = spawn(cfBin, ["service-key", service, key], { shell: false, windowsHide: true });
+        const proc = spawn(cfBin, ["service-key", service, key], { shell: false, windowsHide: true, env: cliEnv() });
         let rawStdout = "";
         let rawStderr = "";
         let lineRemainder = "";
@@ -2231,7 +2454,7 @@ function createOrchestrator({ host, send, audit }) {
       const restageAudit = auditor.beginCli({ cmd: cfBin, args: ["restage", appName], user: state.user });
       let restageStdout = "";
       let restageStderr = "";
-      const proc = spawn(cfBin, ["restage", appName], { shell: false, windowsHide: true, detached: false });
+      const proc = spawn(cfBin, ["restage", appName], { shell: false, windowsHide: true, detached: false, env: cliEnv() });
       proc.stdout.on("data", (b) => { const s = b.toString(); restageStdout += s; log("cf", "line", s); });
       proc.stderr.on("data", (b) => { const s = b.toString(); restageStderr += s; log("cf", "err", s); });
       // proc.on("error") is rare here (cf binary is bundled + resolveCf was
@@ -3157,7 +3380,7 @@ function createOrchestrator({ host, send, audit }) {
       log("cmd", "cmd", `${cfBin} ${pushArgs.join(" ")}`);
       const pushAudit = auditor.beginCli({ cmd: cfBin, args: pushArgs, user: state.user });
       let pushStdout = "", pushStderr = "";
-      const proc = spawn(cfBin, pushArgs, { shell: false, windowsHide: true, detached: false });
+      const proc = spawn(cfBin, pushArgs, { shell: false, windowsHide: true, detached: false, env: cliEnv() });
       proc.stdout.on("data", (b) => { const s = b.toString(); pushStdout += s; log("cf", "line", s); });
       proc.stderr.on("data", (b) => { const s = b.toString(); pushStderr += s; log("cf", "err", s); });
       proc.on("error", (err) => {

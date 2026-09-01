@@ -41,6 +41,9 @@
       // gapped deployments that can't reach api.github.com.
       selfUpdateBanner:
         !(typeof window !== "undefined" && window.figafDisableSelfUpdate === true),
+      // L3 App Manager (PoC): catalog-driven install/manage of Figaf L3 apps.
+      // Hosted only — the artifact channel is bundled into the cockpit zip.
+      manageL3Apps:  hosted,
     },
   };
 

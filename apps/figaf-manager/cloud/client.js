@@ -213,6 +213,30 @@
       verify:           function (a) { return rpc("update:verify", a || {}); },
     },
 
+    // Stored management user + session resume (L3 App Manager PoC).
+    login: {
+      storedUserStatus:    function ()  { return rpc("login:storedUserStatus"); },
+      withStoredUser:      function ()  { return rpc("login:withStoredUser"); },
+      storeManagementUser: function (a) { return rpc("login:storeManagementUser", a || {}); },
+    },
+    session: {
+      state: function () { return rpc("session:state"); },
+    },
+
+    // L3 App Manager (PoC) — catalog-driven install/manage of L3 apps.
+    l3: {
+      catalog:   function ()  { return rpc("l3:catalog"); },
+      status:    function ()  { return rpc("l3:status"); },
+      figafSystems: function () { return rpc("l3:figafSystems"); },
+      install:   function (a) { return rpc("l3:install", a || {}); },
+      update:    function (a) { return rpc("l3:update", a || {}); },
+      disable:   function (a) { return rpc("l3:disable", a || {}); },
+      enable:    function (a) { return rpc("l3:enable", a || {}); },
+      remove:    function (a) { return rpc("l3:remove", a || {}); },
+      configure: function (a) { return rpc("l3:configure", a || {}); },
+      health:    function (a) { return rpc("l3:health", a || {}); },
+    },
+
     connect: {
       templatePath:         function (name) { return rpc("connect:templatePath", { name: name }); },
       integrationSuiteUrl:  function ()     { return rpc("connect:integrationSuiteUrl"); },

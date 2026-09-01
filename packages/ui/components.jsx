@@ -183,7 +183,7 @@ function WinFrame({ title = "Figaf Manager", children }) {
 }
 
 // ───────────── Stepper rail ─────────────
-function StepperRail({ steps, current, maxReached, version }) {
+function StepperRail({ steps, current, maxReached, version, onNavigate }) {
   return (
     <aside className="rail">
       <div className="rail-brand">
@@ -198,8 +198,17 @@ function StepperRail({ steps, current, maxReached, version }) {
         {steps.map((s, i) => {
           const isActive = i === current;
           const isDone = i < maxReached;
+          // Console behavior (lane 1): steps already reached are navigation —
+          // clicking one jumps back to it (e.g. Choose action from a flow).
+          const clickable = !!onNavigate && i <= maxReached && !isActive;
           return (
-            <div key={s.id} className={`step ${isActive ? "is-active" : ""} ${isDone ? "is-done" : ""}`}>
+            <div
+              key={s.id}
+              className={`step ${isActive ? "is-active" : ""} ${isDone ? "is-done" : ""}`}
+              onClick={clickable ? () => onNavigate(i) : undefined}
+              style={clickable ? { cursor: "pointer" } : undefined}
+              title={clickable ? `Go to ${s.label}` : undefined}
+            >
               <div className="step-dot">
                 {isDone ? <Ico.Check /> : (i + 1)}
               </div>

@@ -7,3 +7,5 @@ dist/
 *.zip
 *.sig
 *.cert
+# L3 app artifact channel — built by figaf-l3-l4/spikes/app-manager-poc/build-artifacts.ps1
+l3-artifacts/

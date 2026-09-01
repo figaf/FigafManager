@@ -43,6 +43,48 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
   const [orgChoice, setOrgChoice] = React.useState(null);
   const [spaceChoice, setSpaceChoice] = React.useState(null);
   const [cfSwitchingOrg, setCfSwitchingOrg] = React.useState(false);
+  // Stored management user (SAP Credential Store) — probed once; the server
+  // caches the probe, so re-renders don't burn credstore rate limit.
+  const [storedUser, setStoredUser] = React.useState(null);
+  // Setup form for storing/replacing the management user via the UI.
+  const [mgmtSetupOpen, setMgmtSetupOpen] = React.useState(false);
+  const [mgmtUsername, setMgmtUsername] = React.useState("");
+  const [mgmtPassword, setMgmtPassword] = React.useState("");
+  const [mgmtStoring, setMgmtStoring] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fg()?.login?.storedUserStatus?.();
+        if (!cancelled && r && r.ok) setStoredUser(r);
+      } catch { /* surface stays hidden */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Verify + store the management user through the manager itself (no script):
+  // the server checks the login against CF in a throw-away CF_HOME, then
+  // writes the credential encrypted into the Credential Store.
+  async function storeManagementUser() {
+    const api = fg();
+    if (!api || !api.login || mgmtStoring) return;
+    setMgmtStoring(true);
+    try {
+      const r = await api.login.storeManagementUser({ username: mgmtUsername.trim(), password: mgmtPassword });
+      if (r && r.ok) {
+        setStoredUser({ ok: true, available: true, bindingPresent: true, username: r.username });
+        setMgmtSetupOpen(false);
+        setMgmtUsername("");
+        setMgmtPassword("");
+        appendLog([{ type: "ok", text: `Management user ${r.username} verified and stored.` }]);
+      } else {
+        appendLog([{ type: "err", text: (r && r.error) || "Storing the management user failed" }]);
+      }
+    } finally {
+      setMgmtStoring(false);
+    }
+  }
 
   const btpLoggedIn = login.btpStatus === "done";
   const cfLoggedIn = login.cfStatus === "done";
@@ -318,6 +360,29 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     }
   }
 
+  // One click, no passcode: the server fetches the technical user from the
+  // Credential Store, runs cf auth (credentials only in the child process
+  // env), and targets the manager's own org/space.
+  async function loginWithStoredUser() {
+    const api = fg();
+    if (!api || !api.login) return;
+    setLogin({ cfStatus: "running" });
+    const r = await api.login.withStoredUser();
+    if (r && r.ok) {
+      setLogin({
+        cfStatus: "done",
+        user: r.user,
+        org: r.org,
+        space: r.space,
+        apiUrl: r.apiUrl || login.apiUrl,
+        landscape: login.landscape || landscapeFromApiUrl(r.apiUrl || ""),
+      });
+    } else {
+      appendLog([{ type: "err", text: (r && r.error) || "Stored-user sign-in failed" }]);
+      setLogin({ cfStatus: "error" });
+    }
+  }
+
   async function requestPasscode() {
     const api = fg();
     if (!api) return;
@@ -448,6 +513,16 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                 {!cfLoggedIn && (
                   <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={revertCfOnly}>
                     Use BTP login instead
+                  </button>
+                )}
+                {cfLoggedIn && (
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: 12, padding: "4px 10px" }}
+                    title="Sign in to SAP BTP as well — enables Deploy / Connect / SSO upgrade. Your Cloud Foundry login is kept."
+                    onClick={() => setLogin({ cfOnly: false, btpStatus: "idle" })}
+                  >
+                    Add BTP login
                   </button>
                 )}
               </>
@@ -644,6 +719,76 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
                         : "Then open your CF passcode page and paste the one-time code."}
                     </span>
                   </div>
+                  {storedUser && storedUser.available && (
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+                      <button className="btn" onClick={loginWithStoredUser} disabled={login.cfStatus === "running"}>
+                        {login.cfStatus === "running"
+                          ? <><Ico.Spinner /> Signing in…</>
+                          : <>Sign in with stored management user</>}
+                      </button>
+                      <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                        <span className="kbd">{storedUser.username}</span> from SAP Credential Store — no passcode needed.{" "}
+                        <button className="btn-link" onClick={() => setMgmtSetupOpen((o) => !o)}>Replace user</button>
+                      </span>
+                    </div>
+                  )}
+                  {storedUser && !storedUser.available && storedUser.bindingPresent && !mgmtSetupOpen && (
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
+                      <button className="btn" onClick={() => setMgmtSetupOpen(true)}>
+                        Set up management user
+                      </button>
+                      <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                        Store a technical CF user in SAP Credential Store — then no passcode is needed.
+                      </span>
+                    </div>
+                  )}
+                  {storedUser && storedUser.bindingPresent && mgmtSetupOpen && (
+                    <div style={{ marginTop: 12, padding: 12, border: "1px solid var(--border)", borderRadius: 8 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>
+                        {storedUser.available ? "Replace the management user" : "Set up the management user"}
+                      </div>
+                      <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 10 }}>
+                        The credentials are first VERIFIED against Cloud Foundry (login + access to this
+                        space, in an isolated check), then stored encrypted in SAP Credential Store.
+                        They never appear in the terminal or logs. The account must have password
+                        login (no 2FA) and the Space Developer role in this space.
+                      </div>
+                      <div className="field" style={{ marginBottom: 8 }}>
+                        <label className="field-label">Technical user e-mail</label>
+                        <input
+                          className="input is-mono"
+                          placeholder="figaf-manager-tech@example.com"
+                          autoComplete="off"
+                          value={mgmtUsername}
+                          onChange={(e) => setMgmtUsername(e.target.value)}
+                          disabled={mgmtStoring}
+                        />
+                      </div>
+                      <div className="field" style={{ marginBottom: 10 }}>
+                        <label className="field-label">Password</label>
+                        <input
+                          className="input is-mono"
+                          type="password"
+                          autoComplete="new-password"
+                          value={mgmtPassword}
+                          onChange={(e) => setMgmtPassword(e.target.value)}
+                          disabled={mgmtStoring}
+                        />
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          className="btn btn-primary"
+                          onClick={storeManagementUser}
+                          disabled={mgmtStoring || !mgmtUsername.trim() || !mgmtPassword}
+                        >
+                          {mgmtStoring ? <><Ico.Spinner /> Verifying &amp; storing…</> : <>Verify &amp; store</>}
+                        </button>
+                        <button className="btn" onClick={() => setMgmtSetupOpen(false)} disabled={mgmtStoring}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <ScrollReveal>

@@ -310,7 +310,20 @@ app.post("/rpc/:channel", requireAuth, async (req, res) => {
   // request (xsuaa-auth sets req.figafUser); v1 has no per-user identity, just
   // the session cookie.
   const user = (req.figafUser && (req.figafUser.email || req.figafUser.name)) || null;
-  const rpcHandle = sess.audit.beginRpc({ channel, args: req.body || {}, user, source: "http" });
+  // l3:configure carries connection secrets in body.env, and
+  // login:storeManagementUser carries a password — never let their VALUES
+  // reach the audit stream (visible in cockpit logs / log drains).
+  let auditArgs = req.body || {};
+  if (channel === "l3:configure" && auditArgs && typeof auditArgs.env === "object" && auditArgs.env) {
+    auditArgs = {
+      ...auditArgs,
+      env: Object.fromEntries(Object.keys(auditArgs.env).map((k) => [k, "<value hidden>"])),
+    };
+  }
+  if (channel === "login:storeManagementUser" && auditArgs && typeof auditArgs === "object" && "password" in auditArgs) {
+    auditArgs = { ...auditArgs, password: "<value hidden>" };
+  }
+  const rpcHandle = sess.audit.beginRpc({ channel, args: auditArgs, user, source: "http" });
   if (!handler) {
     rpcHandle.out({ ok: false, error: `Unknown channel: ${channel}` });
     return res.status(404).json({ ok: false, error: `Unknown channel: ${channel}` });
