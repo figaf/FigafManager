@@ -294,6 +294,9 @@ app.get("/", requireAuth, (req, res) => {
     `window.figafXsuaaMode = ${XSUAA_ACTIVE ? "true" : "false"};`,
     `window.figafSession = ${JSON.stringify({ sessionId: req.sessionId })};`,
     `window.figafVersion = ${JSON.stringify(APP_VERSION)};`,
+    // Console frame flag: on by default, FIGAF_CONSOLE_UI=0 restores the
+    // classic wizard frame (mode.js turns this into features.consoleUI).
+    `window.figafConsoleUI = ${process.env.FIGAF_CONSOLE_UI === "0" ? "false" : "true"};`,
     "</script>",
   ].join("\n");
   const html = tmpl.replace("<!-- FIGAF_MODE_INJECT -->", injection);

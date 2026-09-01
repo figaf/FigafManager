@@ -349,9 +349,11 @@ function ScreenConnections({ ctx, onBack }) {
 
       <div className="pane-foot">
         <div className="spacer" />
-        <button className="btn" onClick={onBack} disabled={!!busy}>
-          <Ico.ArrowLeft /> Back
-        </button>
+        {onBack && (
+          <button className="btn" onClick={onBack} disabled={!!busy}>
+            <Ico.ArrowLeft /> Back
+          </button>
+        )}
       </div>
     </>
   );

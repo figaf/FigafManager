@@ -360,9 +360,11 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections }) {
             Connections
           </button>
         )}
-        <button className="btn" onClick={onBack} disabled={!!busyApp}>
-          <Ico.ArrowLeft /> Back
-        </button>
+        {onBack && (
+          <button className="btn" onClick={onBack} disabled={!!busyApp}>
+            <Ico.ArrowLeft /> Back
+          </button>
+        )}
       </div>
     </>
   );

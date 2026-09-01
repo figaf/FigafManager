@@ -1,0 +1,89 @@
+/* Console frame styles (hosted mode) — see console.jsx.
+   Kept in an own file: styles.css ends in a mis-encoded (UTF-16) block, so
+   appending there is unsafe until that is cleaned up. */
+
+.cnav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 10px 0;
+  overflow-y: auto;
+}
+
+.cnav-item {
+  padding: 9px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cnav-item:hover { background: var(--surface-2, rgba(0, 0, 0, 0.04)); }
+
+.cnav-item.is-active {
+  background: var(--fg-blue-soft, rgba(21, 101, 216, 0.08));
+}
+
+.cnav-item:focus-visible {
+  outline: 2px solid var(--fg-blue, #1565d8);
+  outline-offset: -2px;
+}
+
+.cnav-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.cnav-item.is-active .cnav-label { color: var(--fg-blue, #1565d8); }
+
+.cnav-sub {
+  font-size: 11px;
+  color: var(--ink-4);
+  margin-top: 1px;
+}
+
+.cnav-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.cnav-dot.red { background: #e05252; }
+.cnav-dot.blue { background: #6aa9ff; }
+
+/* Local stepper strip above an active Figaf Tool flow. */
+.flow-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 28px 0;
+}
+
+.flow-chip {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--ink-3);
+  background: var(--surface-2, transparent);
+}
+
+.flow-chip.is-active {
+  border-color: var(--fg-blue, #1565d8);
+  color: var(--fg-blue, #1565d8);
+  font-weight: 600;
+}
+
+.flow-chip.is-done {
+  color: var(--ink-3);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+/* First-run checklist banner on the landing page. */
+.setup-checklist { margin-bottom: 0; }

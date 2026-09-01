@@ -44,6 +44,12 @@
       // L3 App Manager (PoC): catalog-driven install/manage of Figaf L3 apps.
       // Hosted only — the artifact channel is bundled into the cockpit zip.
       manageL3Apps:  hosted,
+      // Console frame: persistent left-rail navigation instead of the
+      // one-time wizard. Hosted only — desktop really is a one-time
+      // installer and keeps the wizard frame. server.js injects
+      // window.figafConsoleUI from FIGAF_CONSOLE_UI (default on; set
+      // FIGAF_CONSOLE_UI=0 in the manifest to restore the classic wizard).
+      consoleUI: hosted && window.figafConsoleUI !== false,
     },
   };
 

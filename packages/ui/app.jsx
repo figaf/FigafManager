@@ -6,7 +6,7 @@
    ScreenConnectProvision, ScreenConnectIdp,
    ScreenConnectIdpSuser, ScreenConnectIdpPassport, ScreenConnectIdpIas,
    ScreenConnectIdpCustomTrust, ScreenConnectIdpCustomAssign,
-   ScreenL3Apps, ScreenConnections,
+   ScreenL3Apps, ScreenConnections, ConsoleFrame,
    UpdatePreflightModal, SelfUpdateBanner */
 
 function App() {
@@ -14,6 +14,9 @@ function App() {
   const [terminalOpen, setTerminalOpen] = React.useState(false);
 
   const isHosted = window.figafModeFlags.isHosted;
+  // Console frame (hosted): persistent navigation instead of the wizard.
+  // Desktop keeps the wizard — it really is a one-time installer.
+  const consoleUI = !!(isHosted && window.figafModeFlags.features.consoleUI);
 
   const [ctx, setCtx] = React.useState({
     prereqsStarted: false,
@@ -31,6 +34,10 @@ function App() {
       { id: "disk", status: "pending", title: "Disk space",           sub: "≥ 2 GB available for deployment artifacts" },
     ],
     login: {
+      // Hosted: the boot effect below always tries an automatic sign-in
+      // (session resume, then stored user). Starting in "trying" keeps the
+      // console's gate from flashing the login form on every reload.
+      autoStatus: isHosted ? "trying" : undefined,
       btpStatus: "idle",
       cfStatus: "idle",
       // CF-only mode: operator skipped BTP login and connects straight to
@@ -185,14 +192,25 @@ function App() {
     const api = typeof window !== "undefined" ? window.figaf : null;
     if (!api || !api.session || !api.session.state) return;
     let cancelled = false;
+    // The console's auth gate shows "connecting…" while this runs, instead of
+    // flashing the sign-in form. Cleared on every exit path below.
+    const clearAuto = () => {
+      if (!cancelled && consoleUI) {
+        setCtx(c => ({ ...c, login: { ...c.login, autoStatus: undefined } }));
+      }
+    };
+    if (consoleUI) {
+      setCtx(c => ({ ...c, login: { ...c.login, autoStatus: "trying" } }));
+    }
     (async () => {
       let s = null;
-      try { s = await api.session.state(); } catch { return; }
+      try { s = await api.session.state(); } catch { clearAuto(); return; }
       if (cancelled) return;
-      // Deep link without a live session: try the stored management user, so
-      // a bookmarked #/apps opens hands-free. Safe: the page itself is behind
-      // IAS SSO + the operator role, and the button does the same in one click.
-      if ((!s || !s.ok || !s.cfLoggedIn) && pendingRoute.current && api.login) {
+      // No live session: try the stored management user. In the console this
+      // always runs (a console signs itself in); in the wizard only for a
+      // deep link (#/apps bookmark). Safe: the page itself is behind IAS SSO
+      // + the operator role, and the button does the same in one click.
+      if ((!s || !s.ok || !s.cfLoggedIn) && (consoleUI || pendingRoute.current) && api.login) {
         try {
           const st = await api.login.storedUserStatus();
           if (!cancelled && st && st.available) {
@@ -203,6 +221,7 @@ function App() {
                 ...c,
                 login: {
                   ...c.login,
+                  autoStatus: undefined,
                   cfOnly: true,
                   cfStatus: "done", // the navigation effect below routes to #/apps
                   user: r.user || "",
@@ -212,12 +231,14 @@ function App() {
                   landscape: m2 ? m2[1] : c.login.landscape,
                 },
               }));
+              return;
             }
           }
         } catch { /* fall through to the normal flow */ }
+        clearAuto();
         return;
       }
-      if (!s || !s.ok || !s.cfLoggedIn) return;
+      if (!s || !s.ok || !s.cfLoggedIn) { clearAuto(); return; }
       const apiUrl = s.apiUrl || "";
       const m = /^https?:\/\/api\.(.+)\.hana\.ondemand\.com/i.exec(apiUrl);
       // When the server session also holds a BTP login, resume it too — so
@@ -227,6 +248,7 @@ function App() {
         ...c,
         login: {
           ...c.login,
+          autoStatus: undefined,
           cfOnly: !btp,
           cfStatus: "done",
           btpStatus: btp ? "done" : c.login.btpStatus,
@@ -240,7 +262,9 @@ function App() {
           apiUrl,
         },
       }));
-      if (!pendingRoute.current) setStepRaw(2); // baseSteps: 0 welcome · 1 login · 2 choice
+      // Wizard only: land on "What would you like to do?". The console derives
+      // its page from the address hash instead.
+      if (!consoleUI && !pendingRoute.current) setStepRaw(2); // baseSteps: 0 welcome · 1 login · 2 choice
       // (with a pending #/apps target, the navigation effect below jumps further)
     })();
     return () => { cancelled = true; };
@@ -250,6 +274,7 @@ function App() {
   // a cf login exists (resumed, stored-user, or typed passcode), consume the
   // pending target and open the right manage-lane page directly.
   React.useEffect(() => {
+    if (consoleUI) return; // the console routes by hash itself
     if (ctx.login.cfStatus !== "done" || !pendingRoute.current) return;
     const target = pendingRoute.current;
     pendingRoute.current = null;
@@ -346,35 +371,39 @@ function App() {
   const next = () => setStep(currentStep + 1);
   const back = () => setStep(currentStep - 1);
 
-  let Screen;
-  switch (STEPS[currentStep].id) {
-    case "welcome":           Screen = <ScreenWelcome ctx={ctx} setCtx={setCtx} onNext={next} />; break;
-    case "login":             Screen = <ScreenLogin ctx={ctx} setCtx={setCtx} onNext={next} appendLog={appendLog} />; break;
-    case "choice":            Screen = <ScreenChoice ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
-    case "config":            Screen = <ScreenConfig ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
-    case "progress":          Screen = <ScreenProgress ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
-    case "deploy":            Screen = <ScreenDeploy ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
-    case "xsuaa-upgrade":     Screen = <ScreenXsuaaUpgrade ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} setStep={setStepRaw} STEPS={STEPS} />; break;
-    case "xsuaa-assign-role": Screen = <ScreenXsuaaAssignRole ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
-    case "l3-apps":           Screen = <ScreenL3Apps ctx={ctx} setCtx={setCtx} onBack={back} onConnections={next} />; break;
-    case "l3-connections":    Screen = <ScreenConnections ctx={ctx} setCtx={setCtx} onBack={back} />; break;
-    case "updateConfig":      Screen = <ScreenUpdateConfig ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
-    case "updateProgress":    Screen = <ScreenUpdateProgress ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
-    case "connect-provision": Screen = <ScreenConnectProvision ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
-    case "connect-idp":       Screen = <ScreenConnectIdp ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
-    case "connect-idp-stub":
-      switch (ctx.connect && ctx.connect.idpMode) {
-        case "s-user":       Screen = <ScreenConnectIdpSuser    ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
-        case "sap-passport": Screen = <ScreenConnectIdpPassport ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
-        case "ias":          Screen = <ScreenConnectIdpIas      ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
-        default:             Screen = null;
-      }
-      break;
-    case "connect-idp-custom-trust":  Screen = <ScreenConnectIdpCustomTrust  ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />; break;
-    case "connect-idp-custom-assign": Screen = <ScreenConnectIdpCustomAssign ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />; break;
-    case "done":              Screen = <ScreenDone ctx={ctx} setCtx={setCtx} setStep={setStepRaw} STEPS={STEPS} />; break;
-    default: Screen = null;
-  }
+  // Renders the screen for a step id. The wizard frame uses it for every
+  // step; the console frame reuses it for the Figaf Tool flow tails, so the
+  // flow screens stay identical in both frames.
+  const renderScreenById = (id) => {
+    switch (id) {
+      case "welcome":           return <ScreenWelcome ctx={ctx} setCtx={setCtx} onNext={next} />;
+      case "login":             return <ScreenLogin ctx={ctx} setCtx={setCtx} onNext={next} appendLog={appendLog} />;
+      case "choice":            return <ScreenChoice ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />;
+      case "config":            return <ScreenConfig ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />;
+      case "progress":          return <ScreenProgress ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />;
+      case "deploy":            return <ScreenDeploy ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />;
+      case "xsuaa-upgrade":     return <ScreenXsuaaUpgrade ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} setStep={setStepRaw} STEPS={STEPS} />;
+      case "xsuaa-assign-role": return <ScreenXsuaaAssignRole ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />;
+      case "l3-apps":           return <ScreenL3Apps ctx={ctx} setCtx={setCtx} onBack={back} onConnections={next} />;
+      case "l3-connections":    return <ScreenConnections ctx={ctx} setCtx={setCtx} onBack={back} />;
+      case "updateConfig":      return <ScreenUpdateConfig ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />;
+      case "updateProgress":    return <ScreenUpdateProgress ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />;
+      case "connect-provision": return <ScreenConnectProvision ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />;
+      case "connect-idp":       return <ScreenConnectIdp ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />;
+      case "connect-idp-stub":
+        switch (ctx.connect && ctx.connect.idpMode) {
+          case "s-user":       return <ScreenConnectIdpSuser    ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />;
+          case "sap-passport": return <ScreenConnectIdpPassport ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />;
+          case "ias":          return <ScreenConnectIdpIas      ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />;
+          default:             return null;
+        }
+      case "connect-idp-custom-trust":  return <ScreenConnectIdpCustomTrust  ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} />;
+      case "connect-idp-custom-assign": return <ScreenConnectIdpCustomAssign ctx={ctx} setCtx={setCtx} onNext={next} onBack={back} appendLog={appendLog} />;
+      case "done":              return <ScreenDone ctx={ctx} setCtx={setCtx} setStep={setStepRaw} STEPS={STEPS} />;
+      default: return null;
+    }
+  };
+  const Screen = renderScreenById(STEPS[currentStep].id);
 
   const currentStepId = STEPS[currentStep] && STEPS[currentStep].id;
 
@@ -383,6 +412,7 @@ function App() {
   // replaceState avoids polluting the browser history.
   React.useEffect(() => {
     if (typeof window === "undefined") return;
+    if (consoleUI) return; // the console owns the address bar
     const OWN_HASHES = { "l3-apps": "#/apps", "l3-connections": "#/connections" };
     const wanted = OWN_HASHES[currentStepId];
     if (wanted) {
@@ -401,6 +431,18 @@ function App() {
     (typeof window !== "undefined" && window.figafIsLongRunningFlow
       ? window.figafIsLongRunningFlow(ctx, currentStepId)
       : false);
+
+  if (consoleUI) {
+    return (
+      <ConsoleFrame
+        app={{
+          ctx, setCtx, logs, appendLog,
+          step: currentStep, setStepRaw, STEPS, renderScreenById,
+          terminalOpen, setTerminalOpen, currentCmd,
+        }}
+      />
+    );
+  }
 
   return (
     <WinFrame>
