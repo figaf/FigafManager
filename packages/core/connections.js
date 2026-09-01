@@ -74,8 +74,11 @@ function extractAgents(response) {
 
 /**
  * Parse a pasted `it-rt` (plan `api`) service-key JSON into connection fields.
- * Accepts the raw key ({ url, uaa: { clientid, clientsecret, url } }) and the
- * `cf service-key` output wrapper ({ credentials: { ... } }).
+ * Accepts the shapes SAP actually issues:
+ *   1. current it-rt keys:  { oauth: { url, tokenurl, clientid, clientsecret } }
+ *   2. uaa-style keys:      { url, uaa: { url, clientid, clientsecret } }
+ *   3. flat keys:           { url, tokenurl, clientid, clientsecret }
+ * plus the `cf service-key` output wrapper ({ credentials: { ... } }).
  */
 function parseServiceKey(text) {
   let key;
@@ -85,15 +88,42 @@ function parseServiceKey(text) {
     return { error: "the pasted text is not valid JSON" };
   }
   if (key && typeof key.credentials === "object" && key.credentials) key = key.credentials;
-  const uaa = (key && key.uaa) || {};
-  const baseUrl = cleanUrl(key && key.url);
-  const uaaUrl = cleanUrl(uaa.url);
-  const clientId = String(uaa.clientid || uaa.clientId || "").trim();
-  const clientSecret = String(uaa.clientsecret || uaa.clientSecret || "").trim();
-  if (!baseUrl || !uaaUrl || !clientId || !clientSecret) {
-    return { error: "the service key must contain url and uaa.{url,clientid,clientsecret} — paste the full it-rt (plan api) key" };
+  if (!key || typeof key !== "object" || Array.isArray(key)) {
+    return { error: "the pasted text is not a service-key object" };
   }
-  return { baseUrl, tokenUrl: `${uaaUrl}/oauth/token`, clientId, clientSecret };
+
+  // Shape 1 — the oauth block (what the BTP cockpit shows for it-rt/api today).
+  const oauth = key.oauth && typeof key.oauth === "object" ? key.oauth : null;
+  if (oauth) {
+    const baseUrl = cleanUrl(oauth.url || key.url);
+    const tokenUrl = cleanUrl(oauth.tokenurl || oauth.tokenUrl);
+    const clientId = String(oauth.clientid || oauth.clientId || "").trim();
+    const clientSecret = String(oauth.clientsecret || oauth.clientSecret || "").trim();
+    if (baseUrl && tokenUrl && clientId && clientSecret) return { baseUrl, tokenUrl, clientId, clientSecret };
+    return { error: "the oauth block must contain url, tokenurl, clientid, and clientsecret — paste the full it-rt (plan api) key" };
+  }
+
+  // Shape 2 — uaa-style: the token URL is derived from the uaa server URL.
+  const uaa = key.uaa && typeof key.uaa === "object" ? key.uaa : null;
+  if (uaa) {
+    const baseUrl = cleanUrl(key.url);
+    const uaaUrl = cleanUrl(uaa.url);
+    const clientId = String(uaa.clientid || uaa.clientId || "").trim();
+    const clientSecret = String(uaa.clientsecret || uaa.clientSecret || "").trim();
+    if (baseUrl && uaaUrl && clientId && clientSecret) {
+      return { baseUrl, tokenUrl: `${uaaUrl}/oauth/token`, clientId, clientSecret };
+    }
+    return { error: "the uaa block must contain url, clientid, and clientsecret (plus the top-level url) — paste the full it-rt (plan api) key" };
+  }
+
+  // Shape 3 — flat.
+  const baseUrl = cleanUrl(key.url);
+  const tokenUrl = cleanUrl(key.tokenurl || key.tokenUrl);
+  const clientId = String(key.clientid || key.clientId || "").trim();
+  const clientSecret = String(key.clientsecret || key.clientSecret || "").trim();
+  if (baseUrl && tokenUrl && clientId && clientSecret) return { baseUrl, tokenUrl, clientId, clientSecret };
+
+  return { error: "unrecognized service key — expected an it-rt (plan api) key, normally { \"oauth\": { \"url\", \"tokenurl\", \"clientid\", \"clientsecret\" } }" };
 }
 
 // ─── handler factory ─────────────────────────────────────────────────────────

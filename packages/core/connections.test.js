@@ -34,9 +34,32 @@ test("parseServiceKey unwraps the cf service-key 'credentials' wrapper", () => {
   assert.equal(r.clientId, "a");
 });
 
+test("parseServiceKey accepts the current oauth-block it-rt key", () => {
+  const r = parseServiceKey(JSON.stringify({
+    oauth: {
+      url: "https://tenant.it-cpi018-rt.example",
+      tokenurl: "https://sub.authentication.example/oauth/token",
+      clientid: "sb-y", clientsecret: "sec2",
+    },
+  }));
+  assert.equal(r.baseUrl, "https://tenant.it-cpi018-rt.example");
+  assert.equal(r.tokenUrl, "https://sub.authentication.example/oauth/token"); // verbatim, no suffix added
+  assert.equal(r.clientId, "sb-y");
+  assert.equal(r.clientSecret, "sec2");
+});
+
+test("parseServiceKey accepts a flat key", () => {
+  const r = parseServiceKey(JSON.stringify({
+    url: "https://t.example", tokenurl: "https://u.example/oauth/token", clientid: "a", clientsecret: "b",
+  }));
+  assert.equal(r.tokenUrl, "https://u.example/oauth/token");
+  assert.equal(r.clientId, "a");
+});
+
 test("parseServiceKey rejects invalid JSON and incomplete keys", () => {
   assert.ok(parseServiceKey("{not json").error);
   assert.ok(parseServiceKey(JSON.stringify({ url: "https://t.example" })).error);
+  assert.ok(parseServiceKey(JSON.stringify({ oauth: { url: "https://t.example" } })).error);
 });
 
 test("systemCredentialName encodes unsafe characters and requires an id", () => {

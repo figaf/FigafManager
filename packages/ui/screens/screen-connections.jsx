@@ -110,7 +110,7 @@ function ConnSystemForm({ agent, busy, onSave, onCancel }) {
         autoComplete="off"
         spellCheck={false}
         style={{ width: "100%", resize: "vertical" }}
-        placeholder='{ "url": "https://….it-cpi….hana.ondemand.com", "uaa": { "clientid": "…", "clientsecret": "…", "url": "https://….authentication…" } }'
+        placeholder='{ "oauth": { "url": "https://….it-cpi….hana.ondemand.com", "tokenurl": "https://….authentication…/oauth/token", "clientid": "…", "clientsecret": "…" } }'
         value={keyJson}
         onChange={(e) => setKeyJson(e.target.value)}
       />
