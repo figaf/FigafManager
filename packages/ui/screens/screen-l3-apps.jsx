@@ -207,8 +207,9 @@ function L3AppRow({ app, status, busy, busyLabel, figafSystems, onAction }) {
 }
 
 function ScreenL3Apps({ ctx, setCtx, onBack, onConnections }) {
-  const [catalog, setCatalog] = React.useState(null);   // { releaseVersion, apps } | { error }
+  const [catalog, setCatalog] = React.useState(null);   // { releaseVersion, platform, apps } | { error }
   const [statuses, setStatuses] = React.useState({});   // appId → status row
+  const [platformStatus, setPlatformStatus] = React.useState(null); // catalog-v2 platform row
   const [refreshing, setRefreshing] = React.useState(false);
   const [busyApp, setBusyApp] = React.useState(null);   // appId currently running an action
   const [busyLabel, setBusyLabel] = React.useState("");
@@ -228,6 +229,7 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections }) {
         const map = {};
         for (const row of s.apps) map[row.id] = row;
         setStatuses(map);
+        setPlatformStatus(s.platform || null);
         setLastError(null);
       } else if (s && s.error) {
         setLastError(s.error);
@@ -304,6 +306,31 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections }) {
         {catalog && catalog.error && (
           <div style={{ color: "var(--ink-3)" }}>
             <strong>No app catalog available.</strong> {catalog.error}
+          </div>
+        )}
+
+        {catalog && catalog.platform && (
+          <div style={{ border: "1px dashed var(--line)", borderRadius: 10, padding: 12, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontWeight: 700 }}>{catalog.platform.name || "Platform base"}</div>
+              <L3StatusPill status={platformStatus ? platformStatus.status : null} />
+              <div className="spacer" style={{ flex: 1 }} />
+              <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                installed: <span className="kbd">{(platformStatus && platformStatus.installedVersion) || "—"}</span>
+                {" · "}available: <span className="kbd">{catalog.releaseVersion || "?"}</span>
+              </div>
+            </div>
+            <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 6 }}>
+              The shared backend connector, used by every app. It is deployed and updated
+              automatically, always BEFORE the app frontends — no separate action needed.
+              {" "}
+              {(platformStatus ? platformStatus.parts : catalog.platform.cfApps).map((p) => (
+                <span key={p.name} style={{ marginRight: 12 }}>
+                  <span className="kbd">{p.name}</span>
+                  {" "}{p.exists === false ? "absent" : ((p.state || "").toLowerCase() || "")}
+                </span>
+              ))}
+            </div>
           </div>
         )}
 

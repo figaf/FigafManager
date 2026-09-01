@@ -9,8 +9,14 @@
 //     "channel" is retired, 2026-09-01.) For the PoC the release is bundled
 //     inside the manager build; the seam is this one host method, so a
 //     remote store (Cloudflare R2, GitHub releases) is a later swap.
-//   - One catalog "app" (e.g. B2B Archiving Setup) maps to 1..n CF apps
-//     (backend, frontend), deployed in catalog order with `cf push`.
+//   - Catalog v2 (release 0.3.0+): a `platform` block holds the SHARED
+//     BACKEND CONNECTOR's CF apps; each catalog "app" holds only its
+//     frontend(s). Install/update deploy the platform FIRST, then the app —
+//     the new connector must serve old frontends during that window
+//     (decision 0005's backward-compatibility gate). Disable/enable/remove
+//     touch only the app's own CF apps; the platform stays for the others.
+//     A catalog WITHOUT a platform block keeps the v1 behavior.
+//   - Artifacts may carry a sha256; the zip is verified before extraction.
 //   - Bindings go to EXISTING service instances named in the catalog
 //     (`services` must exist; `optionalServices` are bound only when present).
 //   - The manager stamps FIGAF_APP_VERSION on every CF app it deploys and
@@ -25,6 +31,7 @@
 
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 
 const VERSION_ENV = "FIGAF_APP_VERSION";
 const MAX_ENV_VALUE_LEN = 4096;
@@ -45,6 +52,16 @@ function loadCatalog(dir) {
   if (!parsed || !Array.isArray(parsed.apps)) {
     return { ok: false, error: "catalog.json must have an 'apps' array" };
   }
+  if (parsed.platform != null) {
+    if (!Array.isArray(parsed.platform.cfApps) || parsed.platform.cfApps.length === 0) {
+      return { ok: false, error: "catalog 'platform' needs a non-empty cfApps array" };
+    }
+    for (const c of parsed.platform.cfApps) {
+      if (!c.name || !c.artifact) {
+        return { ok: false, error: "catalog 'platform' has a cfApp without name/artifact" };
+      }
+    }
+  }
   for (const app of parsed.apps) {
     if (!app.id || !app.version || !Array.isArray(app.cfApps) || app.cfApps.length === 0) {
       return { ok: false, error: `catalog app '${app.id || "?"}' needs id, version and a non-empty cfApps array` };
@@ -56,6 +73,21 @@ function loadCatalog(dir) {
     }
   }
   return { ok: true, catalog: parsed };
+}
+
+/**
+ * The platform base (shared backend connector) as a pseudo-app, so the deploy
+ * machinery treats it exactly like an app's CF apps. Null on v1 catalogs.
+ */
+function platformPseudoApp(catalog) {
+  const p = catalog && catalog.platform;
+  if (!p || !Array.isArray(p.cfApps) || p.cfApps.length === 0) return null;
+  return {
+    id: "platform",
+    name: p.name || "Platform base (shared backend)",
+    version: catalog.releaseVersion || catalog.channelVersion || "unknown",
+    cfApps: p.cfApps,
+  };
 }
 
 /**
@@ -192,6 +224,22 @@ function createL3Handlers(ctx) {
   async function deployPart(app, cfApp, channelDir) {
     const name = cfApp.name;
 
+    // Verify the artifact against its release checksum BEFORE extracting.
+    if (cfApp.sha256) {
+      const zipPath = path.join(channelDir, cfApp.artifact);
+      let actual;
+      try {
+        actual = crypto.createHash("sha256").update(fs.readFileSync(zipPath)).digest("hex");
+      } catch (e) {
+        phase(app.id, name, "extract", "error", e.message);
+        return { ok: false, error: `could not read ${cfApp.artifact}: ${e.message}` };
+      }
+      if (actual !== String(cfApp.sha256).toLowerCase()) {
+        phase(app.id, name, "extract", "error", "checksum mismatch");
+        return { ok: false, error: `checksum mismatch for ${cfApp.artifact} — the release is corrupt or was tampered with; nothing was deployed` };
+      }
+    }
+
     phase(app.id, name, "extract", "running");
     const workDir = path.join(host.getUserDataDir(), "l3-apps", app.id, name);
     try {
@@ -259,6 +307,18 @@ function createL3Handlers(ctx) {
   async function deployAll(appId) {
     const req = requireApp(appId);
     if (req.error) return { ok: false, error: req.error };
+    // Platform base FIRST (catalog v2): the shared connector is deployed /
+    // updated before any frontend, so the only mixed state that ever exists
+    // is "new backend + old frontend" — the state the backward-compatibility
+    // gate (decision 0005) covers. Idempotent: an already-current connector
+    // is simply pushed again (same as the app "Re-deploy").
+    const platform = platformPseudoApp(req.catalog);
+    if (platform) {
+      for (const cfApp of platform.cfApps) {
+        const r = await deployPart(platform, cfApp, req.dir);
+        if (!r.ok) return { ...r, failedApp: cfApp.name };
+      }
+    }
     for (const cfApp of req.app.cfApps) {
       const r = await deployPart(req.app, cfApp, req.dir);
       if (!r.ok) return { ...r, failedApp: cfApp.name };
@@ -284,11 +344,13 @@ function createL3Handlers(ctx) {
       if (!dir) return { ok: false, error: "No L3 artifact store on this host (l3-artifacts/ missing)" };
       const c = loadCatalog(dir);
       if (!c.ok) return c;
+      const platform = platformPseudoApp(c.catalog);
       return {
         ok: true,
         // releaseVersion is the name; releases built before 2026-09-01 carry
         // only the legacy field channelVersion (kept as a read fallback).
         releaseVersion: c.catalog.releaseVersion || c.catalog.channelVersion || null,
+        platform: platform ? { name: platform.name, cfApps: platform.cfApps.map((p) => ({ name: p.name })) } : null,
         apps: c.catalog.apps.map((a) => ({
           id: a.id,
           name: a.name || a.id,
@@ -323,8 +385,12 @@ function createL3Handlers(ctx) {
       try { resources = JSON.parse(list.stdout).resources || []; } catch {}
       const byName = new Map(resources.map((r) => [r.name, r]));
 
+      // The platform base is reported as its own row, computed the same way
+      // as the app rows (catalog v2; null on v1 catalogs).
+      const platform = platformPseudoApp(c.catalog);
+      const entries = platform ? [platform, ...c.catalog.apps] : c.catalog.apps;
       const apps = [];
-      for (const app of c.catalog.apps) {
+      for (const app of entries) {
         const parts = [];
         for (const p of app.cfApps) {
           const res = byName.get(p.name);
@@ -343,13 +409,15 @@ function createL3Handlers(ctx) {
         }
         apps.push({
           id: app.id,
+          name: app.name || app.id,
           status: computeAppStatus(parts),
           installedVersion,
           catalogVersion: app.version,
           parts: parts.map(({ guid, ...rest }) => rest),
         });
       }
-      return { ok: true, apps };
+      const platformRow = platform ? apps.shift() : null;
+      return { ok: true, platform: platformRow, apps };
     },
 
     async "l3:install"({ appId } = {}) {
@@ -495,6 +563,7 @@ function createL3Handlers(ctx) {
 module.exports = {
   VERSION_ENV,
   loadCatalog,
+  platformPseudoApp,
   computeAppStatus,
   buildDestinationsEnv,
   buildPushArgs,

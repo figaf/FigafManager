@@ -34,8 +34,22 @@ const {
 
 // ─── fixtures ────────────────────────────────────────────────────────────────
 
+// Catalog v2: the shared backend connector lives in the `platform` block;
+// the app entry holds only its frontend. configTargetCfApp points config and
+// health at the connector.
 const CATALOG = {
   releaseVersion: "0.2.0",
+  platform: {
+    name: "Platform base",
+    cfApps: [
+      {
+        name: "arch-backend", artifact: "backend.zip", buildpack: "nodejs_buildpack",
+        memory: "256M", disk: "1024M",
+        services: ["db", "xsuaa"], optionalServices: ["credstore"],
+        env: { FIGAF_PAGE_SIZE: "200" },
+      },
+    ],
+  },
   apps: [
     {
       id: "arch",
@@ -43,18 +57,13 @@ const CATALOG = {
       version: "0.2.0",
       cfApps: [
         {
-          name: "arch-backend", artifact: "backend.zip", buildpack: "nodejs_buildpack",
-          memory: "256M", disk: "1024M",
-          services: ["db", "xsuaa"], optionalServices: ["credstore"],
-          env: { FIGAF_PAGE_SIZE: "200" },
-        },
-        {
           name: "arch-frontend", artifact: "frontend.zip", buildpack: "nodejs_buildpack",
           memory: "128M", disk: "512M",
           services: ["xsuaa"],
           destinationTo: "arch-backend", destinationName: "figaf-b2b-gov-backend",
         },
       ],
+      configTargetCfApp: "arch-backend",
       configForm: [
         { key: "FIGAF_BASE_URL", secret: false },
         { key: "FIGAF_API_CLIENT_SECRET", secret: true },
@@ -143,7 +152,7 @@ test("computeAppStatus rollup", () => {
 });
 
 test("buildPushArgs / buildDestinationsEnv", () => {
-  const args = buildPushArgs(CATALOG.apps[0].cfApps[0], "/tmp/x", { noStart: true });
+  const args = buildPushArgs(CATALOG.platform.cfApps[0], "/tmp/x", { noStart: true });
   assert.deepEqual(args, ["push", "arch-backend", "-p", "/tmp/x", "-b", "nodejs_buildpack", "-m", "256M", "-k", "1024M", "--no-start"]);
   const dest = JSON.parse(buildDestinationsEnv("figaf-b2b-gov-backend", "https://x.example"));
   assert.deepEqual(dest, [{ name: "figaf-b2b-gov-backend", url: "https://x.example", forwardAuthToken: true }]);
@@ -261,20 +270,21 @@ test("l3:configure: masked set-env + restart; unknown key rejected; not-deployed
   assert.match(notDeployed.error, /not deployed/);
 });
 
-test("l3:disable stops frontend before backend; l3:remove deletes in the same reverse order", async () => {
+test("l3:disable / l3:remove touch ONLY the app's own CF apps — the shared platform stays", async () => {
   const dir = makeChannelDir();
   const { ctx, calls } = makeCtx(dir, () => ({ code: 0, stdout: "" }));
   const handlers = createL3Handlers(ctx);
 
   await handlers["l3:disable"]({ appId: "arch" });
   const stops = calls.filter((c) => c.args[0] === "stop").map((c) => c.args[1]);
-  assert.deepEqual(stops, ["arch-frontend", "arch-backend"]);
+  assert.deepEqual(stops, ["arch-frontend"]);
 
   calls.length = 0;
   await handlers["l3:remove"]({ appId: "arch" });
   const dels = calls.filter((c) => c.args[0] === "delete").map((c) => c.args[1]);
-  assert.deepEqual(dels, ["arch-frontend", "arch-backend"]);
+  assert.deepEqual(dels, ["arch-frontend"]);
   assert.ok(calls.every((c) => c.args[0] !== "delete" || c.args[2] === "-f"));
+  assert.ok(!calls.some((c) => c.args.includes("arch-backend")), "the platform connector must never be stopped/deleted by app actions");
 });
 
 test("l3:status: rolls up states, reads FIGAF_APP_VERSION and routes", async () => {
@@ -288,7 +298,7 @@ test("l3:status: rolls up states, reads FIGAF_APP_VERSION and routes", async () 
         { name: "arch-frontend", guid: "g2", state: "STARTED" },
       ] }) };
     }
-    if (args[0] === "curl" && args[1] === "/v3/apps/g1/environment_variables") {
+    if (args[0] === "curl" && /\/v3\/apps\/g[12]\/environment_variables$/.test(args[1])) {
       return { code: 0, stdout: JSON.stringify({ var: { [VERSION_ENV]: "0.1.9" } }) };
     }
     if (args[0] === "curl" && /routes$/.test(args[1])) {
@@ -299,10 +309,37 @@ test("l3:status: rolls up states, reads FIGAF_APP_VERSION and routes", async () 
   const handlers = createL3Handlers(ctx);
   const r = await handlers["l3:status"]();
   assert.equal(r.ok, true, JSON.stringify(r));
+  // catalog v2: the connector is its own platform row; the app row holds the frontend
+  assert.equal(r.platform.status, "running");
+  assert.equal(r.platform.installedVersion, "0.1.9");
+  assert.equal(r.platform.parts[0].name, "arch-backend");
   assert.equal(r.apps[0].status, "running");
   assert.equal(r.apps[0].installedVersion, "0.1.9");
   assert.equal(r.apps[0].catalogVersion, "0.2.0");
+  assert.equal(r.apps[0].parts[0].name, "arch-frontend");
   assert.equal(r.apps[0].parts[0].route, "arch.example.com");
+});
+
+test("l3:install verifies artifact checksums when the catalog carries them", async () => {
+  const crypto = require("node:crypto");
+  const goodSha = crypto.createHash("sha256").update("zip").digest("hex"); // fixture zips contain "zip"
+  const withSha = JSON.parse(JSON.stringify(CATALOG));
+  withSha.platform.cfApps[0].sha256 = goodSha;
+  withSha.apps[0].cfApps[0].sha256 = "0".repeat(64); // wrong on purpose
+  const dir = makeChannelDir(withSha);
+  const { ctx, calls } = makeCtx(dir, (args) => {
+    if (args[0] === "app" && args[2] === "--guid") return { code: 1, stdout: "" };
+    if (args[0] === "service") return { code: 1, stdout: "" };
+    if (args[0] === "app" && args[1] === "arch-backend") return { code: 0, stdout: "routes:   b.example.com\n" };
+    return { code: 0, stdout: "" };
+  });
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:install"]({ appId: "arch" });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /checksum mismatch for frontend.zip/);
+  // the platform (good checksum) deployed; the frontend was stopped BEFORE any push
+  assert.ok(calls.some((c) => c.args[0] === "push" && c.args[1] === "arch-backend"));
+  assert.ok(!calls.some((c) => c.args[0] === "push" && c.args[1] === "arch-frontend"));
 });
 
 test("l3:health: GETs route + healthPath and parses JSON", async () => {
