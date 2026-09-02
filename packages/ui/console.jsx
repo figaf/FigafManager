@@ -201,7 +201,7 @@ function ConsoleFrame({ app }) {
         </div>
       </div>
     ) : (
-      <ScreenLogin ctx={ctx} setCtx={setCtx} onNext={() => {}} appendLog={appendLog} />
+      <ScreenLogin ctx={ctx} setCtx={setCtx} onNext={() => {}} appendLog={appendLog} gate />
     );
   } else if (route === "apps") {
     const items = checklist ? buildChecklistItems(checklist, { navigate, startFlow }) : [];

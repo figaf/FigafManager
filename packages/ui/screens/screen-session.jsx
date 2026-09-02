@@ -161,7 +161,7 @@ function ScreenSession({ ctx, setCtx, appendLog }) {
             </button>
           </div>
         )}
-        <ScreenLogin ctx={ctx} setCtx={setCtx} onNext={() => setAddBtp(false)} appendLog={appendLog} />
+        <ScreenLogin ctx={ctx} setCtx={setCtx} onNext={() => setAddBtp(false)} appendLog={appendLog} gate />
       </>
     );
   }

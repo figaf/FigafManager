@@ -35,7 +35,7 @@ function isValidApiUrl(s) {
 // ═══════════════════════════════════════════════════════════
 // 2. CLI Login — SSO + passcode
 // ═══════════════════════════════════════════════════════════
-function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
+function ScreenLogin({ ctx, setCtx, onNext, appendLog, gate }) {
   const { login } = ctx;
   const setLogin = (patch) => setCtx(c => ({ ...c, login: { ...c.login, ...patch } }));
   const [gaChoice, setGaChoice] = React.useState(null);
@@ -446,7 +446,9 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
     <>
       <div className="pane-body">
         <div className="pane-head">
-          <div className="pane-eyebrow">Step 2 · Authenticate</div>
+          {/* In the console frame this screen is an auth GATE on the addressed
+              page, not a wizard step - no step wording, no wizard footer. */}
+          <div className="pane-eyebrow">{gate ? "Sign in" : "Step 2 · Authenticate"}</div>
           <h1 className="pane-title">Sign in to SAP BTP and Cloud Foundry</h1>
           <p className="pane-desc">
             Both CLIs use single sign-on. We'll open your browser, then you'll paste a one-time passcode for the Cloud Foundry CLI.
@@ -934,7 +936,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog }) {
         </div>
       </div>
 
-      <WizardFooter nextDisabled={!canContinue} onNext={onNext} onBack={null} />
+      {!gate && <WizardFooter nextDisabled={!canContinue} onNext={onNext} onBack={null} />}
     </>
   );
 }

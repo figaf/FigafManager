@@ -91,3 +91,21 @@ test("deep link #/connections opens directly after auto sign-in", async ({ page 
   await page.goto("/#/connections");
   await expect(page.locator("h1.pane-title")).toHaveText("Figaf tool & SAP systems");
 });
+
+test("auth gate shows the sign-in card without wizard wording", async ({ browser }) => {
+  // Keep the claimed auth cookie but drop the wizard-session cookie: the next
+  // request mints a fresh server session with no cf login and (locally) no
+  // stored user, so the gate must render - as a gate, not as wizard step 2.
+  const context = await browser.newContext({ storageState: "e2e/.auth/state.json" });
+  await context.clearCookies({ name: "figaf_session" });
+  const page = await context.newPage();
+  await page.goto("/#/apps");
+  await expect(page.locator("h1.pane-title")).toHaveText("Sign in to SAP BTP and Cloud Foundry");
+  await expect(page.getByText("Step 2", { exact: false })).toHaveCount(0);
+  // No wizard footer on the gate (the page swaps in by itself after sign-in).
+  await expect(page.locator(".pane-foot")).toHaveCount(0);
+  // The rail stays usable: About needs no CF session.
+  await page.locator('.cnav-item[data-route="about"]').click();
+  await expect(page.locator("h1.pane-title")).toHaveText("Figaf Manager");
+  await context.close();
+});
