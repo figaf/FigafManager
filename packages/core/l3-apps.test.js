@@ -29,6 +29,7 @@ const {
   buildDestinationsEnv,
   buildPushArgs,
   validateConfigEnv,
+  serviceStatusFromCf,
   createL3Handlers,
 } = require("./l3-apps");
 
@@ -364,6 +365,185 @@ test("l3:health: GETs route + healthPath and parses JSON", async () => {
   assert.equal(bad.ok, false);
   assert.equal(bad.httpStatus, 503);
   assert.deepEqual(bad.body, { ok: false, postgres: { ok: true } });
+});
+
+// ─── C. catalog v3: base services ────────────────────────────────────────────
+
+const CATALOG_V3 = {
+  ...CATALOG,
+  releaseVersion: "0.3.2",
+  services: [
+    { name: "db", offering: "postgresql-db", plan: "free", plans: ["free", "standard"], purpose: "database" },
+    { name: "xsuaa", offering: "xsuaa", plan: "application", configFile: "xs-security.json", purpose: "roles" },
+    { name: "credstore", offering: "credstore", plan: "free", config: { authentication: { type: "basic" } }, bindToManager: true },
+  ],
+};
+
+function makeV3Dir() {
+  const dir = makeChannelDir(CATALOG_V3);
+  fs.writeFileSync(path.join(dir, "xs-security.json"), "{\"xsappname\":\"x\"}");
+  return dir;
+}
+
+// `cf service <name>` fake: names in `existing` report the given status text.
+function cfServiceResponder(existing, extra) {
+  return (args, opts) => {
+    if (args[0] === "service") {
+      const st = existing[args[1]];
+      return st ? { code: 0, stdout: `name: ${args[1]}\nstatus:    ${st}\n` } : { code: 1, stdout: "", stderr: "not found" };
+    }
+    return extra ? extra(args, opts) : null;
+  };
+}
+
+test("serviceStatusFromCf: maps cf service output to one status word", () => {
+  assert.equal(serviceStatusFromCf(1, ""), "missing");
+  assert.equal(serviceStatusFromCf(0, "status:    create succeeded"), "ready");
+  assert.equal(serviceStatusFromCf(0, "status:    update succeeded"), "ready");
+  assert.equal(serviceStatusFromCf(0, "status:    create in progress"), "in-progress");
+  assert.equal(serviceStatusFromCf(0, "status:    create failed"), "failed");
+  assert.equal(serviceStatusFromCf(0, "no status line"), "unknown");
+});
+
+test("loadCatalog: v3 services validated (needs name/offering/plan; plans must contain the default)", () => {
+  assert.equal(loadCatalog(makeV3Dir()).ok, true);
+  const bad1 = makeChannelDir({ ...CATALOG, services: [{ name: "db", offering: "postgresql-db" }] });
+  assert.match(loadCatalog(bad1).error, /needs name, offering and plan/);
+  const bad2 = makeChannelDir({ ...CATALOG, services: [{ name: "db", offering: "postgresql-db", plan: "free", plans: ["standard"] }] });
+  assert.match(loadCatalog(bad2).error, /containing the default plan/);
+});
+
+test("l3:services: reports status per service and the manager binding for bindToManager entries", async () => {
+  const dir = makeV3Dir();
+  const { ctx } = makeCtx(dir, cfServiceResponder(
+    { db: "create in progress", credstore: "create succeeded" },
+    (args) => (args[0] === "curl" && /service_credential_bindings/.test(args[1]))
+      ? { code: 0, stdout: JSON.stringify({ resources: [{ guid: "b1" }] }) } : null
+  ));
+  ctx.host.getDeployTargetForSelf = () => ({ appName: "figaf-manager", apiUrl: "u", orgName: "o", spaceName: "s" });
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:services"]();
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.selfApp, "figaf-manager");
+  const by = Object.fromEntries(r.services.map((s) => [s.name, s]));
+  assert.equal(by.db.status, "in-progress");
+  assert.equal(by.xsuaa.status, "missing");
+  assert.equal(by.credstore.status, "ready");
+  assert.equal(by.credstore.boundToManager, true);
+  assert.equal(by.db.boundToManager, null); // not a bindToManager entry
+  assert.deepEqual(by.db.plans, ["free", "standard"]);
+  assert.deepEqual(by.xsuaa.plans, ["application"]); // default when no plans listed
+});
+
+test("l3:provisionServices: creates only the missing ones, passes configs as files, honors a plan override, waits until ready", async () => {
+  const dir = makeV3Dir();
+  const state = { credstore: "create succeeded" }; // db + xsuaa missing
+  let polls = 0;
+  const { ctx, calls } = makeCtx(dir, (args) => {
+    if (args[0] === "create-service") {
+      state[args[3]] = "create in progress";
+      return { code: 0, stdout: "Create in progress" };
+    }
+    if (args[0] === "service") {
+      const st = state[args[1]];
+      if (!st) return { code: 1, stdout: "" };
+      // the second poll of an in-progress instance flips it to succeeded
+      if (st === "create in progress" && ++polls > 2) state[args[1]] = "create succeeded";
+      return { code: 0, stdout: `status:    ${state[args[1]]}\n` };
+    }
+    return null;
+  });
+  ctx.sleep = async () => {};
+  ctx.pollIntervalMs = 0;
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:provisionServices"]({ plans: { db: "standard" } });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.created.sort(), ["db", "xsuaa"]);
+  const creates = calls.filter((c) => c.args[0] === "create-service");
+  assert.equal(creates.length, 2);
+  const dbCreate = creates.find((c) => c.args[3] === "db");
+  assert.deepEqual(dbCreate.args, ["create-service", "postgresql-db", "standard", "db"]);
+  const xsCreate = creates.find((c) => c.args[3] === "xsuaa");
+  assert.equal(xsCreate.args[4], "-c");
+  assert.equal(path.basename(xsCreate.args[5]), "xs-security.json");
+  assert.ok(fs.existsSync(xsCreate.args[5]), "config file must come from the release dir");
+  // credstore existed → never re-created
+  assert.ok(!creates.some((c) => c.args[3] === "credstore"));
+});
+
+test("l3:provisionServices: rejects a plan that the catalog does not allow; inline config written to a file", async () => {
+  const dir = makeV3Dir();
+  const state = {}; // everything missing
+  const { ctx, calls } = makeCtx(dir, (args) => {
+    if (args[0] === "create-service") { state[args[3]] = "create succeeded"; return { code: 0, stdout: "" }; }
+    if (args[0] === "service") return state[args[1]] ? { code: 0, stdout: `status: ${state[args[1]]}` } : { code: 1, stdout: "" };
+    return null;
+  });
+  ctx.sleep = async () => {};
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:provisionServices"]({ plans: { db: "enterprise" } });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /plan 'enterprise' is not allowed for db/);
+  // the other two were still created
+  assert.deepEqual(r.created.sort(), ["credstore", "xsuaa"]);
+  const cs = calls.find((c) => c.args[0] === "create-service" && c.args[3] === "credstore");
+  assert.equal(cs.args[4], "-c");
+  assert.deepEqual(JSON.parse(fs.readFileSync(cs.args[5], "utf8")), { authentication: { type: "basic" } });
+});
+
+test("l3:provisionServices: a failed creation is reported, the deadline stops the wait", async () => {
+  const dir = makeV3Dir();
+  const state = { xsuaa: "create succeeded" };
+  const { ctx } = makeCtx(dir, (args) => {
+    if (args[0] === "create-service") {
+      state[args[3]] = args[3] === "db" ? "create failed" : "create in progress"; // credstore never finishes
+      return { code: 0, stdout: "" };
+    }
+    if (args[0] === "service") return state[args[1]] ? { code: 0, stdout: `status: ${state[args[1]]}` } : { code: 1, stdout: "" };
+    return null;
+  });
+  ctx.sleep = async () => {};
+  ctx.pollIntervalMs = 0;
+  ctx.provisionTimeoutMs = 0;
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:provisionServices"]({});
+  assert.equal(r.ok, false);
+  assert.ok(r.failed.some((f) => f.name === "db"));
+  assert.deepEqual(r.timedOut, ["credstore"]);
+});
+
+test("l3:bindManagerService + l3:restartSelf use the manager's own app name; refused for non-manager services", async () => {
+  const dir = makeV3Dir();
+  const { ctx, calls } = makeCtx(dir, () => null);
+  ctx.host.getDeployTargetForSelf = () => ({ appName: "figaf-manager" });
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:bindManagerService"]({ name: "credstore" });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.restartRequired, true);
+  assert.deepEqual(calls.find((c) => c.args[0] === "bind-service").args, ["bind-service", "figaf-manager", "credstore"]);
+  const bad = await handlers["l3:bindManagerService"]({ name: "db" });
+  assert.equal(bad.ok, false);
+  const rs = await handlers["l3:restartSelf"]();
+  assert.equal(rs.ok, true);
+  assert.deepEqual(calls.find((c) => c.args[0] === "restart").args, ["restart", "figaf-manager"]);
+});
+
+test("l3:bindManagerService outside CF (no self app name) is a clear error", async () => {
+  const { ctx } = makeCtx(makeV3Dir(), () => null);
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:bindManagerService"]({ name: "credstore" });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /not running in CF/);
+});
+
+test("l3:install refuses while a required service instance is missing (v3), v2 catalogs unaffected", async () => {
+  const dir = makeV3Dir();
+  const { ctx, calls } = makeCtx(dir, cfServiceResponder({ xsuaa: "create succeeded" })); // db missing
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:install"]({ appId: "arch" });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /required service instance\(s\) missing: db/);
+  assert.ok(!calls.some((c) => c.args[0] === "push"), "nothing must be deployed");
 });
 
 test("l3:figafSystems: finds app+router pairs running figaf/app images, returns router URLs", async () => {

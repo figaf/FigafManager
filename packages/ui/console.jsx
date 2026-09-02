@@ -163,12 +163,13 @@ function ConsoleFrame({ app }) {
     const api = window.figaf;
     let cancelled = false;
     (async () => {
-      const [l3, figaf, stored] = await Promise.all([
+      const [l3, figaf, stored, services] = await Promise.all([
         api.l3.status().catch((e) => ({ ok: false, error: e.message })),
         api.connections.figafStatus().catch((e) => ({ ok: false, error: e.message })),
         api.login.storedUserStatus().catch(() => null),
+        (api.l3.services ? api.l3.services() : Promise.resolve(null)).catch(() => null),
       ]);
-      if (!cancelled) setChecklist({ l3, figaf, stored });
+      if (!cancelled) setChecklist({ l3, figaf, stored, services });
     })();
     return () => { cancelled = true; };
   }, [signedIn, checklist]);
@@ -177,6 +178,9 @@ function ConsoleFrame({ app }) {
   // keep the checklist's platform item in step without re-fetching the rest.
   const onL3Status = React.useCallback((s) => {
     setChecklist((c) => (c ? { ...c, l3: s } : c));
+  }, []);
+  const onL3Services = React.useCallback((s) => {
+    setChecklist((c) => (c ? { ...c, services: s } : c));
   }, []);
 
   const startFlow = React.useCallback((choiceId) => {
@@ -223,6 +227,7 @@ function ConsoleFrame({ app }) {
           setCtx={setCtx}
           onConnections={() => navigate("connections")}
           onStatus={onL3Status}
+          onServices={onL3Services}
         />
       </>
     );
@@ -314,7 +319,17 @@ function buildChecklistItems(data, { navigate, startFlow }) {
   const figafDone = !!(data.figaf && data.figaf.configured);
   const platform = data.l3 && data.l3.ok ? data.l3.platform : null;
   const platformDone = !!(platform && platform.status === "running");
+  // Catalog v3 base services; a v2 release (no services) counts as done.
+  const svcList = data.services && data.services.ok ? data.services.services : null;
+  const servicesDone = !svcList || svcList.length === 0 || svcList.every((s) => s.status === "ready");
   return [
+    {
+      id: "services",
+      done: servicesDone,
+      label: "Create the base services (database, app roles, Credential Store) — the card on this page does it.",
+      cta: null,
+      action: null,
+    },
     {
       id: "sso",
       done: ssoDone,

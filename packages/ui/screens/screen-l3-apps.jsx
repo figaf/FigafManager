@@ -206,9 +206,128 @@ function L3AppRow({ app, status, busy, busyLabel, figafSystems, onAction }) {
   );
 }
 
+// ─── Base services (catalog v3) ──────────────────────────────────────────────
+// The service INSTANCES the platform needs, created by the manager when
+// missing. PostgreSQL takes minutes: the terminal drawer shows the waiting.
+const L3_SERVICE_STATUS_META = {
+  "ready":       { label: "Ready",         cls: "green" },
+  "missing":     { label: "Missing",       cls: "gray" },
+  "in-progress": { label: "Creating…",     cls: "blue" },
+  "failed":      { label: "Failed",        cls: "gray" },
+  "unknown":     { label: "Unknown state", cls: "gray" },
+};
+
+function BaseServicesCard({ services, busy, onProvision, onBind, onRestart, onRefresh }) {
+  const api = typeof window !== "undefined" ? window.figaf : null;
+  const [plans, setPlans] = React.useState({});
+  const [bindingLive, setBindingLive] = React.useState(null); // login:storedUserStatus.bindingPresent
+  const [confirmRestart, setConfirmRestart] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const st = api && api.login && api.login.storedUserStatus ? await api.login.storedUserStatus() : null;
+        if (!cancelled) setBindingLive(st ? !!st.bindingPresent : null);
+      } catch { if (!cancelled) setBindingLive(null); }
+    })();
+    return () => { cancelled = true; };
+  }, [services]);
+
+  if (services === null) {
+    return (
+      <div style={{ border: "1px dashed var(--line)", borderRadius: 10, padding: 12, marginBottom: 14, color: "var(--ink-3)" }}>
+        Checking base services…
+      </div>
+    );
+  }
+  if (!services || services.length === 0) return null; // v2 release: nothing declared
+
+  const missing = services.filter((s) => s.status === "missing");
+  const allReady = services.every((s) => s.status === "ready");
+  const credstore = services.find((s) => s.bindToManager);
+
+  return (
+    <div style={{ border: "1px dashed var(--line)", borderRadius: 10, padding: 12, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 700 }}>Base services</div>
+        {allReady ? <span className="pill green">all ready</span> : <span className="pill gray">{missing.length} missing</span>}
+        <div className="spacer" style={{ flex: 1 }} />
+        <button className="btn" onClick={onRefresh} disabled={busy}>Refresh</button>
+        <button
+          className="btn btn-primary"
+          onClick={() => onProvision(plans)}
+          disabled={busy || missing.length === 0}
+          title={missing.length ? `cf create-service for: ${missing.map((s) => s.name).join(", ")}` : "nothing to create"}
+        >
+          {busy === "provision" ? "Creating… (PostgreSQL takes minutes)" : `Create missing services${missing.length ? ` (${missing.length})` : ""}`}
+        </button>
+      </div>
+      <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 4 }}>
+        Service instances this release needs in the space. Created by the manager with plain
+        <span className="kbd">cf create-service</span>; plans that cost money are your choice.
+      </div>
+      {services.map((s) => {
+        const meta = L3_SERVICE_STATUS_META[s.status] || L3_SERVICE_STATUS_META.unknown;
+        return (
+          <div key={s.name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderTop: "1px solid var(--line)", marginTop: 7, flexWrap: "wrap" }}>
+            <span className="kbd">{s.name}</span>
+            <span className={`pill ${meta.cls}`}>{meta.label}</span>
+            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+              {s.offering} · {s.status === "missing" && s.plans.length > 1 ? "plan:" : `plan ${s.plan}`}
+            </span>
+            {s.status === "missing" && s.plans.length > 1 && (
+              <select
+                className="select"
+                value={plans[s.name] || s.plan}
+                disabled={!!busy}
+                onChange={(e) => setPlans((p) => ({ ...p, [s.name]: e.target.value }))}
+                style={{ width: "auto" }}
+              >
+                {s.plans.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            )}
+            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{s.purpose}</span>
+            <div className="spacer" style={{ flex: 1 }} />
+            {s.bindToManager && s.status === "ready" && s.boundToManager === false && (
+              <button className="btn" onClick={() => onBind(s.name)} disabled={!!busy}>
+                {busy === "bind" ? "Binding…" : "Bind to manager"}
+              </button>
+            )}
+            {s.bindToManager && s.status === "ready" && s.boundToManager === true && bindingLive === false && (
+              <span style={{ fontSize: 12, color: "var(--ink-3)" }}>bound · restart needed</span>
+            )}
+            {s.bindToManager && s.status === "ready" && s.boundToManager === true && bindingLive === true && (
+              <span className="pill green">bound to manager</span>
+            )}
+          </div>
+        );
+      })}
+      {credstore && credstore.boundToManager === true && bindingLive === false && (
+        <div style={{ marginTop: 10, padding: 10, border: "1px solid var(--line)", borderRadius: 8, fontSize: 13 }}>
+          <strong>Restart needed.</strong> The Credential Store is bound to the manager, but a binding only
+          becomes active after a restart. The restart ends this session: reload the page in about 30
+          seconds — in token mode you must claim a new setup token from the logs first.
+          {!confirmRestart ? (
+            <div style={{ marginTop: 8 }}>
+              <button className="btn" onClick={() => setConfirmRestart(true)} disabled={!!busy}>Restart manager…</button>
+            </div>
+          ) : (
+            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+              <button className="btn btn-primary" onClick={onRestart} disabled={!!busy}>Yes, restart now</button>
+              <button className="btn" onClick={() => setConfirmRestart(false)} disabled={!!busy}>Cancel</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // onStatus (optional): receives every fresh l3:status result, so a host frame
 // (the console's setup checklist) can follow install/remove without polling.
-function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus }) {
+// onServices (optional): the same for l3:services results.
+function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus, onServices }) {
   const [catalog, setCatalog] = React.useState(null);   // { releaseVersion, platform, apps } | { error }
   const [statuses, setStatuses] = React.useState({});   // appId → status row
   const [platformStatus, setPlatformStatus] = React.useState(null); // catalog-v2 platform row
@@ -219,8 +338,39 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus }) {
   // Discovered Figaf Tool deployments for "figaf-system" config fields.
   // null = not loaded yet; [] = looked and found none (manual entry stays).
   const [figafSystems, setFigafSystems] = React.useState(null);
+  // Catalog v3 base services: null = not loaded, [] = release declares none.
+  const [services, setServices] = React.useState(null);
+  const [servicesBusy, setServicesBusy] = React.useState(null); // "provision" | "bind" | "restart" | null
 
   const api = typeof window !== "undefined" ? window.figaf : null;
+
+  const refreshServices = React.useCallback(async () => {
+    if (!api || !api.l3 || !api.l3.services) { setServices([]); return; }
+    try {
+      const s = await api.l3.services();
+      const list = s && s.ok ? s.services : [];
+      setServices(list);
+      if (onServices) onServices(s);
+    } catch {
+      setServices([]);
+    }
+  }, [api, onServices]);
+
+  async function serviceAction(kind, fn) {
+    if (servicesBusy) return;
+    setServicesBusy(kind);
+    setLastError(null);
+    try {
+      const r = await fn();
+      if (r && !r.ok && r.error) setLastError(`Base services: ${r.error}`);
+      return r;
+    } catch (e) {
+      setLastError(`Base services: ${(e && e.message) || "action failed"}`);
+    } finally {
+      setServicesBusy(null);
+      if (kind !== "restart") refreshServices();
+    }
+  }
 
   const refresh = React.useCallback(async () => {
     if (!api || !api.l3) return;
@@ -251,6 +401,7 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus }) {
       setCatalog(c && c.ok ? c : { error: (c && c.error) || "catalog load failed" });
       if (c && c.ok) {
         refresh();
+        refreshServices();
         // Discover Figaf Tool deployments only when some app's form wants one.
         const wantsFigaf = c.apps.some((a) => (a.configForm || []).some((f) => f.type === "figaf-system"));
         if (wantsFigaf && api.l3.figafSystems) {
@@ -260,7 +411,7 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [api, refresh]);
+  }, [api, refresh, refreshServices]);
 
   async function doAction(app, action, extra) {
     if (!api || !api.l3 || busyApp) return { ok: false, error: "busy" };
@@ -310,6 +461,17 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus }) {
           <div style={{ color: "var(--ink-3)" }}>
             <strong>No app catalog available.</strong> {catalog.error}
           </div>
+        )}
+
+        {catalog && !catalog.error && (
+          <BaseServicesCard
+            services={services}
+            busy={servicesBusy}
+            onRefresh={refreshServices}
+            onProvision={(plans) => serviceAction("provision", () => api.l3.provisionServices({ plans }))}
+            onBind={(name) => serviceAction("bind", () => api.l3.bindManagerService({ name }))}
+            onRestart={() => serviceAction("restart", () => api.l3.restartSelf())}
+          />
         )}
 
         {catalog && catalog.platform && (

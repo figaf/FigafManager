@@ -25,6 +25,18 @@ test("signed-in reload lands on the L3 dashboard (#/apps), no wizard", async ({ 
   await expect(page.locator(".rail-foot")).toContainText("/");
 });
 
+test("base services card (catalog v3) reports the real instances of the space", async ({ page }) => {
+  await page.goto("/#/apps");
+  const card = page.getByText("Base services", { exact: true }).locator("..").locator("..");
+  await expect(card).toBeVisible();
+  // The dev space has all three instances: nothing to create.
+  await expect(card).toContainText("figaf-l3l4-db");
+  await expect(card).toContainText("figaf-l3l4-xsuaa");
+  await expect(card).toContainText("figaf-l3l4-credstore");
+  await expect(card.getByText("all ready")).toBeVisible();
+  await expect(card.getByRole("button", { name: /Create missing services/ })).toBeDisabled();
+});
+
 test("first-run checklist banner lists the open setup steps", async ({ page }) => {
   // On this dev setup SSO/credstore are absent, so the banner must show.
   await page.goto("/#/apps");

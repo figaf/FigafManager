@@ -72,7 +72,33 @@ function loadCatalog(dir) {
       }
     }
   }
+  // Catalog v3: service INSTANCES the manager creates when missing.
+  if (parsed.services != null) {
+    if (!Array.isArray(parsed.services)) return { ok: false, error: "catalog 'services' must be an array" };
+    for (const s of parsed.services) {
+      if (!s.name || !s.offering || !s.plan) {
+        return { ok: false, error: `catalog service '${s.name || "?"}' needs name, offering and plan` };
+      }
+      if (s.plans != null && (!Array.isArray(s.plans) || !s.plans.includes(s.plan))) {
+        return { ok: false, error: `catalog service '${s.name}': 'plans' must be an array containing the default plan` };
+      }
+    }
+  }
   return { ok: true, catalog: parsed };
+}
+
+/**
+ * Map `cf service <name>` output to one status word.
+ * exitCode != 0 → "missing"; otherwise from the `status:` line.
+ */
+function serviceStatusFromCf(exitCode, stdout) {
+  if (exitCode !== 0) return "missing";
+  const m = /^\s*status:\s*(.+)$/im.exec(stdout || "");
+  const op = m ? m[1].trim().toLowerCase() : "";
+  if (/succeeded/.test(op)) return "ready";
+  if (/in progress/.test(op)) return "in-progress";
+  if (/failed/.test(op)) return "failed";
+  return "unknown";
 }
 
 /**
@@ -155,6 +181,16 @@ function validateConfigEnv(app, env) {
  */
 function createL3Handlers(ctx) {
   const { host, run, log, send, resolveCf, extractZip, httpsText } = ctx;
+  // Polling knobs (tests inject a no-op sleep and a short deadline).
+  const sleep = ctx.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const POLL_MS = ctx.pollIntervalMs != null ? ctx.pollIntervalMs : 10_000;
+  const PROVISION_TIMEOUT_MS = ctx.provisionTimeoutMs != null ? ctx.provisionTimeoutMs : 15 * 60_000;
+
+  /** The manager's own CF app name (cloud only; null on desktop / outside CF). */
+  function selfAppName() {
+    const t = host.getDeployTargetForSelf && host.getDeployTargetForSelf();
+    return t && t.appName ? t.appName : null;
+  }
 
   function artifactsDir() {
     if (typeof host.resolveL3ArtifactsDir !== "function") return null;
@@ -304,9 +340,37 @@ function createL3Handlers(ctx) {
     return { ok: true };
   }
 
+  /**
+   * Catalog v3 guard: every REQUIRED service instance (any name in a cfApp's
+   * `services`) must exist before a deploy starts — a clear early error
+   * instead of `bind-service` failing halfway through.
+   */
+  async function missingRequiredServices(catalog, app) {
+    const platform = platformPseudoApp(catalog);
+    const names = new Set();
+    for (const c of [...(platform ? platform.cfApps : []), ...app.cfApps]) {
+      for (const s of c.services || []) names.add(s);
+    }
+    const missing = [];
+    for (const name of names) {
+      const r = await run(resolveCf(), ["service", name], { source: "cf", quiet: true });
+      if (r.code !== 0) missing.push(name);
+    }
+    return missing;
+  }
+
   async function deployAll(appId) {
     const req = requireApp(appId);
     if (req.error) return { ok: false, error: req.error };
+    if (Array.isArray(req.catalog.services)) {
+      const missing = await missingRequiredServices(req.catalog, req.app);
+      if (missing.length) {
+        return {
+          ok: false,
+          error: `required service instance(s) missing: ${missing.join(", ")} — create them first (Base services card)`,
+        };
+      }
+    }
     // Platform base FIRST (catalog v2): the shared connector is deployed /
     // updated before any frontend, so the only mixed state that ever exists
     // is "new backend + old frontend" — the state the backward-compatibility
@@ -418,6 +482,134 @@ function createL3Handlers(ctx) {
       }
       const platformRow = platform ? apps.shift() : null;
       return { ok: true, platform: platformRow, apps };
+    },
+
+    /**
+     * Catalog v3: the service instances the platform needs, with their live
+     * state. `boundToManager` is filled for bindToManager entries (a binding
+     * exists in CF; it is effective in THIS process only after a restart —
+     * the renderer combines it with login:storedUserStatus.bindingPresent).
+     */
+    async "l3:services"() {
+      const dir = artifactsDir();
+      if (!dir) return { ok: false, error: "No L3 artifact store on this host" };
+      const c = loadCatalog(dir);
+      if (!c.ok) return c;
+      const self = selfAppName();
+      const services = [];
+      for (const s of c.catalog.services || []) {
+        const r = await run(resolveCf(), ["service", s.name], { source: "cf", quiet: true });
+        const status = serviceStatusFromCf(r.code, r.stdout);
+        let boundToManager = null;
+        if (s.bindToManager && self && status !== "missing") {
+          const b = await run(resolveCf(), ["curl", `/v3/service_credential_bindings?type=app&service_instance_names=${s.name}&app_names=${self}`], { source: "cf", quiet: true });
+          if (b.code === 0) { try { boundToManager = (JSON.parse(b.stdout).resources || []).length > 0; } catch {} }
+        }
+        services.push({
+          name: s.name, offering: s.offering, plan: s.plan, plans: s.plans || [s.plan],
+          purpose: s.purpose || "", bindToManager: !!s.bindToManager,
+          exists: status !== "missing", status, boundToManager,
+        });
+      }
+      return { ok: true, selfApp: self, services };
+    },
+
+    /**
+     * Create every MISSING catalog service, then wait until all are ready.
+     * plans: optional { <name>: <plan> } overrides, validated against the
+     * catalog's allowed plans. Progress lines go to the terminal drawer.
+     */
+    async "l3:provisionServices"({ plans } = {}) {
+      const dir = artifactsDir();
+      if (!dir) return { ok: false, error: "No L3 artifact store on this host" };
+      const c = loadCatalog(dir);
+      if (!c.ok) return c;
+      const declared = c.catalog.services || [];
+      if (declared.length === 0) return { ok: true, created: [], note: "this release declares no services" };
+
+      const created = [];
+      const failed = [];
+      for (const s of declared) {
+        const probe = await run(resolveCf(), ["service", s.name], { source: "cf", quiet: true });
+        if (probe.code === 0) continue; // exists (any state) — never re-create
+        const allowed = s.plans || [s.plan];
+        const plan = (plans && plans[s.name]) || s.plan;
+        if (!allowed.includes(plan)) {
+          failed.push({ name: s.name, error: `plan '${plan}' is not allowed for ${s.name} (allowed: ${allowed.join(", ")})` });
+          continue;
+        }
+        const args = ["create-service", s.offering, plan, s.name];
+        if (s.configFile) {
+          const file = path.join(dir, s.configFile);
+          if (!fs.existsSync(file)) { failed.push({ name: s.name, error: `config file ${s.configFile} missing from the release` }); continue; }
+          args.push("-c", file);
+        } else if (s.config && typeof s.config === "object") {
+          // cf -c accepts a file path; never pass JSON on the command line.
+          const cfgDir = path.join(host.getUserDataDir(), "l3-services");
+          fs.mkdirSync(cfgDir, { recursive: true });
+          const file = path.join(cfgDir, `${s.name}.json`);
+          fs.writeFileSync(file, JSON.stringify(s.config));
+          args.push("-c", file);
+        }
+        log("l3", "line", `Creating service instance ${s.name} (${s.offering} / ${plan}) …`);
+        const r = await run(resolveCf(), args, { source: "cf" });
+        if (r.code !== 0) { failed.push({ name: s.name, error: `cf create-service ${s.name} failed` }); continue; }
+        created.push(s.name);
+      }
+
+      // Wait for asynchronous creations (PostgreSQL takes minutes).
+      const timedOut = [];
+      const deadline = Date.now() + PROVISION_TIMEOUT_MS;
+      let pending = declared.filter((s) => !failed.some((f) => f.name === s.name)).map((s) => s.name);
+      while (pending.length) {
+        const still = [];
+        for (const name of pending) {
+          const r = await run(resolveCf(), ["service", name], { source: "cf", quiet: true });
+          const status = serviceStatusFromCf(r.code, r.stdout);
+          if (status === "ready") continue;
+          if (status === "failed") { failed.push({ name, error: "service operation failed (see cf service)" }); continue; }
+          still.push(name);
+        }
+        pending = still;
+        if (!pending.length) break;
+        if (Date.now() > deadline) { timedOut.push(...pending); break; }
+        log("l3", "dim", `waiting for: ${pending.join(", ")} …`);
+        await sleep(POLL_MS);
+      }
+      const ok = failed.length === 0 && timedOut.length === 0;
+      return {
+        ok, created, failed, timedOut,
+        error: ok ? undefined :
+          [failed.map((f) => `${f.name}: ${f.error}`).join("; "), timedOut.length ? `still not ready: ${timedOut.join(", ")}` : ""]
+            .filter(Boolean).join(" | "),
+      };
+    },
+
+    /** Bind a bindToManager catalog service to the manager app itself. */
+    async "l3:bindManagerService"({ name } = {}) {
+      const dir = artifactsDir();
+      if (!dir) return { ok: false, error: "No L3 artifact store on this host" };
+      const c = loadCatalog(dir);
+      if (!c.ok) return c;
+      const s = (c.catalog.services || []).find((x) => x.name === name);
+      if (!s || !s.bindToManager) return { ok: false, error: `${name || "?"} is not a manager-bound service in this release` };
+      const self = selfAppName();
+      if (!self) return { ok: false, error: "cannot determine the manager's own app name (not running in CF?)" };
+      const r = await run(resolveCf(), ["bind-service", self, name], { source: "cf" });
+      if (r.code !== 0) return { ok: false, error: `cf bind-service ${self} ${name} failed` };
+      return { ok: true, restartRequired: true, note: `${name} is bound to ${self}; the binding becomes active after a restart of the manager` };
+    },
+
+    /**
+     * Restart the manager itself so new bindings take effect. Fire-and-forget:
+     * this process is stopped by the restart, so the command never "returns".
+     */
+    async "l3:restartSelf"() {
+      const self = selfAppName();
+      if (!self) return { ok: false, error: "cannot determine the manager's own app name (not running in CF?)" };
+      log("l3", "warn", `Restarting ${self} — this session ends; reload the page in ~30 s (token mode: claim a new token from the logs).`);
+      run(resolveCf(), ["restart", self], { source: "cf" }).catch(() => {});
+      return { ok: true, note: "restart started" };
     },
 
     async "l3:install"({ appId } = {}) {
@@ -568,5 +760,6 @@ module.exports = {
   buildDestinationsEnv,
   buildPushArgs,
   validateConfigEnv,
+  serviceStatusFromCf,
   createL3Handlers,
 };

@@ -228,6 +228,11 @@
       catalog:   function ()  { return rpc("l3:catalog"); },
       status:    function ()  { return rpc("l3:status"); },
       figafSystems: function () { return rpc("l3:figafSystems"); },
+      // Catalog v3: base service instances created by the manager.
+      services:           function ()  { return rpc("l3:services"); },
+      provisionServices:  function (a) { return rpc("l3:provisionServices", a || {}); },
+      bindManagerService: function (a) { return rpc("l3:bindManagerService", a || {}); },
+      restartSelf:        function ()  { return rpc("l3:restartSelf"); },
       install:   function (a) { return rpc("l3:install", a || {}); },
       update:    function (a) { return rpc("l3:update", a || {}); },
       disable:   function (a) { return rpc("l3:disable", a || {}); },
