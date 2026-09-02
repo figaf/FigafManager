@@ -23,7 +23,12 @@ applications:
     
       # Optional: pin deployment template source (defaults to GitHub btp-users branch tip)
       # FIGAF_DEPLOYMENT_ZIP_URL: https://your-mirror.example.com/btp-users.zip
-      FIGAF_MANAGER_MAINTENANCE: 1
+      # Maintenance mode is OFF on this branch: the L3 App Manager is a
+      # persistent console that is redeployed often, and every push re-applies
+      # the manifest env (a `cf unset-env` does not survive the next push).
+      # Set FIGAF_MANAGER_MAINTENANCE: 1 explicitly when a maintenance window
+      # is wanted.
+      # FIGAF_MANAGER_MAINTENANCE: 1
       # v2 idle-self-destruct (V4 in auth-gate-implementation-plan.md §2.10).
       # When set to a positive integer, the wizard tears ITSELF down after
       # that many hours without authenticated traffic. Bounds the exposure
