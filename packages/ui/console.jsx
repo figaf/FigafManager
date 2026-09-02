@@ -173,6 +173,12 @@ function ConsoleFrame({ app }) {
     return () => { cancelled = true; };
   }, [signedIn, checklist]);
 
+  // The dashboard reports every fresh l3:status (after install/remove/refresh);
+  // keep the checklist's platform item in step without re-fetching the rest.
+  const onL3Status = React.useCallback((s) => {
+    setChecklist((c) => (c ? { ...c, l3: s } : c));
+  }, []);
+
   const startFlow = React.useCallback((choiceId) => {
     setCtx((c) => ({ ...c, choice: choiceId }));
     setStepRaw(3); // base steps 0-2 are not rendered in the console; 3 = first tail step
@@ -212,7 +218,12 @@ function ConsoleFrame({ app }) {
             <SetupChecklist items={items} onDismiss={() => setChecklistHidden(true)} />
           </div>
         )}
-        <ScreenL3Apps ctx={ctx} setCtx={setCtx} onConnections={() => navigate("connections")} />
+        <ScreenL3Apps
+          ctx={ctx}
+          setCtx={setCtx}
+          onConnections={() => navigate("connections")}
+          onStatus={onL3Status}
+        />
       </>
     );
   } else if (route === "connections") {

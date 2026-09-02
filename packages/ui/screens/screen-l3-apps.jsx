@@ -206,7 +206,9 @@ function L3AppRow({ app, status, busy, busyLabel, figafSystems, onAction }) {
   );
 }
 
-function ScreenL3Apps({ ctx, setCtx, onBack, onConnections }) {
+// onStatus (optional): receives every fresh l3:status result, so a host frame
+// (the console's setup checklist) can follow install/remove without polling.
+function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus }) {
   const [catalog, setCatalog] = React.useState(null);   // { releaseVersion, platform, apps } | { error }
   const [statuses, setStatuses] = React.useState({});   // appId → status row
   const [platformStatus, setPlatformStatus] = React.useState(null); // catalog-v2 platform row
@@ -231,13 +233,14 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections }) {
         setStatuses(map);
         setPlatformStatus(s.platform || null);
         setLastError(null);
+        if (onStatus) onStatus(s);
       } else if (s && s.error) {
         setLastError(s.error);
       }
     } finally {
       setRefreshing(false);
     }
-  }, [api]);
+  }, [api, onStatus]);
 
   React.useEffect(() => {
     let cancelled = false;
