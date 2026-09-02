@@ -1,4 +1,4 @@
-/* global React,
+/* global React, Ico,
    WinFrame, FigafMark, TerminalDrawer, SelfUpdateBanner, UpdatePreflightModal,
    ScreenLogin, ScreenL3Apps, ScreenConnections,
    ScreenSession, ScreenAbout, ScreenFigafToolHub */
@@ -93,25 +93,49 @@ function ConsoleRail({ activeRoute, onNavigate, flowActive, aboutBadge, ctx, ver
   );
 }
 
-// First-run checklist banner on the landing page. Items come from the same
-// handlers the pages use; "done" items disappear into a green count.
-function SetupChecklist({ items, onDismiss }) {
-  const open = items.filter((i) => !i.done);
-  if (open.length === 0) return null;
+// Setup checklist on the landing page: the install steps in order, each with
+// what it gives (why) and what it needs (when). Steps come from
+// window.figafSetupSteps (setup-checklist.js); done steps stay visible but
+// compact; the first actionable step is highlighted. Hidden once all are done.
+function SetupChecklist({ setup, onDismiss }) {
+  if (!setup || !setup.steps || setup.steps.length === 0) return null;
+  if (setup.done >= setup.total) return null;
   return (
     <div className="card setup-checklist">
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ fontWeight: 700 }}>Finish setting up this installation</div>
-        <span className="pill blue">{items.length - open.length}/{items.length} done</span>
+      <div className="setup-head">
+        <div style={{ fontWeight: 700 }}>Set up this installation</div>
+        <span className="pill blue">{setup.done} of {setup.total} done</span>
+        <span className="setup-hint">Follow the order. Each step says what it gives and what it needs.</span>
         <div className="spacer" style={{ flex: 1 }} />
         <button className="btn-link" onClick={onDismiss}>Hide</button>
       </div>
-      {open.map((i) => (
-        <div key={i.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderTop: "1px solid var(--line)", marginTop: 7 }}>
-          <span className="pill gray">to do</span>
-          <div style={{ fontSize: 13 }}>{i.label}</div>
-          <div className="spacer" style={{ flex: 1 }} />
-          {i.action && <button className="btn" onClick={i.action}>{i.cta}</button>}
+      {setup.steps.map((s) => (
+        <div
+          key={s.id}
+          data-step={s.id}
+          className={`setup-step ${s.done ? "is-done" : s.current ? "is-current" : s.blocked ? "is-blocked" : ""}`}
+        >
+          <div className="setup-num">{s.done ? <Ico.Check /> : s.n}</div>
+          <div className="setup-body">
+            <div className="setup-title">
+              <span>{s.n}. {s.title}</span>
+              {s.done && <span className="pill green">done</span>}
+              {!s.done && s.current && <span className="pill blue">current step</span>}
+              {!s.done && !s.current && s.blocked && <span className="pill gray">{s.blocked}</span>}
+            </div>
+            {!s.done && <div className="setup-why">{s.why}</div>}
+            {!s.done && s.when && <div className="setup-when">{s.when}</div>}
+          </div>
+          {!s.done && s.cta && s.action && (
+            <button
+              className="btn"
+              onClick={s.action}
+              disabled={!!s.blocked}
+              title={s.blocked ? `Available ${s.blocked}` : undefined}
+            >
+              {s.cta}
+            </button>
+          )}
         </div>
       ))}
     </div>
@@ -214,12 +238,12 @@ function ConsoleFrame({ app }) {
       <ScreenLogin ctx={ctx} setCtx={setCtx} onNext={() => {}} appendLog={appendLog} gate />
     );
   } else if (route === "apps") {
-    const items = checklist ? buildChecklistItems(checklist, { navigate, startFlow }) : [];
+    const setup = checklist ? buildSetupChecklist(checklist, { navigate, startFlow }) : null;
     page = (
       <>
         {!checklistHidden && checklist && (
           <div style={{ padding: "16px 28px 0" }}>
-            <SetupChecklist items={items} onDismiss={() => setChecklistHidden(true)} />
+            <SetupChecklist setup={setup} onDismiss={() => setChecklistHidden(true)} />
           </div>
         )}
         <ScreenL3Apps
@@ -313,52 +337,19 @@ function ConsoleFrame({ app }) {
 }
 
 // The four one-time setup marks for a fresh installation.
-function buildChecklistItems(data, { navigate, startFlow }) {
+// Steps from the shared model + the console's navigation actions.
+function buildSetupChecklist(data, { navigate, startFlow }) {
+  const build = typeof window !== "undefined" ? window.figafSetupSteps : null;
+  if (typeof build !== "function") return null;
   const ssoDone = typeof window !== "undefined" && window.figafXsuaaMode === true;
-  const storedDone = !!(data.stored && data.stored.available);
-  const figafDone = !!(data.figaf && data.figaf.configured);
-  const platform = data.l3 && data.l3.ok ? data.l3.platform : null;
-  const platformDone = !!(platform && platform.status === "running");
-  // Catalog v3 base services; a v2 release (no services) counts as done.
-  const svcList = data.services && data.services.ok ? data.services.services : null;
-  const servicesDone = !svcList || svcList.length === 0 || svcList.every((s) => s.status === "ready");
-  return [
-    {
-      id: "services",
-      done: servicesDone,
-      label: "Create the base services (database, app roles, Credential Store) — the card on this page does it.",
-      cta: null,
-      action: null,
-    },
-    {
-      id: "sso",
-      done: ssoDone,
-      label: "Enable persistent SSO — access should survive redeploys (IAS sign-in instead of the setup token).",
-      cta: "Start upgrade",
-      action: () => startFlow("xsuaa-upgrade"),
-    },
-    {
-      id: "mgmt-user",
-      done: storedDone,
-      label: "Store a management user, so the manager signs in without a passcode.",
-      cta: "Session & access",
-      action: () => navigate("session"),
-    },
-    {
-      id: "platform",
-      done: platformDone,
-      label: "Deploy the platform base (shared connector) — installing the first app does this automatically.",
-      cta: null,
-      action: null,
-    },
-    {
-      id: "figaf-connection",
-      done: figafDone,
-      label: "Connect the Figaf tool, so apps can list its systems.",
-      cta: "Connections",
-      action: () => navigate("connections"),
-    },
-  ];
+  const result = build(data, { ssoDone });
+  const actions = {
+    "mgmt-user": () => navigate("session"),
+    "figaf-connection": () => navigate("connections"),
+    "sso": () => startFlow("xsuaa-upgrade"),
+  };
+  for (const s of result.steps) s.action = actions[s.id] || null;
+  return result;
 }
 
 Object.assign(window, { ConsoleFrame });

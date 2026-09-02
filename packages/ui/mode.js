@@ -50,6 +50,11 @@
       // window.figafConsoleUI from FIGAF_CONSOLE_UI (default on; set
       // FIGAF_CONSOLE_UI=0 in the manifest to restore the classic wizard).
       consoleUI: hosted && window.figafConsoleUI !== false,
+      // Console sign-in gate, first sign-in: Cloud Foundry is the primary
+      // action (the L3 install needs only cf); the BTP login is optional
+      // (persistent-SSO role assignment, Figaf Tool deployments). Same
+      // condition as consoleUI - the wizard frame keeps BTP first.
+      cfFirstLogin: hosted && window.figafConsoleUI !== false,
     },
   };
 

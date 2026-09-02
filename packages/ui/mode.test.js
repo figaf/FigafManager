@@ -110,3 +110,18 @@ test("features.cfOnlyLogin: OFF in desktop mode (figaf-local)", () => {
   const w = loadFresh();
   assert.equal(w.figafModeFlags.features.cfOnlyLogin, false);
 });
+
+test("features.cfFirstLogin: ON in the hosted console (figaf-manager)", () => {
+  const w = loadFresh({ figafMode: "hosted" });
+  assert.equal(w.figafModeFlags.features.cfFirstLogin, true);
+});
+
+test("features.cfFirstLogin: OFF when the classic wizard frame is forced (FIGAF_CONSOLE_UI=0)", () => {
+  const w = loadFresh({ figafMode: "hosted", figafConsoleUI: false });
+  assert.equal(w.figafModeFlags.features.cfFirstLogin, false);
+});
+
+test("features.cfFirstLogin: OFF in desktop mode (figaf-local)", () => {
+  const w = loadFresh();
+  assert.equal(w.figafModeFlags.features.cfFirstLogin, false);
+});

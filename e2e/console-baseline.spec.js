@@ -37,12 +37,30 @@ test("base services card (catalog v3) reports the real instances of the space", 
   await expect(card.getByRole("button", { name: /Create missing services/ })).toBeDisabled();
 });
 
-test("first-run checklist banner lists the open setup steps", async ({ page }) => {
-  // On this dev setup SSO/credstore are absent, so the banner must show.
+test("setup checklist shows the numbered install steps with why-lines, SSO last", async ({ page }) => {
+  // Locally the manager has no credstore binding and no SSO, so the banner must show.
   await page.goto("/#/apps");
   const banner = page.locator(".setup-checklist");
-  await expect(banner).toContainText("Finish setting up this installation");
-  await expect(banner).toContainText("persistent SSO");
+  await expect(banner).toContainText("Set up this installation");
+  await expect(banner.locator(".pill.blue").first()).toHaveText(/^\d of 5 done$/);
+  // Catalog v3: five steps, in the install order, all visible (done ones compact).
+  const steps = banner.locator(".setup-step");
+  await expect(steps).toHaveCount(5);
+  await expect(steps.nth(0)).toContainText("1. Base services");
+  await expect(steps.nth(1)).toContainText("2. Management user");
+  await expect(steps.nth(2)).toContainText("3. Platform base");
+  await expect(steps.nth(3)).toContainText("4. Figaf tool connection");
+  await expect(steps.nth(4)).toContainText("5. Persistent SSO");
+  // Exactly one current step; every open step explains itself.
+  await expect(banner.locator(".setup-step.is-current")).toHaveCount(1);
+  const openSteps = banner.locator(".setup-step:not(.is-done)");
+  expect(await openSteps.count()).toBeGreaterThan(0);
+  expect(await banner.locator(".setup-why").count()).toBe(await openSteps.count());
+  // SSO explains its side effect and its prerequisite; its button is gated on the stored user.
+  const sso = banner.locator('.setup-step[data-step="sso"]');
+  await expect(sso).toContainText("30-90 s");
+  await expect(sso).toContainText("after step 2");
+  await expect(sso.getByRole("button", { name: "Start upgrade" })).toBeVisible();
   // Hide is per page load.
   await banner.getByRole("button", { name: "Hide" }).click();
   await expect(banner).toHaveCount(0);
@@ -112,8 +130,17 @@ test("auth gate shows the sign-in card without wizard wording", async ({ browser
   await context.clearCookies({ name: "figaf_session" });
   const page = await context.newPage();
   await page.goto("/#/apps");
-  await expect(page.locator("h1.pane-title")).toHaveText("Sign in to SAP BTP and Cloud Foundry");
+  // Console gate, first sign-in: Cloud Foundry first and required, BTP optional.
+  await expect(page.locator("h1.pane-title")).toHaveText("Sign in to Cloud Foundry");
   await expect(page.getByText("Step 2", { exact: false })).toHaveCount(0);
+  const cards = page.locator(".login-cards > .card");
+  await expect(cards).toHaveCount(2);
+  await expect(cards.nth(0)).toContainText("Cloud Foundry CLI");
+  await expect(cards.nth(0)).toContainText("required");
+  await expect(cards.nth(0).getByRole("button", { name: /Get passcode in browser/ })).toBeVisible();
+  await expect(cards.nth(1)).toContainText("SAP BTP CLI");
+  await expect(cards.nth(1)).toContainText("Optional");
+  await expect(cards.nth(1).getByRole("button", { name: "Sign in with SSO instead" })).toBeVisible();
   // No wizard footer on the gate (the page swaps in by itself after sign-in).
   await expect(page.locator(".pane-foot")).toHaveCount(0);
   // The rail stays usable: About needs no CF session.

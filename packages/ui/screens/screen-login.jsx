@@ -93,6 +93,16 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog, gate }) {
   const cfReady = btpLoggedIn || cfOnly;
   const canContinue = cfReady && cfLoggedIn;
   const showCfOnly = !!(window.figafModeFlags.features && window.figafModeFlags.features.cfOnlyLogin);
+  // Console gate, first sign-in: Cloud Foundry is what the L3 install needs,
+  // the BTP login is optional (persistent-SSO role assignment, Figaf Tool
+  // deployments). Only while NEITHER login exists - "Add BTP login" from
+  // Session & access (CF already signed in) keeps the BTP-first layout.
+  const cfFirst = !!(gate && window.figafModeFlags.features && window.figafModeFlags.features.cfFirstLogin)
+    && !cfLoggedIn && !btpLoggedIn;
+  React.useEffect(() => {
+    if (cfFirst && !cfOnly && login.btpStatus === "idle") enterCfOnly();
+    // eslint-disable-next-line
+  }, [cfFirst]);
   // Display host for the CF card / passcode hint. Empty for a custom landscape.
   const cfApiHost = login.landscape ? `api.${login.landscape.replace(/^cf-/, "cf.")}.hana.ondemand.com` : "";
 
@@ -442,40 +452,24 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog, gate }) {
     }
   }
 
-  return (
-    <>
-      <div className="pane-body">
-        <div className="pane-head">
-          {/* In the console frame this screen is an auth GATE on the addressed
-              page, not a wizard step - no step wording, no wizard footer. */}
-          <div className="pane-eyebrow">{gate ? "Sign in" : "Step 2 · Authenticate"}</div>
-          <h1 className="pane-title">Sign in to SAP BTP and Cloud Foundry</h1>
-          <p className="pane-desc">
-            Both CLIs use single sign-on. We'll open your browser, then you'll paste a one-time passcode for the Cloud Foundry CLI.
-          </p>
-        </div>
-
-        <div className="field" style={{ marginBottom: 22 }}>
-          <div className="field-label">Sign-in method</div>
-          <div className="radio-row">
-            <div className="radio-tile selected">
-              <Ico.Shield style={{ width: 14, height: 14 }} /> Single sign-on (SSO)
-            </div>
-            <div className="radio-tile" style={{ opacity: 0.55 }}>
-              <Ico.User style={{ width: 14, height: 14 }} /> Username & password
-              <span className="pill gray" style={{ marginLeft: 4 }}>Coming soon</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="card" style={{ marginBottom: 14 }}>
+  // The two sign-in cards. Order: BTP first in the wizard and when adding a
+  // BTP login to an existing CF session; Cloud Foundry first on the console
+  // gate (cfFirst) - the L3 install needs only cf.
+  const btpCard = (
+        <div className="card">
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: (btpLoggedIn || gaChoice || subaccountChoice) ? 10 : 14 }}>
             <div style={{ width: 36, height: 36, borderRadius: 8, background: "var(--fg-blue-soft)", color: "var(--fg-blue)", display: "grid", placeItems: "center" }}>
               <Ico.Cloud />
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink-0)" }}>SAP BTP CLI</div>
-              <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{cfOnly && !btpLoggedIn ? "Skipped — Cloud Foundry only" : "cli.btp.cloud.sap"}</div>
+              <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                {cfOnly && !btpLoggedIn
+                  ? (cfFirst
+                    ? "Optional - only for the persistent-SSO role assignment and Figaf Tool deployments"
+                    : "Skipped — Cloud Foundry only")
+                  : "cli.btp.cloud.sap"}
+              </div>
             </div>
             {btpLoggedIn && <span className="pill green"><Ico.Check /> Connected</span>}
             {btpLoggedIn && (
@@ -511,10 +505,10 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog, gate }) {
             )}
             {cfOnly && !btpLoggedIn && (
               <>
-                <span className="pill gray">Skipped</span>
+                <span className="pill gray">{cfFirst ? "optional" : "Skipped"}</span>
                 {!cfLoggedIn && (
                   <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={revertCfOnly}>
-                    Use BTP login instead
+                    {cfFirst ? "Sign in with SSO instead" : "Use BTP login instead"}
                   </button>
                 )}
                 {cfLoggedIn && (
@@ -659,7 +653,8 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog, gate }) {
             </ScrollReveal>
           )}
         </div>
-
+  );
+  const cfCard = (
         <div className="card" style={{ opacity: cfReady ? 1 : 0.55 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
             <div style={{ width: 36, height: 36, borderRadius: 8, background: "var(--fg-blue-soft)", color: "var(--fg-blue)", display: "grid", placeItems: "center" }}>
@@ -675,6 +670,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog, gate }) {
                     : "Detected after BTP login"}
               </div>
             </div>
+            {cfFirst && <span className="pill blue">required</span>}
             {cfLoggedIn && <span className="pill green"><Ico.Check /> Connected</span>}
             {cfLoggedIn && (
               <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 10px" }} onClick={handleCfLogout}>
@@ -933,6 +929,39 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog, gate }) {
             </div>
             </ScrollReveal>
           )}
+        </div>
+  );
+
+  return (
+    <>
+      <div className="pane-body">
+        <div className="pane-head">
+          {/* In the console frame this screen is an auth GATE on the addressed
+              page, not a wizard step - no step wording, no wizard footer. */}
+          <div className="pane-eyebrow">{gate ? "Sign in" : "Step 2 · Authenticate"}</div>
+          <h1 className="pane-title">{cfFirst ? "Sign in to Cloud Foundry" : "Sign in to SAP BTP and Cloud Foundry"}</h1>
+          <p className="pane-desc">
+            {cfFirst
+              ? <>The manager runs <span className="kbd">cf</span> commands in your name. Get a one-time passcode in the browser and paste it here. A BTP login is optional and can be added later under Session &amp; access.</>
+              : <>Both CLIs use single sign-on. We'll open your browser, then you'll paste a one-time passcode for the Cloud Foundry CLI.</>}
+          </p>
+        </div>
+
+        <div className="field" style={{ marginBottom: 22 }}>
+          <div className="field-label">Sign-in method</div>
+          <div className="radio-row">
+            <div className="radio-tile selected">
+              <Ico.Shield style={{ width: 14, height: 14 }} /> Single sign-on (SSO)
+            </div>
+            <div className="radio-tile" style={{ opacity: 0.55 }}>
+              <Ico.User style={{ width: 14, height: 14 }} /> Username & password
+              <span className="pill gray" style={{ marginLeft: 4 }}>Coming soon</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="login-cards" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {cfFirst ? <>{cfCard}{btpCard}</> : <>{btpCard}{cfCard}</>}
         </div>
       </div>
 
