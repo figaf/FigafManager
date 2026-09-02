@@ -181,22 +181,42 @@ function ConsoleFrame({ app }) {
     // eslint-disable-next-line
   }, []);
 
-  // Setup-checklist statuses: once per sign-in.
-  React.useEffect(() => {
-    if (!signedIn || checklist) return;
+  // Setup-checklist statuses. All four are read once per sign-in. The two
+  // that OTHER pages change - the management user (Session & access) and the
+  // Figaf connection (Connections) - are read again every time the operator
+  // comes back to the dashboard, so the step turns green without a reload
+  // (run #3 finding 4). Install and services states arrive from the
+  // dashboard itself (onL3Status / onL3Services below).
+  const readChecklistStatuses = React.useCallback(async (onlyExternal) => {
     const api = window.figaf;
+    if (!api) return null;
+    const [figaf, stored] = await Promise.all([
+      api.connections.figafStatus().catch((e) => ({ ok: false, error: e.message })),
+      api.login.storedUserStatus().catch(() => null),
+    ]);
+    if (onlyExternal) return { figaf, stored };
+    const [l3, services] = await Promise.all([
+      api.l3.status().catch((e) => ({ ok: false, error: e.message })),
+      (api.l3.services ? api.l3.services() : Promise.resolve(null)).catch(() => null),
+    ]);
+    return { l3, figaf, stored, services };
+  }, []);
+
+  React.useEffect(() => {
+    if (!signedIn) return;
     let cancelled = false;
     (async () => {
-      const [l3, figaf, stored, services] = await Promise.all([
-        api.l3.status().catch((e) => ({ ok: false, error: e.message })),
-        api.connections.figafStatus().catch((e) => ({ ok: false, error: e.message })),
-        api.login.storedUserStatus().catch(() => null),
-        (api.l3.services ? api.l3.services() : Promise.resolve(null)).catch(() => null),
-      ]);
-      if (!cancelled) setChecklist({ l3, figaf, stored, services });
+      if (!checklist) {
+        const all = await readChecklistStatuses(false);
+        if (!cancelled && all) setChecklist(all);
+      } else if (route === "apps") {
+        const part = await readChecklistStatuses(true);
+        if (!cancelled && part) setChecklist((c) => (c ? { ...c, ...part } : c));
+      }
     })();
     return () => { cancelled = true; };
-  }, [signedIn, checklist]);
+    // eslint-disable-next-line
+  }, [signedIn, route]);
 
   // The dashboard reports every fresh l3:status (after install/remove/refresh);
   // keep the checklist's platform item in step without re-fetching the rest.

@@ -66,6 +66,22 @@ test("setup checklist shows the numbered install steps with why-lines, SSO last"
   await expect(banner).toHaveCount(0);
 });
 
+test("setup checklist re-reads the management-user and Figaf states when the dashboard is shown again", async ({ page }) => {
+  // Run #3 finding 4: after storing the management user on Session & access,
+  // step 2 stayed "current step" until a page reload. The dashboard must read
+  // those two states again every time it comes back into view.
+  await page.goto("/#/apps");
+  await expect(page.locator(".setup-checklist")).toBeVisible();
+  await page.locator('.cnav-item[data-route="session"]').click();
+  await expect(page.locator("h1.pane-title")).toHaveText("Who the manager works as");
+  const isRpc = (name) => (r) => decodeURIComponent(r.url()).includes("/rpc/" + name);
+  const storedRead = page.waitForRequest(isRpc("login:storedUserStatus"));
+  const figafRead = page.waitForRequest(isRpc("connections:figafStatus"));
+  await page.locator('.cnav-item[data-route="apps"]').click();
+  await Promise.all([storedRead, figafRead]);
+  await expect(page.locator(".setup-checklist")).toBeVisible();
+});
+
 test("rail navigation reaches every page and updates the address", async ({ page }) => {
   await page.goto("/#/apps");
   await expect(page.locator("h1.pane-title")).toHaveText("Figaf L3 applications");
