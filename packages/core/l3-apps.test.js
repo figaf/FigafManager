@@ -512,6 +512,42 @@ test("l3:provisionServices: a failed creation is reported, the deadline stops th
   assert.deepEqual(r.timedOut, ["credstore"]);
 });
 
+test("l3:provisionServices: a FAILED instance is deleted and created again; cf error text is carried", async () => {
+  const dir = makeV3Dir();
+  const state = { db: "create failed", xsuaa: "create succeeded", credstore: "create succeeded" };
+  let deleted = false;
+  const { ctx, calls } = makeCtx(dir, (args) => {
+    if (args[0] === "delete-service") { deleted = true; delete state[args[1]]; return { code: 0, stdout: "" }; }
+    if (args[0] === "create-service") {
+      if (args[3] === "db") { state.db = "create succeeded"; return { code: 0, stdout: "" }; }
+      return { code: 1, stdout: "", stderr: "Service broker error: plan quota exceeded" };
+    }
+    if (args[0] === "service") return state[args[1]] ? { code: 0, stdout: `status: ${state[args[1]]}` } : { code: 1, stdout: "" };
+    return null;
+  });
+  ctx.sleep = async () => {};
+  ctx.pollIntervalMs = 0;
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:provisionServices"]({});
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(deleted, "the failed instance must be deleted first");
+  assert.deepEqual(r.created, ["db"]);
+  const order = calls.filter((c) => ["delete-service", "create-service"].includes(c.args[0])).map((c) => c.args[0]);
+  assert.deepEqual(order, ["delete-service", "create-service"]);
+
+  // Error text from cf reaches the caller.
+  const dir2 = makeV3Dir();
+  const { ctx: ctx2 } = makeCtx(dir2, (args) => {
+    if (args[0] === "create-service") return { code: 1, stdout: "", stderr: "FAILED\nService broker error: plan quota exceeded" };
+    if (args[0] === "service") return { code: 1, stdout: "" };
+    return null;
+  });
+  ctx2.sleep = async () => {};
+  const r2 = await createL3Handlers(ctx2)["l3:provisionServices"]({});
+  assert.equal(r2.ok, false);
+  assert.match(r2.error, /plan quota exceeded/);
+});
+
 test("l3:bindManagerService + l3:restartSelf use the manager's own app name; refused for non-manager services", async () => {
   const dir = makeV3Dir();
   const { ctx, calls } = makeCtx(dir, () => null);

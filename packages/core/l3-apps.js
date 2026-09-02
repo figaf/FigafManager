@@ -529,9 +529,23 @@ function createL3Handlers(ctx) {
 
       const created = [];
       const failed = [];
+      const cfTail = (r) => ((r.stderr || r.stdout || "").trim().split(/\r?\n/).filter(Boolean).pop() || "").slice(0, 300);
       for (const s of declared) {
         const probe = await run(resolveCf(), ["service", s.name], { source: "cf", quiet: true });
-        if (probe.code === 0) continue; // exists (any state) — never re-create
+        if (probe.code === 0) {
+          // Exists. A FAILED instance blocks re-creation under the same name;
+          // remove it and create again (the admin already asked to provision).
+          if (serviceStatusFromCf(probe.code, probe.stdout) !== "failed") continue;
+          log("l3", "warn", `${s.name} is in a failed state — deleting it before creating again`);
+          const del = await run(resolveCf(), ["delete-service", s.name, "-f"], { source: "cf" });
+          if (del.code !== 0) { failed.push({ name: s.name, error: `could not delete the failed instance: ${cfTail(del)}` }); continue; }
+          // Deletion is asynchronous — wait until the name is free.
+          const gone = Date.now() + PROVISION_TIMEOUT_MS;
+          while ((await run(resolveCf(), ["service", s.name], { source: "cf", quiet: true })).code === 0) {
+            if (Date.now() > gone) break;
+            await sleep(POLL_MS);
+          }
+        }
         const allowed = s.plans || [s.plan];
         const plan = (plans && plans[s.name]) || s.plan;
         if (!allowed.includes(plan)) {
@@ -553,7 +567,7 @@ function createL3Handlers(ctx) {
         }
         log("l3", "line", `Creating service instance ${s.name} (${s.offering} / ${plan}) …`);
         const r = await run(resolveCf(), args, { source: "cf" });
-        if (r.code !== 0) { failed.push({ name: s.name, error: `cf create-service ${s.name} failed` }); continue; }
+        if (r.code !== 0) { failed.push({ name: s.name, error: `cf create-service ${s.name} failed: ${cfTail(r)}` }); continue; }
         created.push(s.name);
       }
 
