@@ -70,6 +70,7 @@ function __setNow(fn) {
 
 function __resetForTests() {
   authState.setupTokenHash = null;
+  authState.minted = false;
   authState.claimed = false;
   authState.claimedAt = null;
   authState.claimantIp = null;
@@ -114,6 +115,7 @@ function generateSetupToken() {
   }
   const cleartext = toBase64Url(crypto.randomBytes(TOKEN_BYTES));
   authState.setupTokenHash = sha256(Buffer.from(cleartext, "utf8"));
+  authState.minted = true;
   authState.claimed = false;
   authState.claimedAt = null;
   authState.claimantIp = null;
@@ -164,6 +166,16 @@ function recordClaim({ ip, ua }) {
 
 function isClaimed() {
   return authState.claimed === true;
+}
+
+/**
+ * True once this process minted a setup token, i.e. the [SETUP] line was
+ * printed at boot. Survives the claim (the hash is wiped, this flag is not).
+ * Exposed on /health so an operator can tell "the logs lost the line" from
+ * "the app never started" - never the token itself.
+ */
+function isMinted() {
+  return authState.minted === true;
 }
 
 // ─── 2. Cookie sign/verify ─────────────────────────────────────────────────
@@ -319,6 +331,7 @@ module.exports = {
   verifySetupToken,
   recordClaim,
   isClaimed,
+  isMinted,
 
   // Per-request auth
   verifyAuth,

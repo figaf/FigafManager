@@ -276,7 +276,17 @@ app.post("/setup/claim", (req, res) => {
 // took effect after restage. Intentionally lightweight; no DB touch.
 app.get("/health", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  res.status(200).json({ ok: true, mode: XSUAA_ACTIVE ? "xsuaa" : "token" });
+  // Token mode adds two booleans - never the token itself. tokenMinted: this
+  // process printed a [SETUP] line at boot; claimed: it has been used. An
+  // operator who cannot find the line in the logs can tell "the logs were
+  // lost" (minted, not claimed: restart for a new one) from "the app never
+  // started" (virgin run #3, finding 3).
+  const body = { ok: true, mode: XSUAA_ACTIVE ? "xsuaa" : "token" };
+  if (!XSUAA_ACTIVE) {
+    body.tokenMinted = auth.isMinted();
+    body.claimed = auth.isClaimed();
+  }
+  res.status(200).json(body);
 });
 
 // ─── Gated surface ─────────────────────────────────────────────────────────

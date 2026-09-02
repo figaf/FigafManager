@@ -1,9 +1,10 @@
 /* global React */
 // Console page: Figaf Tool (#/figaf-tool) — the hub.
-// Lists the Figaf Tool deployments this cf login can see, and starts the four
-// existing flows (deploy / update / connect / persistent SSO). The flows keep
-// their screens and order; the console renders them inside this page as a
-// local stepper (see ConsoleFrame in console.jsx).
+// Lists the Figaf Tool deployments this cf login can see, and starts the three
+// Figaf Tool flows (deploy / update / connect). The flows keep their screens
+// and order; the console renders them inside this page as a local stepper
+// (see ConsoleFrame in console.jsx). The persistent-SSO upgrade is about the
+// manager's own sign-in and lives under Session & access (#/session/sso-upgrade).
 
 function FigafToolActionCard({ title, desc, cta, disabled, hint, onClick }) {
   return (
@@ -20,7 +21,6 @@ function FigafToolActionCard({ title, desc, cta, disabled, hint, onClick }) {
 
 function ScreenFigafToolHub({ ctx, onStartFlow, onGoSession }) {
   const api = typeof window !== "undefined" ? window.figaf : null;
-  const features = window.figafModeFlags.features;
   const [discovery, setDiscovery] = React.useState(null); // l3:figafSystems result
   const cfOnly = !!ctx.login.cfOnly;
 
@@ -110,16 +110,6 @@ function ScreenFigafToolHub({ ctx, onStartFlow, onGoSession }) {
           hint={btpHint}
           onClick={() => onStartFlow("connect")}
         />
-        {features.xsuaaUpgrade && (
-          <FigafToolActionCard
-            title="Enable persistent SSO"
-            desc="Put this manager behind XSUAA + IAS so access survives redeploys."
-            cta="Start upgrade"
-            disabled={cfOnly}
-            hint={btpHint}
-            onClick={() => onStartFlow("xsuaa-upgrade")}
-          />
-        )}
       </div>
     </div>
   );

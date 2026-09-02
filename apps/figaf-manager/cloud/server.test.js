@@ -46,6 +46,40 @@ test("GET /setup returns HTML with the claim form", async () => {
   assert.match(body, /action|fetch\(/);
 });
 
+test("GET /setup explains what to do when the token line is missing from the logs", async () => {
+  const body = await (await fetch(baseUrl + "/setup")).text();
+  assert.match(body, /Can.{1,7}t find the token\?/);
+  assert.match(body, /"tokenMinted": true/);
+  assert.match(body, /cf restart figaf-manager/);
+});
+
+// ─── /health ───────────────────────────────────────────────────────────────
+
+test("GET /health in token mode reports whether a token was minted and claimed - never the value", async () => {
+  // Fresh process state: nothing minted yet.
+  let j = await (await fetch(baseUrl + "/health")).json();
+  assert.equal(j.ok, true);
+  assert.equal(j.mode, "token");
+  assert.equal(j.tokenMinted, false);
+  assert.equal(j.claimed, false);
+  // Boot mints a token: minted, not claimed.
+  const token = auth.generateSetupToken();
+  j = await (await fetch(baseUrl + "/health")).json();
+  assert.equal(j.tokenMinted, true);
+  assert.equal(j.claimed, false);
+  assert.equal(JSON.stringify(j).includes(token), false);
+  // After the claim: still minted, now claimed.
+  const c = await fetch(baseUrl + "/setup/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  assert.equal(c.status, 200);
+  j = await (await fetch(baseUrl + "/health")).json();
+  assert.equal(j.tokenMinted, true);
+  assert.equal(j.claimed, true);
+});
+
 // ─── /setup/claim ──────────────────────────────────────────────────────────
 
 test("POST /setup/claim with correct token → 200 + auth cookie + redirect", async () => {

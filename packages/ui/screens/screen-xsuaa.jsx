@@ -379,7 +379,7 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
   // and triggers an IAS sign-in. The new JWT includes the scope (assuming
   // assignment succeeded or was done manually beforehand).
   function continueToWizard() {
-    try { window.location.href = "/"; } catch (_) { /* defensive */ }
+    try { window.location.href = "/#/session"; } catch (_) { /* defensive */ }
   }
 
   // Manual reboot via the assign-role fallback screen — the operator who
@@ -653,7 +653,7 @@ function ScreenXsuaaAssignRole({ ctx, setCtx, onNext, onBack }) {
   // Manual reboot from this fallback screen too — same target as the
   // upgrade screen's Continue button.
   function continueToWizard() {
-    try { window.location.href = "/"; } catch (_) {}
+    try { window.location.href = "/#/session"; } catch (_) {}
   }
 
   return (

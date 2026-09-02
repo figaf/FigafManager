@@ -103,12 +103,66 @@ test("rail navigation reaches every page and updates the address", async ({ page
   expect(page.url()).toContain("#/about");
 });
 
-test("session page shows the CF session and the management-user card", async ({ page }) => {
+test("session page: access map first, then CF session, BTP, management user, persistent SSO", async ({ page }) => {
   await page.goto("/#/session");
   await expect(page.locator("h1.pane-title")).toHaveText("Who the manager works as");
-  await expect(page.locator(".card").first()).toContainText("Cloud Foundry session");
-  await expect(page.locator(".card").first()).toContainText("signed in");
+  // The access map: one row per sign-in concept, each with a purpose and a state.
+  const map = page.locator(".access-map");
+  await expect(map).toContainText("How this manager signs you in");
+  await expect(map.locator(".access-row")).toHaveCount(4);
+  for (const name of ["Browser access", "Cloud Foundry login", "SAP BTP login", "Management user"]) {
+    await expect(map.locator(`.access-row[data-access="${name}"] .access-purpose`)).not.toBeEmpty();
+  }
+  // Locally the manager runs in token mode: bootstrap mode, setup token.
+  await expect(map).toContainText("bootstrap mode");
+  await expect(map.locator('.access-row[data-access="Browser access"]')).toContainText("setup token");
+  await expect(map.locator('.access-row[data-access="Cloud Foundry login"]')).toContainText("signed in");
+  // The cards below.
+  await expect(page.getByText("Cloud Foundry session")).toBeVisible();
+  await expect(page.getByText("SAP BTP session")).toBeVisible();
   await expect(page.getByText("Management user (automatic sign-in)")).toBeVisible();
+  const sso = page.locator('[data-card="persistent-sso"]');
+  await expect(sso).toContainText("Persistent SSO");
+  await expect(sso).toContainText("30-90 s");
+  // No BTP login in this session: the card says so and offers it BEFORE the upgrade.
+  await expect(sso).toContainText("no BTP login");
+  await expect(sso.getByRole("button", { name: "Add BTP login first" })).toBeVisible();
+  await expect(sso.getByRole("button", { name: "Start upgrade" })).toBeVisible();
+});
+
+test("persistent SSO upgrade opens on its own route under Session & access, and back returns", async ({ page }) => {
+  await page.goto("/#/session");
+  await page.locator('[data-card="persistent-sso"]').getByRole("button", { name: "Start upgrade" }).click();
+  await expect(page.locator("h1.pane-title")).toHaveText("Enable persistent SSO login");
+  expect(page.url()).toContain("#/session/sso-upgrade");
+  await expect(page.locator(".flow-strip")).toBeVisible();
+  await page.getByRole("button", { name: "← Session & access" }).click();
+  await expect(page.locator("h1.pane-title")).toHaveText("Who the manager works as");
+  expect(page.url()).toContain("#/session");
+  expect(page.url()).not.toContain("sso-upgrade");
+});
+
+test("deep link #/session/sso-upgrade renders the upgrade screen after auto sign-in", async ({ page }) => {
+  await page.goto("/#/session/sso-upgrade");
+  await expect(page.locator("h1.pane-title")).toHaveText("Enable persistent SSO login");
+  await expect(page.locator(".flow-chip.is-active")).toContainText("Authentication");
+});
+
+test("figaf tool hub no longer offers the SSO upgrade (it lives on Session & access)", async ({ page }) => {
+  await page.goto("/#/figaf-tool");
+  await expect(page.locator("h1.pane-title")).toHaveText("Figaf Tool deployments");
+  await expect(page.getByRole("button", { name: "Start upgrade" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Start update" })).toBeVisible();
+});
+
+test("/health reports token state without the value (token mode, claimed by this harness)", async ({ page }) => {
+  const r = await page.request.get("/health");
+  expect(r.status()).toBe(200);
+  const j = await r.json();
+  expect(j.mode).toBe("token");
+  expect(j.tokenMinted).toBe(true);
+  expect(j.claimed).toBe(true);
+  expect(JSON.stringify(j)).not.toMatch(/Token:/);
 });
 
 test("about page shows version, update state, and environment checks", async ({ page }) => {

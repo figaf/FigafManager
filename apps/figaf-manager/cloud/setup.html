@@ -77,6 +77,16 @@
         find the most recent line beginning with <code>[SETUP] Token:</code>.
       </div>
 
+      <div class="panel" style="margin-top: 12px;">
+        <strong>Can&rsquo;t find the token?</strong>
+        Every start of the app prints a new token and kills the old one, so take the line from the
+        <em>latest</em> start only. If the Logs view shows no <code>[SETUP] Token:</code> line for the latest
+        start, the log delivery may have dropped it: open <code>/health</code> on this app &mdash;
+        <code>"tokenMinted": true</code> means a token was printed and the logs lost it. Restart the app
+        (cockpit &rarr; Restart, or <code>cf restart figaf-manager</code>) and read the new line.
+        A token is valid for 30 minutes and can be claimed once.
+      </div>
+
       <form id="claim-form" autocomplete="off">
         <label for="token">Setup token</label>
         <input type="password" id="token" name="token" autocomplete="off" spellcheck="false" required />

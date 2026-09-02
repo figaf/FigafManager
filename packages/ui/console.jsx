@@ -16,13 +16,25 @@ const CONSOLE_ROUTES = [
   { id: "about",       hash: "#/about",       label: "About & updates",  sub: "Version · checks",           needsCf: false },
 ];
 
-// The wizard branches that are flows inside the Figaf Tool page.
-const CONSOLE_FLOW_CHOICES = { deploy: 1, update: 1, connect: 1, "xsuaa-upgrade": 1 };
+// The wizard branches that are flows inside the Figaf Tool page. The
+// persistent-SSO upgrade is NOT one of them any more: it is about the
+// manager's own sign-in, so it lives under Session & access on its own route
+// (#/session/sso-upgrade) - the checklist deep-links to it and the page comes
+// back after the restage reload (virgin run #3, finding 5).
+const FIGAF_TOOL_FLOWS = { deploy: 1, update: 1, connect: 1 };
+const SSO_FLOW = "xsuaa-upgrade";
+const SSO_SUBROUTE = "sso-upgrade";
 
-function consoleRouteFromHash(hash) {
-  const r = CONSOLE_ROUTES.find((x) => x.hash === hash);
-  return r ? r.id : "apps";
+// "#/session/sso-upgrade" -> { id: "session", sub: "sso-upgrade" }.
+function consoleLocationFromHash(hash) {
+  const h = String(hash || "");
+  const exact = CONSOLE_ROUTES.find((x) => x.hash === h);
+  if (exact) return { id: exact.id, sub: "" };
+  const parent = CONSOLE_ROUTES.find((x) => h.indexOf(x.hash + "/") === 0);
+  if (parent) return { id: parent.id, sub: h.slice(parent.hash.length + 1) };
+  return { id: "apps", sub: "" };
 }
+function consoleRouteFromHash(hash) { return consoleLocationFromHash(hash).id; }
 
 // Environment checks, run silently at console boot (the wizard ran them on
 // the Welcome step). Mirrors ScreenWelcome's hosted branch: the CLIs are
@@ -46,7 +58,7 @@ async function runConsoleChecks(setCtx) {
   }
 }
 
-function ConsoleRail({ activeRoute, onNavigate, flowActive, aboutBadge, ctx, version }) {
+function ConsoleRail({ activeRoute, onNavigate, flowActive, ssoFlowActive, aboutBadge, ctx, version }) {
   return (
     <aside className="rail">
       <div className="rail-brand">
@@ -71,6 +83,7 @@ function ConsoleRail({ activeRoute, onNavigate, flowActive, aboutBadge, ctx, ver
             <div className="cnav-label">
               {r.label}
               {r.id === "figaf-tool" && flowActive && <span className="cnav-dot blue" title="A flow is in progress" />}
+              {r.id === "session" && ssoFlowActive && <span className="cnav-dot blue" title="The persistent-SSO upgrade is in progress" />}
               {r.id === "about" && aboutBadge && <span className="cnav-dot red" title={aboutBadge} />}
             </div>
             <div className="cnav-sub">{r.sub}</div>
@@ -149,28 +162,33 @@ function ConsoleFrame({ app }) {
     terminalOpen, setTerminalOpen, currentCmd,
   } = app;
 
-  const [route, setRoute] = React.useState(() =>
-    consoleRouteFromHash(typeof window === "undefined" ? "" : window.location.hash));
+  const [loc, setLoc] = React.useState(() =>
+    consoleLocationFromHash(typeof window === "undefined" ? "" : window.location.hash));
+  const route = loc.id;
+  const sub = loc.sub;
   const [checklist, setChecklist] = React.useState(null);   // null = not fetched
   const [checklistHidden, setChecklistHidden] = React.useState(false);
 
   const signedIn = ctx.login.cfStatus === "done";
-  const flowActive = !!CONSOLE_FLOW_CHOICES[ctx.choice] && step >= 3;
+  const flowActive = !!FIGAF_TOOL_FLOWS[ctx.choice] && step >= 3;   // flows on the Figaf Tool page
+  const ssoFlowActive = ctx.choice === SSO_FLOW && step >= 3;        // the flow on Session & access
 
-  const navigate = React.useCallback((id) => {
+  const navigate = React.useCallback((id, subroute) => {
     const r = CONSOLE_ROUTES.find((x) => x.id === id);
     if (!r) return;
-    if (window.location.hash !== r.hash) window.location.hash = r.hash; // hashchange updates state
-    else setRoute(id);
+    const hash = subroute ? `${r.hash}/${subroute}` : r.hash;
+    if (window.location.hash !== hash) window.location.hash = hash; // hashchange updates state
+    else setLoc({ id, sub: subroute || "" });
   }, []);
 
   // Keep state and address bar in sync (back button, hand-edited hash).
   React.useEffect(() => {
-    const onHash = () => setRoute(consoleRouteFromHash(window.location.hash));
+    const onHash = () => setLoc(consoleLocationFromHash(window.location.hash));
     window.addEventListener("hashchange", onHash);
     // Normalize the address on first load (empty hash → #/apps).
     const r = CONSOLE_ROUTES.find((x) => x.id === route);
-    if (r && window.location.hash !== r.hash) window.history.replaceState(null, "", r.hash);
+    const want = r ? (sub ? `${r.hash}/${sub}` : r.hash) : "";
+    if (want && window.location.hash !== want) window.history.replaceState(null, "", want);
     return () => window.removeEventListener("hashchange", onHash);
     // eslint-disable-next-line
   }, []);
@@ -230,13 +248,46 @@ function ConsoleFrame({ app }) {
   const startFlow = React.useCallback((choiceId) => {
     setCtx((c) => ({ ...c, choice: choiceId }));
     setStepRaw(3); // base steps 0-2 are not rendered in the console; 3 = first tail step
-    navigate("figaf-tool");
+    if (choiceId === SSO_FLOW) navigate("session", SSO_SUBROUTE);
+    else navigate("figaf-tool");
   }, [setCtx, setStepRaw, navigate]);
 
   const abandonFlow = React.useCallback(() => {
+    const wasSso = ctx.choice === SSO_FLOW;
     setCtx((c) => ({ ...c, choice: null }));
     setStepRaw(2);
-  }, [setCtx, setStepRaw]);
+    if (wasSso) navigate("session");
+  }, [setCtx, setStepRaw, navigate, ctx.choice]);
+
+  // Deep link or reload on #/session/sso-upgrade: enter the flow by itself.
+  React.useEffect(() => {
+    if (route === "session" && sub === SSO_SUBROUTE && signedIn && ctx.choice !== SSO_FLOW) {
+      setCtx((c) => ({ ...c, choice: SSO_FLOW }));
+      setStepRaw(3);
+    }
+    // eslint-disable-next-line
+  }, [route, sub, signedIn]);
+
+  // A wizard branch rendered as a local stepper inside a console page.
+  const renderFlow = (backLabel) => {
+    const tail = STEPS.slice(3);
+    const flowIndex = Math.min(step, STEPS.length - 1) - 3;
+    const stepId = STEPS[Math.min(step, STEPS.length - 1)].id;
+    return (
+      <>
+        <div className="flow-strip">
+          <button className="btn-link" onClick={abandonFlow}>{backLabel}</button>
+          <div className="spacer" style={{ flex: 1 }} />
+          {tail.map((s, i) => (
+            <span key={s.id} className={`flow-chip ${i === flowIndex ? "is-active" : i < flowIndex ? "is-done" : ""}`}>
+              {s.label}
+            </span>
+          ))}
+        </div>
+        {renderScreenById(stepId)}
+      </>
+    );
+  };
 
   // ── page content ──────────────────────────────────────────────────────────
   const activeRouteDef = CONSOLE_ROUTES.find((r) => r.id === route) || CONSOLE_ROUTES[0];
@@ -278,29 +329,13 @@ function ConsoleFrame({ app }) {
   } else if (route === "connections") {
     page = <ScreenConnections ctx={ctx} setCtx={setCtx} />;
   } else if (route === "figaf-tool") {
-    if (flowActive) {
-      const tail = STEPS.slice(3);
-      const flowIndex = Math.min(step, STEPS.length - 1) - 3;
-      const stepId = STEPS[Math.min(step, STEPS.length - 1)].id;
-      page = (
-        <>
-          <div className="flow-strip">
-            <button className="btn-link" onClick={abandonFlow}>← Figaf Tool overview</button>
-            <div className="spacer" style={{ flex: 1 }} />
-            {tail.map((s, i) => (
-              <span key={s.id} className={`flow-chip ${i === flowIndex ? "is-active" : i < flowIndex ? "is-done" : ""}`}>
-                {s.label}
-              </span>
-            ))}
-          </div>
-          {renderScreenById(stepId)}
-        </>
-      );
-    } else {
-      page = <ScreenFigafToolHub ctx={ctx} onStartFlow={startFlow} onGoSession={() => navigate("session")} />;
-    }
+    page = flowActive
+      ? renderFlow("← Figaf Tool overview")
+      : <ScreenFigafToolHub ctx={ctx} onStartFlow={startFlow} onGoSession={() => navigate("session")} />;
   } else if (route === "session") {
-    page = <ScreenSession ctx={ctx} setCtx={setCtx} appendLog={appendLog} />;
+    page = (sub === SSO_SUBROUTE && signedIn && ssoFlowActive)
+      ? renderFlow("← Session & access")
+      : <ScreenSession ctx={ctx} setCtx={setCtx} appendLog={appendLog} onStartSso={() => startFlow(SSO_FLOW)} />;
   } else if (route === "about") {
     page = (
       <ScreenAbout
@@ -329,7 +364,7 @@ function ConsoleFrame({ app }) {
       <ConsoleRail
         activeRoute={route}
         onNavigate={navigate}
-        flowActive={flowActive}
+        flowActive={flowActive} ssoFlowActive={ssoFlowActive}
         aboutBadge={aboutBadge}
         ctx={ctx}
         version={

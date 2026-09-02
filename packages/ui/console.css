@@ -127,3 +127,9 @@
 .setup-why { font-size: 12px; color: var(--ink-2); margin-top: 2px; line-height: 1.45; }
 .setup-when { font-size: 12px; color: var(--ink-3); margin-top: 2px; line-height: 1.45; }
 .setup-step .btn { flex-shrink: 0; align-self: center; }
+
+/* Session & access: the access map - one row per sign-in concept. */
+.access-row { display: flex; align-items: center; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); }
+.access-name { width: 160px; flex-shrink: 0; font-size: 13px; font-weight: 600; color: var(--ink-0); }
+.access-purpose { flex: 1; min-width: 0; font-size: 12px; color: var(--ink-3); line-height: 1.45; }
+.access-row .pill { flex-shrink: 0; }
