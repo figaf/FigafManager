@@ -126,6 +126,8 @@ test("every step carries a title and a why-line; SSO and the CTA steps carry a w
   }
   assert.match(byId(r, "sso").when, /30-90 s/);
   assert.match(byId(r, "sso").when, /after step 2/);
+  // Run #4 finding 2: the BTP login must be made in this session, after the last restart.
+  assert.match(byId(r, "sso").when, /after the last restart/);
   assert.equal(byId(r, "sso").cta, "Start upgrade");
   assert.equal(byId(r, "mgmt-user").cta, "Session & access");
   assert.equal(byId(r, "figaf-connection").cta, "Connections");

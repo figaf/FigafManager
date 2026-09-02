@@ -126,6 +126,7 @@ test("session page: access map first, then CF session, BTP, management user, per
   await expect(sso).toContainText("30-90 s");
   // No BTP login in this session: the card says so and offers it BEFORE the upgrade.
   await expect(sso).toContainText("no BTP login");
+  await expect(sso).toContainText("before the last restart does not count");
   await expect(sso.getByRole("button", { name: "Add BTP login first" })).toBeVisible();
   await expect(sso.getByRole("button", { name: "Start upgrade" })).toBeVisible();
 });
@@ -136,6 +137,15 @@ test("persistent SSO upgrade opens on its own route under Session & access, and 
   await expect(page.locator("h1.pane-title")).toHaveText("Enable persistent SSO login");
   expect(page.url()).toContain("#/session/sso-upgrade");
   await expect(page.locator(".flow-strip")).toBeVisible();
+  // Run #4 finding 2: the role assignment is decided BEFORE Start. Locally there
+  // is no BTP login, so the panel says so, offers the BTP login, and the primary
+  // button names the consequence. Nothing is clicked: the upgrade must not start.
+  const panel = page.locator('[data-panel="role-assign"]');
+  await expect(panel).toContainText("no BTP login");
+  await expect(panel).toContainText("before the last restart does not count");
+  await expect(panel.getByRole("button", { name: "Add BTP login first" })).toBeVisible();
+  await expect(panel.locator('input[type="checkbox"]')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Start upgrade without role assignment" })).toBeVisible();
   await page.getByRole("button", { name: "← Session & access" }).click();
   await expect(page.locator("h1.pane-title")).toHaveText("Who the manager works as");
   expect(page.url()).toContain("#/session");

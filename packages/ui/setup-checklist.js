@@ -105,7 +105,7 @@
       n: steps.length + 1,
       title: "Persistent SSO (IAS sign-in and roles)",
       why: "Replaces the setup token from the logs with SAP IAS sign-in and the FigafManagerAdmin role. Sessions survive restarts and redeploys.",
-      when: "Restarts the manager (30-90 s downtime). Do it after step " + mgmtStep.n + ", so the manager signs itself back in. A BTP login lets it assign your role automatically.",
+      when: "Restarts the manager (30-90 s downtime). Do it after step " + mgmtStep.n + ", so the manager signs itself back in. For the automatic role assignment add the BTP login in this session, after the last restart: earlier BTP logins are forgotten.",
       done: ssoDone,
       blocked: ssoDone || storedDone ? "" : "after step " + mgmtStep.n,
       cta: "Start upgrade",

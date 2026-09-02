@@ -56,10 +56,55 @@ const ALL_PHASES = [
 const ASSIGN_ROLE = "FigafManagerAdmin";
 
 function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
-  // Checkbox state is local to this screen — not threaded through global ctx.
-  // Default on per the task spec; the operator can opt out before "Start
-  // upgrade" but not mid-run (the checkbox disables once started).
+  // The automatic role assignment is decided BEFORE "Start upgrade" (run #4
+  // finding 2, figaf-l3-l4 SPEC "Role assignment in the SSO upgrade"): the
+  // server says whether a BTP login exists in THIS session and who the cf user
+  // is; the pure plan (sso-role-assign.js) turns that into the panel below.
+  // Local state, not threaded through global ctx; frozen once the run starts.
   const [autoAssign, setAutoAssign] = React.useState(true);
+  const [precheck, setPrecheck] = React.useState(null);   // null = still asking the server
+  const [assignTo, setAssignTo] = React.useState("");      // e-mail the role goes to
+  const plan = React.useMemo(() => {
+    if (precheck === null) return null;
+    const fn = typeof window !== "undefined" && window.figafRoleAssignPlan;
+    if (typeof fn === "function") return fn(precheck);
+    // Module not loaded (desktop bundle): keep the old behavior.
+    return { available: true, autoAssign: true, prefillUser: (ctx.login && ctx.login.user) || "", needsUserInput: false, reason: "", notice: "" };
+    // eslint-disable-next-line
+  }, [precheck]);
+  const emailOk = React.useMemo(() => {
+    const fn = typeof window !== "undefined" && window.figafIsEmailLike;
+    return typeof fn === "function" ? fn(assignTo) : /^[^\s@]+@[^\s@]+$/.test(String(assignTo || "").trim());
+  }, [assignTo]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const api = fg();
+    if (!api || !api.xsuaa || !api.xsuaa.roleAssignmentPrecheck) {
+      setPrecheck({ ok: false, error: "precheck unavailable" });
+      return;
+    }
+    api.xsuaa.roleAssignmentPrecheck().then((r) => {
+      if (!cancelled) setPrecheck(r || { ok: false, error: "no answer" });
+    }).catch((e) => {
+      if (!cancelled) setPrecheck({ ok: false, error: e.message });
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Apply the plan once it exists: the switch default and the prefilled e-mail.
+  React.useEffect(() => {
+    if (!plan) return;
+    setAutoAssign(plan.autoAssign);
+    setAssignTo(plan.prefillUser || "");
+  }, [plan]);
+
+  // "Add BTP login first": Session & access opens with the BTP sign-in form
+  // (console route #/session/add-btp); when the login completes, the console
+  // returns to #/session/sso-upgrade and this screen re-runs its check.
+  function addBtpLoginFirst() {
+    if (typeof window !== "undefined") window.location.hash = "#/session/add-btp";
+  }
 
   // Initial phase set respects the checkbox value at mount. We refresh it
   // when autoAssign toggles BEFORE the upgrade starts (started=false).
@@ -166,6 +211,8 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
     // Defense in depth — the Start button is already disabled until the
     // CF-target check passes, but never kick off a push into the wrong space.
     if (spaceCheck.status !== "ok") return;
+    // The panel decided the assignment; never start with an unusable target.
+    if (autoAssign && !emailOk) return;
     setStarted(true);
     setError(null);
     const api = fg();
@@ -201,16 +248,23 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
       // the success state surfaces the cockpit-fallback messaging so the
       // operator can self-assign before clicking Continue.
       let assignFailedReason = null;
+      let assignedTo = null;
       if (autoAssign) {
-        markPhase("assign-role", { status: "running", sub: `btp assign ${ASSIGN_ROLE}` });
-        const ar = await api.xsuaa.assignRoleCollection(ASSIGN_ROLE);
+        const who = String(assignTo || "").trim();
+        markPhase("assign-role", { status: "running", sub: `btp assign ${ASSIGN_ROLE} --to-user ${who}` });
+        // The server probes the BTP login live and derives the subaccount GUID
+        // from the manager's own XSUAA instance when the BTP flow did not
+        // capture one (run #4 finding 2).
+        const ar = await api.xsuaa.assignRoleCollection(ASSIGN_ROLE, who);
         if (!ar || ar.ok === false) {
           assignFailedReason = (ar && ar.error) || "unknown";
           markPhase("assign-role", { status: "error", sub: assignFailedReason });
           // No setError() — we don't want to halt the upgrade. The post-run
           // success state surfaces the fallback messaging instead.
         } else {
-          markPhase("assign-role", { status: "done", sub: `assigned ${ar.role} to ${ar.user}` });
+          assignedTo = ar.user || who;
+          const via = ar.subaccountSource === "xsuaa-service-key" ? " (subaccount taken from the XSUAA service key)" : "";
+          markPhase("assign-role", { status: "done", sub: `assigned ${ar.role} to ${assignedTo}${via}` });
         }
       }
 
@@ -309,6 +363,8 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
       setOutcome({
         restaging: true,
         assignFailed: assignFailedReason,
+        assignSkipped: !autoAssign,
+        assignedTo,
         // If the manager was already bound, it's already in XSUAA mode; the
         // poll below would otherwise wait pointlessly for a mode-flip that
         // already happened.
@@ -462,29 +518,78 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
         </div>
 
         {!started && (
-          <label
+          <div
+            data-panel="role-assign"
             style={{
-              display: "flex", alignItems: "flex-start", gap: 10,
               padding: "12px 14px", marginBottom: 14,
               borderRadius: 8, background: "rgba(21,101,216,0.05)",
               border: "1px solid rgba(21,101,216,0.18)",
-              cursor: "pointer", fontSize: 13, color: "var(--ink-1)",
+              fontSize: 13, color: "var(--ink-1)",
             }}
           >
-            <input
-              type="checkbox"
-              checked={autoAssign}
-              onChange={(e) => setAutoAssign(e.target.checked)}
-              style={{ marginTop: 3 }}
-            />
-            <span>
-              <strong style={{ color: "var(--ink-0)" }}>Assign me {ASSIGN_ROLE} after upgrade</strong>
-              <br />
-              <span style={{ color: "var(--ink-2)" }}>
-                Runs <code>btp assign security/role-collection {ASSIGN_ROLE}</code> against your subaccount after XSUAA is up. Without this, you'll see a 403 on the next sign-in until you assign yourself in the cockpit.
-              </span>
-            </span>
-          </label>
+            <div style={{ fontWeight: 600, color: "var(--ink-0)", marginBottom: 6 }}>Role assignment</div>
+            {plan === null && (
+              <div style={{ color: "var(--ink-2)" }}>Checking the BTP login of this session…</div>
+            )}
+            {plan && !plan.available && (
+              <>
+                <p style={{ margin: "0 0 8px", lineHeight: 1.5 }}>
+                  <span className="pill gray" style={{ marginRight: 8 }}>
+                    {plan.reason === "no-btp-login" ? "no BTP login" : "check failed"}
+                  </span>
+                  {plan.notice}
+                </p>
+                <p style={{ margin: "0 0 10px", lineHeight: 1.5, color: "var(--ink-2)" }}>
+                  Without it the upgrade cannot assign <code>{ASSIGN_ROLE}</code>. You then add the role collection to
+                  your user in the BTP cockpit (subaccount → Security → Users) before you can sign in again.
+                </p>
+                {plan.reason === "no-btp-login" && (
+                  <button className="btn" onClick={addBtpLoginFirst}>Add BTP login first</button>
+                )}
+              </>
+            )}
+            {plan && plan.available && (
+              <>
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={autoAssign}
+                    onChange={(e) => setAutoAssign(e.target.checked)}
+                    style={{ marginTop: 3 }}
+                  />
+                  <span>
+                    <strong style={{ color: "var(--ink-0)" }}>Assign {ASSIGN_ROLE} automatically</strong>
+                    <br />
+                    <span style={{ color: "var(--ink-2)" }}>
+                      Runs <code>btp assign security/role-collection {ASSIGN_ROLE}</code> for the user below, right after the
+                      XSUAA instance exists. Without it you see a 403 on the next sign-in until the role is assigned in the cockpit.
+                    </span>
+                  </span>
+                </label>
+                {autoAssign && (
+                  <div className="field" style={{ marginTop: 10 }}>
+                    <label className="field-label">Assign to (e-mail of the person who will sign in)</label>
+                    <input
+                      className="input is-mono"
+                      data-field="assign-to"
+                      autoComplete="off"
+                      placeholder="you@example.com"
+                      value={assignTo}
+                      onChange={(e) => setAssignTo(e.target.value)}
+                    />
+                    {plan.notice && (
+                      <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 6 }}>{plan.notice}</div>
+                    )}
+                    {!emailOk && (
+                      <div style={{ fontSize: 12, color: "var(--error, #b91c1c)", marginTop: 6 }}>
+                        Enter the e-mail of a person. The upgrade does not start without it while the automatic assignment is on.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         )}
 
         <div className="task-list">
@@ -520,8 +625,10 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
                 ? <>The approuter is serving the public route and figaf-manager has come back up bound to XSUAA. Click Continue to reauthenticate through SAP IAS.</>
                 : <>The approuter has taken over the public route and figaf-manager is rebinding to XSUAA (~30-90s). The Continue button unlocks once the manager reports XSUAA mode.</>}
               {outcome.assignFailed
-                ? <> The role assignment <strong style={{ color: "var(--error, #b91c1c)" }}>did not succeed</strong> — you'll need to assign yourself manually before continuing.</>
-                : <> You've been assigned <code>{ASSIGN_ROLE}</code> in your subaccount.</>}
+                ? <> The role assignment <strong style={{ color: "var(--error, #b91c1c)" }}>did not succeed</strong> — assign the role in the cockpit before continuing.</>
+                : outcome.assignSkipped
+                  ? <> The automatic role assignment was <strong>skipped by your choice</strong> — add <code>{ASSIGN_ROLE}</code> to your user in the BTP cockpit (subaccount → Security → Users) before continuing, or the next sign-in ends in a 403.</>
+                  : <> <code>{ASSIGN_ROLE}</code> was assigned to <code>{outcome.assignedTo || "your user"}</code> in your subaccount.</>}
             </p>
             {/*
               Live restage status. We render a thin readiness banner so the
@@ -563,14 +670,16 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
             <button
               className="btn btn-primary"
               onClick={runUpgrade}
-              disabled={!spaceOk}
+              disabled={!spaceOk || plan === null || (autoAssign && !emailOk)}
               title={
                 spaceCheck.status === "checking" ? "Verifying Cloud Foundry target…"
-                : spaceOk ? "Begin the XSUAA upgrade"
-                : "Target the manager's Cloud Foundry space first"
+                : !spaceOk ? "Target the manager's Cloud Foundry space first"
+                : plan === null ? "Checking the BTP login of this session…"
+                : (autoAssign && !emailOk) ? "Enter the e-mail the role goes to, or switch the automatic assignment off"
+                : "Begin the XSUAA upgrade"
               }
             >
-              <Ico.Shield /> Start upgrade
+              <Ico.Shield /> {autoAssign ? "Start upgrade" : "Start upgrade without role assignment"}
             </button>
           </>
         )}

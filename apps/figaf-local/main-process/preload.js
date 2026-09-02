@@ -90,8 +90,9 @@ contextBridge.exposeInMainWorld("figaf", {
 
   xsuaa: {
     upgradeStatus:                 () => ipcRenderer.invoke("xsuaa:upgradeStatus"),
-    assignRoleCollection:          (role) => ipcRenderer.invoke("xsuaa:assignRoleCollection", { role }),
+    assignRoleCollection:          (role, user) => ipcRenderer.invoke("xsuaa:assignRoleCollection", { role, user }),
     assignRoleCollectionPreflight: () => ipcRenderer.invoke("xsuaa:assignRoleCollectionPreflight"),
+    roleAssignmentPrecheck:        () => ipcRenderer.invoke("xsuaa:roleAssignmentPrecheck"),
   },
 
   // Update Figaf Tool — hosted-only flow. Handlers gate on host.isHosted and

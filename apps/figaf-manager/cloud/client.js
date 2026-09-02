@@ -190,8 +190,9 @@
 
     xsuaa: {
       upgradeStatus:                 function ()  { return rpc("xsuaa:upgradeStatus"); },
-      assignRoleCollection:          function (role) { return rpc("xsuaa:assignRoleCollection", { role: role }); },
+      assignRoleCollection:          function (role, user) { return rpc("xsuaa:assignRoleCollection", { role: role, user: user }); },
       assignRoleCollectionPreflight: function ()  { return rpc("xsuaa:assignRoleCollectionPreflight"); },
+      roleAssignmentPrecheck:        function ()  { return rpc("xsuaa:roleAssignmentPrecheck"); },
     },
 
     update: {

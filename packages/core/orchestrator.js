@@ -236,11 +236,13 @@ function createOrchestrator({ host, send, audit }) {
       });
       proc.on("error", (err) => {
         log(opts.source || cmd, "err", err.message);
-        auditHandle.exit({ code: -1, stdout, stderr, errorMessage: err.message });
+        auditHandle.exit({ code: -1, stdout: opts.auditStdout === false ? "[not recorded: contains credentials]" : stdout, stderr, errorMessage: err.message });
         resolve({ code: -1, stdout, stderr, error: err.message });
       });
       proc.on("close", (code) => {
-        auditHandle.exit({ code: code ?? 0, stdout, stderr });
+        // opts.auditStdout === false keeps a credential-bearing stdout (e.g. a
+        // service key) out of the audit tail; the caller still receives it.
+        auditHandle.exit({ code: code ?? 0, stdout: opts.auditStdout === false ? "[not recorded: contains credentials]" : stdout, stderr });
         resolve({ code: code ?? 0, stdout, stderr });
       });
 
@@ -545,6 +547,58 @@ function createOrchestrator({ host, send, audit }) {
     };
   }
 
+  // Is the session's btp CLI logged in NOW? `btp get accounts/global-account`
+  // needs a login and a targeted global account (btp login sets both). The
+  // BTP CLI session lives in the container and is gone after every restart,
+  // so this is asked live, never taken from memory alone. Refreshes the GA
+  // guid / license type when the answer parses.
+  async function probeBtpLogin() {
+    const r = await run(resolveBtp(), ["--format", "json", "get", "accounts/global-account"], { source: "btp", quiet: true });
+    if (r.code !== 0) return { loggedIn: false };
+    try {
+      const jsonStart = r.stdout.indexOf("{");
+      const data = jsonStart >= 0 ? JSON.parse(r.stdout.slice(jsonStart)) : {};
+      if (data.guid) state.globalAccountGuid = data.guid;
+      if (data.licenseType) state.licenseType = data.licenseType;
+    } catch { /* logged in; details stay as they were */ }
+    return { loggedIn: true };
+  }
+
+  // Subaccount GUID without the BTP subaccount pick (figaf-l3-l4 SPEC "Role
+  // assignment in the SSO upgrade", run #4 finding 2): every XSUAA binding
+  // or service key carries `subaccountid`. A throw-away service key on the
+  // manager's own instance (created by cf:createXsuaa) is read quietly and
+  // deleted again. The key JSON holds the XSUAA client secret, so its stdout
+  // is neither streamed to the terminal nor written to the audit tail.
+  async function deriveSubaccountGuidFromXsuaa() {
+    if (state.subaccountFromXsuaa) return { ok: true, guid: state.subaccountFromXsuaa };
+    const inst = "figaf-manager-xsuaa";
+    const keyName = "figaf-manager-role-key";
+    const c = await run(resolveCf(), ["create-service-key", inst, keyName], { source: "cf" });
+    if (c.code !== 0 && !/already exists/i.test(`${c.stderr}\n${c.stdout}`)) {
+      return { ok: false, error: `cf create-service-key ${inst} failed` };
+    }
+    const k = await run(resolveCf(), ["service-key", inst, keyName], {
+      source: "cf",
+      quiet: true,
+      auditStdout: false,
+      logCmd: `cf service-key ${inst} ${keyName}  (output not shown: contains the XSUAA client secret)`,
+    });
+    let guid = null;
+    if (k.code === 0) {
+      try {
+        const jsonStart = k.stdout.indexOf("{");
+        let key = jsonStart >= 0 ? JSON.parse(k.stdout.slice(jsonStart)) : null;
+        if (key && key.credentials) key = key.credentials;
+        guid = (key && (key.subaccountid || key.zoneid || key.tenantid)) || null;
+      } catch { guid = null; }
+    }
+    await run(resolveCf(), ["delete-service-key", inst, keyName, "-f"], { source: "cf" });
+    if (!guid) return { ok: false, error: `could not read the subaccount id from a service key of ${inst}` };
+    state.subaccountFromXsuaa = String(guid);
+    return { ok: true, guid: state.subaccountFromXsuaa };
+  }
+
   // Spawn `btp target --hierarchy true`, wait for the interactive prompt, parse
   // the tree, then write `chooseIndex` to stdin so the CLI targets that node and
   // exits 0. `chooseIndex` is a number, or a fn(parsed) -> number (e.g. stay on
@@ -781,6 +835,7 @@ function createOrchestrator({ host, send, audit }) {
         return { ok: false, error: `cf target -o ${target.orgName} -s ${target.spaceName} failed — does the management user have a Space role there?` };
       }
       state.user = cred.username;
+      state.cfLoginKind = "stored-user"; // the cf identity is the technical account, not a person
       state.org = target.orgName;
       state.space = target.spaceName;
       log("cf", "ok", `Signed in as the stored management user (${cred.username}) — org ${target.orgName}, space ${target.spaceName}`);
@@ -1134,6 +1189,7 @@ function createOrchestrator({ host, send, audit }) {
       state.org = null;
       state.space = null;
       state.user = null;
+      state.cfLoginKind = null;
       state.provider = null;
       state.subaccountList = null;
       state.subaccountWaitingForChoice = false;
@@ -1231,6 +1287,7 @@ function createOrchestrator({ host, send, audit }) {
       state.org = null;
       state.space = null;
       state.user = null;
+      state.cfLoginKind = null;
       state.provider = null;
       state.subaccountList = null;
       state.subaccountWaitingForChoice = false;
@@ -1462,7 +1519,7 @@ function createOrchestrator({ host, send, audit }) {
         state.cfSpaceList = null;
         state.cfWaitingForOrgChoice = false;
         state.cfWaitingForSpaceChoice = false;
-        if (code === 0) send("cf:loggedIn", {});
+        if (code === 0) { state.cfLoginKind = "passcode"; send("cf:loggedIn", {}); }
         else send("cf:loginFailed", { code });
         state.cfLoginProc = null;
       });
@@ -1527,6 +1584,7 @@ function createOrchestrator({ host, send, audit }) {
       state.org = null;
       state.space = null;
       state.user = null;
+      state.cfLoginKind = null;
       state.cfSwitchOrgList = null;
       state.cfSwitchSelectedOrg = null;
       state.cfSwitchSpaceList = null;
@@ -2485,11 +2543,12 @@ function createOrchestrator({ host, send, audit }) {
     },
 
     /**
-     * Self-assign the operator to a manager role collection via the btp CLI.
-     * Used by ScreenXsuaaUpgrade's "Assign me FigafManagerAdmin after upgrade"
-     * checkbox (default on). Operates against the subaccount captured during
-     * btp:listEnvInstances; the user identity is the BTP/IAS email reported
-     * by `cf target` (state.user).
+     * Assign a person to a manager role collection via the btp CLI. Used by
+     * ScreenXsuaaUpgrade's role-assignment panel (decided before "Start
+     * upgrade"). Needs a BTP login in THIS session (probed live); the
+     * subaccount GUID comes from the BTP flow when it captured one, otherwise
+     * from a throw-away service key of the manager's own XSUAA instance; the
+     * user is the e-mail named on the panel (default: the cf identity).
      *
      * Default role is FigafManagerAdmin because the Admin role-template's
      * scope-references include FigafManagerOperator (xs-security.json), so a
@@ -2512,16 +2571,42 @@ function createOrchestrator({ host, send, audit }) {
      * just has to assign the role collection manually in the cockpit before
      * the new scope appears in their next JWT.
      */
-    async "xsuaa:assignRoleCollection"({ role } = {}) {
+    async "xsuaa:assignRoleCollection"({ role, user } = {}) {
       if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
       const rc = role || "FigafManagerAdmin";
-      const user = state.user;
-      const sub = state.subaccount;
-      if (!user) return { ok: false, error: "current user not captured (cf target has not run); assign manually in the cockpit" };
-      if (!sub)  return { ok: false, error: "subaccount GUID not captured (btp:listEnvInstances has not run); assign manually in the cockpit" };
+      const cockpitHint = "assign the role in the BTP cockpit (subaccount > Security > Users)";
+      // Who gets the role: the e-mail named on the upgrade screen. The default,
+      // state.user, is the cf identity - after the stored management user
+      // signed the manager in, that is the TECHNICAL account, which is why the
+      // screen asks for a person explicitly (run #4 finding 3).
+      const target = String(user || state.user || "").trim();
+      if (!target) return { ok: false, error: `no user to assign the role to; ${cockpitHint}` };
+      if (target.length > 256 || !/^[^\s@]+@[^\s@]+$/.test(target)) {
+        return { ok: false, error: `"${target}" is not an e-mail address; ${cockpitHint}` };
+      }
+      // The btp CLI must be logged in NOW. A BTP login made before the last
+      // restart is gone with the container; memory alone would lie.
+      const btp = await probeBtpLogin();
+      if (!btp.loggedIn) {
+        return {
+          ok: false,
+          error: `no BTP login in this session (a BTP login made before the last restart is forgotten) - add it on Session & access, or ${cockpitHint}`,
+          role: rc, user: target,
+        };
+      }
+      // Subaccount GUID: from the BTP flow when it captured one, otherwise from
+      // a throw-away service key of the manager's own XSUAA instance.
+      let sub = state.subaccount;
+      let subaccountSource = "btp-login";
+      if (!sub) {
+        const d = await deriveSubaccountGuidFromXsuaa();
+        if (!d.ok) return { ok: false, error: `${d.error}; ${cockpitHint}`, role: rc, user: target };
+        sub = d.guid;
+        subaccountSource = "xsuaa-service-key";
+      }
 
       send("xsuaa:upgradePhase", { phase: "assign-role", state: "running" });
-      const args = ["assign", "security/role-collection", rc, "--to-user", user, "--subaccount", sub];
+      const args = ["assign", "security/role-collection", rc, "--to-user", target, "--subaccount", sub];
       const r = await run(resolveBtp(), args, { source: "btp" });
       // btp CLI returns 0 on a fresh assignment AND on a re-assignment (it
       // prints "already assigned" but exits 0). Treat any 0-exit as success.
@@ -2530,10 +2615,39 @@ function createOrchestrator({ host, send, audit }) {
       if (r.code !== 0) {
         const detail = (r.stderr || r.stdout || "").trim().split(/\r?\n/).filter(Boolean).slice(-3).join(" / ");
         send("xsuaa:upgradePhase", { phase: "assign-role", state: "failed", error: detail || "btp assign failed" });
-        return { ok: false, error: detail || "btp assign failed", role: rc, user, subaccount: sub };
+        return { ok: false, error: detail || "btp assign failed", role: rc, user: target, subaccount: sub, subaccountSource };
       }
       send("xsuaa:upgradePhase", { phase: "assign-role", state: "done" });
-      return { ok: true, role: rc, user, subaccount: sub };
+      return { ok: true, role: rc, user: target, subaccount: sub, subaccountSource };
+    },
+
+    /**
+     * What the upgrade screen needs BEFORE "Start upgrade" (decision up
+     * front, run #4 finding 2): is the btp CLI logged in right now, who is
+     * the cf user, and is that user the stored technical account (then the
+     * role must go to a person the operator names). The BTP answer is a live
+     * probe; the stored-user answer comes from login:storedUserStatus (cached).
+     */
+    async "xsuaa:roleAssignmentPrecheck"() {
+      if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
+      const btp = await probeBtpLogin();
+      let storedUsername = null;
+      try {
+        const st = await handlers["login:storedUserStatus"]();
+        if (st && st.available && st.username) storedUsername = st.username;
+      } catch { /* no binding or store unreachable: not a technical user then */ }
+      const cfUser = state.user || null;
+      const cfUserIsStoredUser =
+        state.cfLoginKind === "stored-user" ||
+        (!!storedUsername && !!cfUser && storedUsername.toLowerCase() === cfUser.toLowerCase());
+      return {
+        ok: true,
+        btpLoggedIn: btp.loggedIn,
+        cfUser,
+        cfUserIsStoredUser,
+        storedUsername,
+        subaccountKnown: !!state.subaccount,
+      };
     },
 
     /**

@@ -24,6 +24,10 @@ const CONSOLE_ROUTES = [
 const FIGAF_TOOL_FLOWS = { deploy: 1, update: 1, connect: 1 };
 const SSO_FLOW = "xsuaa-upgrade";
 const SSO_SUBROUTE = "sso-upgrade";
+// "#/session/add-btp": Session & access opens with the BTP sign-in form. Used by
+// the upgrade screen's "Add BTP login first"; screen-session.jsx returns to the
+// upgrade route when the BTP login completes.
+const ADD_BTP_SUBROUTE = "add-btp";
 
 // "#/session/sso-upgrade" -> { id: "session", sub: "sso-upgrade" }.
 function consoleLocationFromHash(hash) {
@@ -335,7 +339,7 @@ function ConsoleFrame({ app }) {
   } else if (route === "session") {
     page = (sub === SSO_SUBROUTE && signedIn && ssoFlowActive)
       ? renderFlow("← Session & access")
-      : <ScreenSession ctx={ctx} setCtx={setCtx} appendLog={appendLog} onStartSso={() => startFlow(SSO_FLOW)} />;
+      : <ScreenSession ctx={ctx} setCtx={setCtx} appendLog={appendLog} onStartSso={() => startFlow(SSO_FLOW)} addBtpFromRoute={sub === ADD_BTP_SUBROUTE} />;
   } else if (route === "about") {
     page = (
       <ScreenAbout

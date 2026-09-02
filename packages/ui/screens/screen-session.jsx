@@ -224,7 +224,8 @@ function PersistentSsoCard({ ctx, onAddBtp, onStart }) {
             <span className="pill gray">no BTP login</span>
             <span style={{ color: "var(--ink-3)", flex: 1, minWidth: 200 }}>
               Without it the upgrade cannot assign the role. You then add <span className="kbd">FigafManagerAdmin</span> to
-              your user in the BTP cockpit before you continue.
+              your user in the BTP cockpit before you continue. A BTP login made before the last restart does not
+              count: the manager forgets it on every restart.
             </span>
             <button className="btn" onClick={onAddBtp}>Add BTP login first</button>
           </>
@@ -235,9 +236,22 @@ function PersistentSsoCard({ ctx, onAddBtp, onStart }) {
   );
 }
 
-function ScreenSession({ ctx, setCtx, appendLog, onStartSso }) {
+function ScreenSession({ ctx, setCtx, appendLog, onStartSso, addBtpFromRoute }) {
   const api = typeof window !== "undefined" ? window.figaf : null;
-  const [addBtp, setAddBtp] = React.useState(false);
+  const [addBtp, setAddBtp] = React.useState(!!addBtpFromRoute);
+  // #/session/add-btp (the upgrade screen's "Add BTP login first"): open the
+  // BTP form at once, and return to the upgrade route when the login is done.
+  React.useEffect(() => { if (addBtpFromRoute) setAddBtp(true); }, [addBtpFromRoute]);
+  React.useEffect(() => {
+    if (addBtpFromRoute && addBtp && ctx.login.btpStatus === "done" && typeof window !== "undefined") {
+      setAddBtp(false);
+      window.location.hash = "#/session/sso-upgrade";
+    }
+  }, [addBtpFromRoute, addBtp, ctx.login.btpStatus]);
+  function leaveAddBtp() {
+    setAddBtp(false);
+    if (addBtpFromRoute && typeof window !== "undefined") window.location.hash = "#/session";
+  }
   const [signingOut, setSigningOut] = React.useState(false);
   const signedIn = ctx.login.cfStatus === "done";
 
@@ -274,12 +288,12 @@ function ScreenSession({ ctx, setCtx, appendLog, onStartSso }) {
       <>
         {addBtp && (
           <div style={{ padding: "10px 28px 0" }}>
-            <button className="btn-link" onClick={() => setAddBtp(false)}>
+            <button className="btn-link" onClick={leaveAddBtp}>
               ← Back to the session overview
             </button>
           </div>
         )}
-        <ScreenLogin ctx={ctx} setCtx={setCtx} onNext={() => setAddBtp(false)} appendLog={appendLog} gate />
+        <ScreenLogin ctx={ctx} setCtx={setCtx} onNext={leaveAddBtp} appendLog={appendLog} gate />
       </>
     );
   }
