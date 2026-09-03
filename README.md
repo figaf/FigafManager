@@ -23,6 +23,12 @@ through prerequisites → login → service creation → `cf push` → ready-to-
 The wizards diverge only at the host-environment seam (file dialogs, persistent
 storage, deploy-template sourcing).
 
+> **Status (2026-09-03).** The hosted **figaf-manager** is the product going
+> forward: since September 2026 it also installs and manages the Figaf L3 apps
+> (branch `poc/l3-app-manager`, see [docs/PROJECT-CONTEXT.md](docs/PROJECT-CONTEXT.md)).
+> The desktop **figaf-local** is **frozen**: it keeps working and keeps building,
+> but gets no new features; its release job in `release.yml` is already disabled.
+
 ### Quick reference (developers)
 
 | Task | Command |
@@ -231,7 +237,7 @@ figaf-installer/                          ← workspace root (npm workspaces)
 │       ├── host.cloud.js                 HostAdapter: session-scoped, bundled bin
 │       ├── bin/                          Linux btp + cf binaries (build-time)
 │       ├── scripts/build-zip.js          assembles the cockpit zip
-│       ├── manifest.yml, Dockerfile      CF deployment manifest + container
+│       ├── manifest.yml                  CF deployment manifest (nodejs buildpack)
 │       └── package.json                  express + ws
 └── packages/
     ├── core/                             host-agnostic orchestrator

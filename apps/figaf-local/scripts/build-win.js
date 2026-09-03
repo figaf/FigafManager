@@ -9,7 +9,7 @@
 // chmod()/utimes() on each file microseconds later to preserve the source mode
 // and timestamps. While the scanner still holds its handle, that chmod hits a
 // sharing violation that Node surfaces as EPERM — and the build aborts. The file
-// that loses the race is different every run (README.md, notes.txt, db.json, …),
+// that loses the race is different every run (README.md, db.json, …),
 // which is the tell-tale signature of a scanner race rather than a bad file.
 //
 // We can't turn off that chmod (electron-builder always preserves source mode),

@@ -21,23 +21,13 @@ packages/manager-approuter/static/
 Thumbs.db
 .idea/
 .vscode/
-.claude/
+# .claude/ is tracked on purpose: agent definitions and their memory are part of the repo.
 
-graphify-out/
-
-# Documentation and ai generated content
-docs/*
-!docs/figaf-manager-manual.html
-!docs/manual-images/
-!docs/manual-images/**
-# L3/L4 stream documents (2026-09-03): tracked on purpose
-!docs/PROJECT-CONTEXT.md
-!docs/l3-console/
-!docs/l3-console/**
+# docs/ is tracked (manual, project context, L3 console spec). Cleaned 2026-09-03,
+# see docs/CLEANUP-2026-09-03.md.
 
 # Logs
 logs/
-.graphify_python
 
 # Playwright e2e harness state and reports
 e2e/.auth/

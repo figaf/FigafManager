@@ -12,4 +12,3 @@ scripts/
 # Editor / OS noise
 .gitignore
 *.md
-Dockerfile

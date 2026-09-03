@@ -40,6 +40,12 @@ The decision behind this: one management node for everything a customer runs
 from Figaf (figaf-l3-l4 decision 0004). The manager is the product that ships
 first; app development follows (Ilya, 2026-09-03).
 
+**The desktop installer is frozen** (Arsenii, 2026-09-03): it keeps working and
+keeps building, but gets no new features. Its release job in `release.yml` was
+already disabled. Alex's strategy notes of May 2026 reached the same
+conclusion (hosted app first, desktop as a fallback); they were removed on
+2026-09-03 and live in git history (`docs/CLEANUP-2026-09-03.md`).
+
 ## 3. The first customer: Danfoss
 
 Danfoss migrates from SAP PI to Integration Suite Trading Partner Management.

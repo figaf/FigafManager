@@ -84,8 +84,7 @@ figaf-installer/                          ← workspace root (npm workspaces)
 │       ├── host.cloud.js                 HostAdapter (session-scoped, bundled bin)
 │       ├── bin/                          Linux btp + cf binaries (gitignored, populated by build-zip)
 │       ├── scripts/build-zip.js          assembles dist/figaf-manager-app-<v>.zip
-│       ├── manifest.yml                  CF deployment manifest for the wizard itself
-│       └── Dockerfile                    workspace-root build context required
+│       └── manifest.yml                  CF deployment manifest for the wizard itself
 └── packages/
     ├── core/                             host-agnostic orchestrator
     │   ├── package.json                  name: @figaf/core
@@ -234,7 +233,6 @@ Both adapters expose the exact same shape; they differ only in implementation.
 | [apps/figaf-manager/cloud/client.js](apps/figaf-manager/cloud/client.js) | browser `window.figaf` shim (fetch + ws) |
 | [apps/figaf-manager/cloud/index.html](apps/figaf-manager/cloud/index.html) | Cloud renderer shell with mode injection |
 | [apps/figaf-manager/host.cloud.js](apps/figaf-manager/host.cloud.js) | Cloud HostAdapter |
-| [apps/figaf-manager/Dockerfile](apps/figaf-manager/Dockerfile) | container build (workspace root context) |
 | [apps/figaf-manager/manifest.yml](apps/figaf-manager/manifest.yml) | CF manifest for the wizard itself |
 | [apps/figaf-manager/scripts/build-zip.js](apps/figaf-manager/scripts/build-zip.js) | Assemble the cockpit-deployable zip |
 | [packages/core/orchestrator.js](packages/core/orchestrator.js) | All ~38 IPC handlers + HostAdapter typedef |
@@ -256,8 +254,9 @@ Both adapters expose the exact same shape; they differ only in implementation.
 | [packages/deploy-templates/db.json](packages/deploy-templates/db.json) | PG service parameters |
 | [packages/deploy-templates/approuter/xs-app.json](packages/deploy-templates/approuter/xs-app.json) | Approuter routing |
 | [package.json](package.json) | workspace root |
-| [instructions.md](instructions.md) | Manual CLI walkthrough that the GUI automates |
-| [BTP-CLI/bttp-cli-commands.md](BTP-CLI/bttp-cli-commands.md) | btp CLI reference dump |
+| [docs/PROJECT-CONTEXT.md](docs/PROJECT-CONTEXT.md) | Project context: Figaf, the L3/L4 platform, Danfoss, rules, where things live |
+| [docs/l3-console/SPEC.md](docs/l3-console/SPEC.md) | L3 console behavior (current state); `OPEN-ITEMS.md`, `TROUBLESHOOTING.md`, `FIGAF-TOOL-MANAGEMENT-GAPS.md` next to it |
+| [docs/CLEANUP-2026-09-03.md](docs/CLEANUP-2026-09-03.md) | What was deleted from this repo on 2026-09-03 and why |
 
 ---
 

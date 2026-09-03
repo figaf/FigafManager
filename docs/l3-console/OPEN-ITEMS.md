@@ -16,9 +16,9 @@ Last edited 2026-09-03.
 2. **Figaf Tool flows** (Alex's deploy / update / connect) never tested through
    the console; one known bug: Figaf-tool login/settings not kept when
    re-entering the flow. Root cause: the manager keeps no state of its own
-   (see "The manager has no memory" below). Requirements for Figaf-tool
-   management via the manager are plan Step 2 (env vars, manifest
-   parameters, persisted deployment metadata).
+   (see "The manager has no memory" below). What is missing and the decisions
+   it needs: `FIGAF-TOOL-MANAGEMENT-GAPS.md` (this folder), the input for the
+   talk with Alex.
 3. **Remove + reinstall repeatability** check (remove exists; reinstall after
    remove not yet done by hand).
 4. **R2 artifact store**: bucket + scoped credentials from Daniel (figaf-l3-l4
@@ -33,35 +33,37 @@ Last edited 2026-09-03.
    auto-selects it` — fails on master too; fix or quarantine. The cloud tests
    (`apps/figaf-manager/cloud/*.test.js`) are not part of `npm test` and so
    not part of CI.
-7. **`packages/ui/styles.css`** ends in a mis-encoded UTF-16 block (Alex's
-   file; ripgrep treats it as binary). Clean up with Alex.
-8. **Pinning**: cf CLI is downloaded as "latest v8" at build time, no
-   `engines.node`, buildpack unpinned; the Dockerfile says Node 20, CI uses
-   Node 22. CF stack `cflinuxfs4` is deprecated (new pushes end 2027-04,
-   `cflinuxfs5` default from 2027-02).
-9. **Password login for persons** (Alex's login screen shows "Username &
+7. **Pinning**: the cf CLI is downloaded as "latest v8" at build time and its
+   version is recorded nowhere; no `engines.node`, so the buildpack picks its
+   default Node; buildpack and stack unpinned; staging installs the npm
+   dependencies without a lockfile. CF stack `cflinuxfs4` is deprecated (new
+   pushes end 2027-04, `cflinuxfs5` default from 2027-02). Proposal: pin the
+   cf version in `package.json` next to `btpCliVersion`, add `engines.node`
+   `22.x` (the Figaf tool's approuter template already has it), write the
+   bundled versions into the zip and show them on the About page.
+8. **Password login for persons** (Alex's login screen shows "Username &
    password - coming soon"): product decision open. Today by design only the
    passcode (the person's password never reaches the manager; works with
    2FA) and the technical user (unattended sign-in).
-10. **No-2FA technical user**: acceptable for customers? Question for Daniel
-    and Alex.
-11. **Repo identity and hygiene** (2026-09-03): root package is still named
-    `figaf-installer`; CLAUDE.md and README describe the Figaf-tool wizard
-    only; Alex's planning documents from May-June 2026 (`docs/plan.md`,
-    `docs/instructions.md`, `docs/let-s-look-at-...md`, `docs/superpowers/`),
-    `apps/figaf-manager/Dockerfile` (not used by any build or deploy path),
-    `apps/figaf-manager/saml-9c492946trial-sp.xml` (trial-tenant SAML
-    metadata, referenced nowhere) and `packages/deploy-templates/notes.txt`
-    wait for a decision with Alex.
-12. **Desktop installer** (`apps/figaf-local`): keep as a product or not? The
-    L3 console, the connections screen and the Setup page are hosted-only
-    (`mode.js`: `manageL3Apps`, `consoleUI`, `cfFirstLogin`). Every shared
-    change must still keep the desktop wizard working.
-13. **Customer manual for the L3 console**: Alex's manual covers the
+9. **No-2FA technical user**: acceptable for customers? Question for Daniel
+   and Alex.
+10. **Repo identity** (2026-09-03): the root package is still named
+    `figaf-installer`; the architecture map in CLAUDE.md describes the
+    Figaf-tool wizard and does not list the console files. The garbage
+    removal itself is done (`docs/CLEANUP-2026-09-03.md`).
+11. **Customer manual for the L3 console**: Alex's manual covers the
     Figaf-tool flow only. The customer prerequisites are in figaf-l3-l4
     `docs/d1/MANUAL-RUNBOOK.md`.
 
 ## Design notes still in force
+
+### Desktop installer frozen (Arsenii, 2026-09-03)
+
+`apps/figaf-local` keeps working and keeps building, but gets no new features.
+The L3 console, the connections screen and the Setup page are hosted-only
+(`mode.js`: `manageL3Apps`, `consoleUI`, `cfFirstLogin`). Shared changes must
+still not break the desktop wizard. Its release job in `release.yml` is
+already disabled. To be confirmed with Alex.
 
 ### The manager has no memory (fact, 2026-09-03)
 
