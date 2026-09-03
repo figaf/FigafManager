@@ -217,6 +217,15 @@ Both adapters expose the exact same shape; they differ only in implementation.
   `apps/figaf-manager/.staging/` (with `@figaf/core` and `@figaf/ui` as plain
   directories under `node_modules/`), then `npm install --omit=dev` for the
   public deps, then zips.
+- Pinned versions (2026-09-04): `btpCliVersion` and `cfCliVersion` in
+  `apps/figaf-manager/package.json` are the only source of the bundled CLI
+  versions; `build-zip.js` downloads exactly them, re-downloads when a pin
+  changes, fails when the download does not match, and writes
+  `bin/VERSIONS.json` (also the pinned npm versions and the Node engine).
+  The staged `package.json` gets the exact top-level dependency versions from
+  the workspace `package-lock.json`. `engines.node` is `22.x` for the manager
+  and `packages/manager-approuter`; CI builds with Node 22. The About page
+  shows the runtime versions against these pins (`prereq:bundledVersions`).
 
 ---
 

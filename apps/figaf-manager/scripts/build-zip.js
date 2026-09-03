@@ -2,8 +2,12 @@
 // Assembles figaf-manager-app-<version>.zip for BTP Cockpit "Deploy Application".
 //
 // What it does:
-//   1. Download Linux x86_64 btp + cf binaries (versions pinned in package.json)
-//      into bin/ (skipped if already present).
+//   1. Download Linux x86_64 btp + cf binaries into bin/. The versions are the
+//      exact pins in package.json (btpCliVersion, cfCliVersion). The download is
+//      skipped only when bin/VERSIONS.json records the same versions; a changed
+//      pin re-downloads. The cf download must resolve to a file name that carries
+//      the pinned version, otherwise the build fails. bin/VERSIONS.json ships in
+//      the zip; the About page shows it (prereq:bundledVersions).
 //   2. Stage a self-contained app tree in apps/figaf-manager/.staging/:
 //        cloud/, host.cloud.js, bin/, manifest.yml, package.json,
 //        node_modules/@figaf/{core,ui}/  (copied from packages/, NOT symlinked —
@@ -34,12 +38,62 @@ try {
 }
 
 const VERSION      = pkg.version;
-const BTP_VERSION  = pkg.btpCliVersion  || "2.106.1";
+const BTP_VERSION  = pkg.btpCliVersion;
+const CF_VERSION   = pkg.cfCliVersion;
+const NODE_ENGINE  = (pkg.engines && pkg.engines.node) || null;
+if (!BTP_VERSION || !CF_VERSION) {
+  console.error("\napps/figaf-manager/package.json must pin btpCliVersion and cfCliVersion (exact versions).");
+  process.exit(1);
+}
 
-const BIN_DIR   = path.join(APP_DIR, "bin");
-const STAGE_DIR = path.join(APP_DIR, ".staging");
-const DIST_DIR  = path.join(APP_DIR, "dist");
-const OUT_ZIP   = path.join(DIST_DIR, `figaf-manager-app-${VERSION}.zip`);
+const BIN_DIR       = path.join(APP_DIR, "bin");
+const VERSIONS_FILE = path.join(BIN_DIR, "VERSIONS.json");
+const STAGE_DIR     = path.join(APP_DIR, ".staging");
+const DIST_DIR      = path.join(APP_DIR, "dist");
+const OUT_ZIP       = path.join(DIST_DIR, `figaf-manager-app-${VERSION}.zip`);
+
+function cfDownloadUrl(version) {
+  return `https://packages.cloudfoundry.org/stable?release=linux64-binary&version=${version}&source=github`;
+}
+function btpDownloadUrl(version) {
+  return `https://tools.hana.ondemand.com/additional/btp-cli-linux-amd64-${version}.tar.gz`;
+}
+
+// bin/VERSIONS.json: what the build put into bin/ (and, after staging, the
+// exact npm dependency versions). Read at runtime by host.getBundledVersions().
+function readVersions() {
+  try { return JSON.parse(fs.readFileSync(VERSIONS_FILE, "utf8")); } catch { return null; }
+}
+function writeVersions() {
+  const v = {
+    manager: VERSION,
+    btp: BTP_VERSION,
+    cf: CF_VERSION,
+    node: NODE_ENGINE,
+    builtAt: new Date().toISOString(),
+    sources: { btp: btpDownloadUrl(BTP_VERSION), cf: cfDownloadUrl(CF_VERSION) },
+  };
+  fs.writeFileSync(VERSIONS_FILE, JSON.stringify(v, null, 2) + "\n");
+  return v;
+}
+
+// Exact installed versions from the workspace package-lock.json (what `npm ci`
+// installs in CI): the workspace's own node_modules entry first, then the
+// hoisted one. Rewrites `deps` in place and returns the pins.
+function pinFromLockfile(deps, skip, workspacePath) {
+  const lock = JSON.parse(fs.readFileSync(path.join(WORKSPACE_ROOT, "package-lock.json"), "utf8"));
+  const pinned = {};
+  for (const name of Object.keys(deps)) {
+    if (skip.includes(name)) continue;
+    const local   = lock.packages[`${workspacePath}/node_modules/${name}`];
+    const hoisted = lock.packages[`node_modules/${name}`];
+    const v = (local && local.version) || (hoisted && hoisted.version);
+    if (!v) throw new Error(`${name} is not in package-lock.json — run npm install at the workspace root and commit the lockfile`);
+    deps[name] = v;
+    pinned[name] = v;
+  }
+  return pinned;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -58,9 +112,13 @@ function copyDir(src, dest, shouldSkip = () => false) {
   }
 }
 
+// Resolves with the redirect chain (every URL visited, the final one last) so
+// callers can verify WHAT was downloaded, not only that something was.
 function httpsGet(url, destPath, onProgress) {
   return new Promise((resolve, reject) => {
+    const chain = [];
     function fetch(currentUrl, hops) {
+      chain.push(currentUrl);
       if (hops > 8) return reject(new Error("Too many redirects"));
       const headers = {
         "User-Agent": "figaf-manager-build",
@@ -82,7 +140,7 @@ function httpsGet(url, destPath, onProgress) {
           if (onProgress && total) onProgress(got, total);
         });
         res.pipe(out);
-        out.on("finish", resolve);
+        out.on("finish", () => resolve({ chain }));
         out.on("error", reject);
         res.on("error", reject);
       }).on("error", reject);
@@ -114,35 +172,57 @@ function extractTarGz(tarPath, destDir, stripComponents = 1, excludes = []) {
 
 async function ensureBinaries() {
   await fsp.mkdir(BIN_DIR, { recursive: true });
-
+  const recorded = readVersions();
   const btpBin = path.join(BIN_DIR, "btp");
-  if (!fs.existsSync(btpBin)) {
+  const cfBin  = path.join(BIN_DIR, "cf");
+
+  // A binary is reused only when bin/VERSIONS.json says it IS the pinned
+  // version. An unrecorded binary (older builds wrote no record) is replaced.
+  const needBtp = !fs.existsSync(btpBin) || !recorded || recorded.btp !== BTP_VERSION;
+  const needCf  = !fs.existsSync(cfBin)  || !recorded || recorded.cf  !== CF_VERSION;
+
+  if (needBtp) {
+    if (fs.existsSync(btpBin)) {
+      log(`[btp] bin/btp is ${(recorded && recorded.btp) || "unrecorded"}, pin is ${BTP_VERSION} — re-downloading.`);
+      fs.unlinkSync(btpBin);
+    }
     const btpTarName = `btp-cli-linux-amd64-${BTP_VERSION}.tar.gz`;
-    const btpUrl = `https://tools.hana.ondemand.com/additional/${btpTarName}`;
     const tmpTar = path.join(os.tmpdir(), btpTarName);
     log(`[btp] Downloading ${btpTarName}…`);
-    await httpsGet(btpUrl, tmpTar, (got, total) =>
+    await httpsGet(btpDownloadUrl(BTP_VERSION), tmpTar, (got, total) =>
       process.stdout.write(`\r[btp] ${Math.round((got / total) * 100)}%   `));
     process.stdout.write("\n");
     log("[btp] Extracting…");
     extractTarGz(tmpTar, BIN_DIR);
-    const found = fs.readdirSync(BIN_DIR).find(f => !f.endsWith(".tar.gz") && !f.endsWith(".gitkeep") && f !== "btp" && f !== "cf" && f !== "LICENSE" && f !== "NOTICE");
+    const keep = new Set(["btp", "cf", "cf8", "LICENSE", "NOTICE", "VERSIONS.json"]);
+    const found = fs.readdirSync(BIN_DIR).find(f => !f.endsWith(".tar.gz") && !f.endsWith(".gitkeep") && !keep.has(f));
     if (found) fs.renameSync(path.join(BIN_DIR, found), btpBin);
+    if (!fs.existsSync(btpBin)) throw new Error("btp binary missing after extraction");
     fs.chmodSync(btpBin, "755");
     try { fs.unlinkSync(tmpTar); } catch {}
-    log("[btp] Done.");
+    log(`[btp] Done (${BTP_VERSION}).`);
   } else {
-    log("[btp] Already in bin/ — skipping download.");
+    log(`[btp] bin/btp is ${BTP_VERSION} (bin/VERSIONS.json) — skipping download.`);
   }
 
-  const cfBin = path.join(BIN_DIR, "cf");
-  if (!fs.existsSync(cfBin)) {
-    const cfUrl = "https://packages.cloudfoundry.org/stable?release=linux64-binary&version=v8&source=github";
-    const tmpTar = path.join(os.tmpdir(), "cf8-cli-linux-x86-64.tar.gz");
-    log("[cf]  Downloading cf CLI v8 (latest stable for linux64)…");
-    await httpsGet(cfUrl, tmpTar, (got, total) =>
+  if (needCf) {
+    if (fs.existsSync(cfBin)) {
+      log(`[cf]  bin/cf is ${(recorded && recorded.cf) || "unrecorded"}, pin is ${CF_VERSION} — re-downloading.`);
+      fs.unlinkSync(cfBin);
+    }
+    const marker = `cf8-cli_${CF_VERSION}_linux_x86-64`;
+    const tmpTar = path.join(os.tmpdir(), `${marker}.tgz`);
+    log(`[cf]  Downloading cf CLI ${CF_VERSION} (linux64)…`);
+    const { chain } = await httpsGet(cfDownloadUrl(CF_VERSION), tmpTar, (got, total) =>
       total ? process.stdout.write(`\r[cf]  ${Math.round((got / total) * 100)}%   `) : null);
     process.stdout.write("\n");
+    // packages.cloudfoundry.org redirects to the GitHub release asset; the
+    // asset name carries the version. No match = not the pinned version.
+    const visited = chain.map((u) => { try { return decodeURIComponent(u); } catch { return u; } });
+    if (!visited.some((u) => u.includes(marker))) {
+      try { fs.unlinkSync(tmpTar); } catch {}
+      throw new Error(`cf download did not resolve to ${marker}.tgz (last URL: ${visited[visited.length - 1]}) — refusing to bundle an unverified version`);
+    }
     log("[cf]  Extracting…");
     extractTarGz(tmpTar, BIN_DIR, 0, ["cf"]);
     const cf8 = path.join(BIN_DIR, "cf8");
@@ -150,10 +230,13 @@ async function ensureBinaries() {
     if (!fs.existsSync(cfBin)) throw new Error("cf binary missing after extraction (expected cf8 in the tarball)");
     fs.chmodSync(cfBin, "755");
     try { fs.unlinkSync(tmpTar); } catch {}
-    log("[cf]  Done.");
+    log(`[cf]  Done (${CF_VERSION}).`);
   } else {
-    log("[cf]  Already in bin/ — skipping download.");
+    log(`[cf]  bin/cf is ${CF_VERSION} (bin/VERSIONS.json) — skipping download.`);
   }
+
+  const v = writeVersions();
+  log(`[bin] VERSIONS.json written: btp ${v.btp}, cf ${v.cf}, node ${v.node || "unpinned"}.`);
 }
 
 // ─── Step 2: Stage a self-contained app tree ──────────────────────────────────
@@ -212,6 +295,12 @@ async function stage() {
   stagedPkg.dependencies["@figaf/ui"]   = uiPkgVersion;
   stagedPkg.bundledDependencies = ["@figaf/core", "@figaf/ui"];
   delete stagedPkg.bundleDependencies;
+  // Exact versions for the public dependencies, from the workspace lockfile.
+  // Without this, `npm install` below would float within the package.json
+  // ranges on every build. (Transitive dependencies still resolve at build
+  // time — a staged lockfile is the next step, after a manager push test.)
+  const pins = pinFromLockfile(stagedPkg.dependencies, ["@figaf/core", "@figaf/ui"], "apps/figaf-manager");
+  log(`[stage] Pinned from package-lock.json: ${Object.entries(pins).map(([n, v]) => `${n}@${v}`).join(", ")}`);
   fs.writeFileSync(path.join(STAGE_DIR, "package.json"), JSON.stringify(stagedPkg, null, 2));
 
   log("[stage] Running npm install --omit=dev in staging (public registry deps only)…");
@@ -219,6 +308,12 @@ async function stage() {
     cwd: STAGE_DIR,
     stdio: "inherit",
   });
+
+  const installed = {};
+  for (const name of Object.keys(stagedPkg.dependencies)) {
+    try { installed[name] = JSON.parse(fs.readFileSync(path.join(STAGE_DIR, "node_modules", name, "package.json"), "utf8")).version; }
+    catch { installed[name] = null; }
+  }
 
   // v2 XSUAA upgrade (auth-gate-implementation-plan.md §2.4):
   // bundle the wizard's approuter (`@figaf/manager-approuter`) so the
@@ -228,7 +323,14 @@ async function stage() {
   // stage it at .staging/manager-approuter/ (sibling of cloud/, NOT under
   // packages/), with its own node_modules/ populated by a separate
   // `npm install --omit=dev` so the buildpack doesn't need to touch it.
-  await stageManagerApprouter();
+  const approuterVersion = await stageManagerApprouter();
+
+  // The staged copy of bin/VERSIONS.json gets the exact npm versions too.
+  const bins = readVersions();
+  if (!bins) throw new Error("bin/VERSIONS.json is missing — run the build once without --skip-binaries so the CLI versions are recorded");
+  const staged = { ...bins, npm: { ...installed, ...(approuterVersion ? { "@sap/approuter": approuterVersion } : {}) } };
+  fs.writeFileSync(path.join(STAGE_DIR, "bin", "VERSIONS.json"), JSON.stringify(staged, null, 2) + "\n");
+  log(`[stage] bin/VERSIONS.json: btp ${staged.btp}, cf ${staged.cf}, node ${staged.node || "unpinned"}, ${Object.entries(staged.npm).map(([n, v]) => `${n}@${v}`).join(", ")}`);
 
   log("[stage] Done.");
 }
@@ -260,11 +362,20 @@ async function stageManagerApprouter() {
   fs.mkdirSync(scratch, { recursive: true });
   copyDir(src, scratch, name => name === "node_modules" || name === "static" || name.endsWith(".test.js"));
 
+  // Same rule as the manager itself: exact versions from the workspace lockfile.
+  const approuterPkgPath = path.join(scratch, "package.json");
+  const approuterPkg = JSON.parse(fs.readFileSync(approuterPkgPath, "utf8"));
+  const approuterPins = pinFromLockfile(approuterPkg.dependencies, [], "packages/manager-approuter");
+  fs.writeFileSync(approuterPkgPath, JSON.stringify(approuterPkg, null, 2));
+  log(`[stage] manager-approuter pinned from package-lock.json: ${Object.entries(approuterPins).map(([n, v]) => `${n}@${v}`).join(", ")}`);
+
   log("[stage] Running npm install --omit=dev in manager-approuter scratch…");
   execSync("npm install --omit=dev --no-package-lock --no-audit --no-fund", {
     cwd: scratch,
     stdio: "inherit",
   });
+  let approuterVersion = null;
+  try { approuterVersion = JSON.parse(fs.readFileSync(path.join(scratch, "node_modules", "@sap", "approuter", "package.json"), "utf8")).version; } catch {}
 
   const tarballOut = path.join(STAGE_DIR, "manager-approuter.tar.gz");
   log("[stage] Compressing manager-approuter → manager-approuter.tar.gz (single entry in zip)…");
@@ -285,6 +396,7 @@ async function stageManagerApprouter() {
 
   const mb = (fs.statSync(tarballOut).size / 1024 / 1024).toFixed(1);
   log(`[stage] manager-approuter.tar.gz staged (${mb} MB, 1 entry)`);
+  return approuterVersion;
 }
 
 // ─── Step 3: Build zip from staging ───────────────────────────────────────────
@@ -313,8 +425,9 @@ async function buildZip() {
 
 (async () => {
   log(`\nfigaf-manager build  v${VERSION}`);
-  log(`  btp CLI: ${BTP_VERSION}`);
-  log(`  cf  CLI: v8 latest-stable\n`);
+  log(`  btp CLI: ${BTP_VERSION}   (package.json btpCliVersion)`);
+  log(`  cf  CLI: ${CF_VERSION}   (package.json cfCliVersion)`);
+  log(`  node   : ${NODE_ENGINE || "unpinned"}   (package.json engines.node)\n`);
 
   const skipBinaries = process.argv.includes("--skip-binaries");
   const skipNpm      = process.argv.includes("--skip-npm");

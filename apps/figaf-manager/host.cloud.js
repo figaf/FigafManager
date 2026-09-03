@@ -49,6 +49,17 @@ function createHost({ sessionId }) {
 
     getInstalledVersion: () => PKG_VERSION,
 
+    // Versions recorded by scripts/build-zip.js into bin/VERSIONS.json (the
+    // pinned btp and cf CLI versions, the Node engine, the pinned npm
+    // dependencies, the build time). Null in a checkout without a build.
+    getBundledVersions() {
+      // Same rule as resolveBinary: on win32 the CLIs come from PATH, so the
+      // build record does not describe what runs — report "no record".
+      if (process.platform === "win32") return null;
+      try { return JSON.parse(fs.readFileSync(path.join(__dirname, "bin", "VERSIONS.json"), "utf8")); }
+      catch { return null; }
+    },
+
     getUpdateStagingDir: () => path.join(os.tmpdir(), "figaf-update-" + sessionId),
 
     getDeployTargetForSelf: () => (VCAP_TARGET ? { ...VCAP_TARGET } : null),

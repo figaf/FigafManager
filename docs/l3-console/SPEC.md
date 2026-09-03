@@ -298,6 +298,11 @@ prepared) · Connections · Figaf Tool · Session & access (`#/session`,
 sub-route `add-btp`) · About & updates. Hash routes; a page that needs cf
 waits behind the sign-in gate; silent auto sign-in (session resume, then
 stored user).
+About & updates shows the versions the manager runs with (`prereq:bundledVersions`,
+2026-09-04): the Node runtime, the btp and cf CLIs as they report themselves,
+each against the version the build pinned in `bin/VERSIONS.json`, the pinned
+npm dependencies and the build time. The environment checks for the two CLIs
+turn red when a CLI does not start or reports another version than the pin.
 Alex's Figaf Tool flows (deploy / update / connect) run as local steppers
 inside the Figaf Tool page. The desktop installer keeps the wizard;
 `FIGAF_CONSOLE_UI=0` restores it in the cloud. Do not click the blue

@@ -65,6 +65,17 @@ Prerequisites on the dev machine:
    on the developer's own machine with the developer's own login; product
    code and its session isolation stay untouched.
 
+   **Hazard (seen 2026-09-04).** The copied config carries the developer's
+   refresh token. If the access token has already expired when the specs
+   start, the first seeded session that refreshes gets a new token pair and
+   the UAA revokes the old refresh token: for the other seeded server AND for
+   the developer's own `cf`. Symptom: a red terminal line "The token expired,
+   was revoked, or the token ID is incorrect", and `cf oauth-token` failing on
+   the dev machine afterwards. Cure: `cf login --sso` again. Rule from now on:
+   run `cf oauth-token > $null` (PowerShell; it refreshes the developer's
+   token and prints nothing) right before `npm run test:e2e`, so the copies
+   hold a fresh access token and never need to refresh during the run.
+
 ## Rules
 
 - **Read-only by default.** Specs in the default suite must not change CF

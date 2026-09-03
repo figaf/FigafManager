@@ -210,7 +210,7 @@ npm run build:manager
 
 Output: **`apps/figaf-manager/dist/figaf-manager-app-<version>.zip`**
 
-The script downloads pinned Linux `btp` + `cf` binaries into `apps/figaf-manager/bin/` (cached — skipped on subsequent runs), stages a self-contained app tree under `.staging/`, then zips it. Upload the resulting `.zip` together with `apps/figaf-manager/manifest.yml` via BTP Cockpit *Deploy Application*.
+The script downloads the pinned Linux `btp` + `cf` binaries (`btpCliVersion`, `cfCliVersion` in `apps/figaf-manager/package.json`) into `apps/figaf-manager/bin/` (cached; re-downloaded when a pin changes; the versions are recorded in `bin/VERSIONS.json`), stages a self-contained app tree under `.staging/` with the exact dependency versions from the workspace lockfile, then zips it. Upload the resulting `.zip` together with `apps/figaf-manager/manifest.yml` via BTP Cockpit *Deploy Application*.
 
 ---
 

@@ -33,14 +33,24 @@ Last edited 2026-09-03.
    auto-selects it` — fails on master too; fix or quarantine. The cloud tests
    (`apps/figaf-manager/cloud/*.test.js`) are not part of `npm test` and so
    not part of CI.
-7. **Pinning**: the cf CLI is downloaded as "latest v8" at build time and its
-   version is recorded nowhere; no `engines.node`, so the buildpack picks its
-   default Node; buildpack and stack unpinned; staging installs the npm
-   dependencies without a lockfile. CF stack `cflinuxfs4` is deprecated (new
-   pushes end 2027-04, `cflinuxfs5` default from 2027-02). Proposal: pin the
-   cf version in `package.json` next to `btpCliVersion`, add `engines.node`
-   `22.x` (the Figaf tool's approuter template already has it), write the
-   bundled versions into the zip and show them on the About page.
+7. **Pinning** (small parts done 2026-09-04): `btpCliVersion` and
+   `cfCliVersion` in `apps/figaf-manager/package.json` fix the bundled CLIs;
+   `build-zip.js` downloads exactly those versions, re-downloads when a pin
+   changes, fails when the download does not match, and writes
+   `bin/VERSIONS.json`; `engines.node` is `22.x` for the manager and its
+   approuter; the staged `package.json` carries the exact top-level
+   dependency versions from the workspace lockfile; the About page and the
+   environment checks show the runtime versions against the pins. Still
+   open: transitive npm dependencies float within the ranges of the pinned
+   packages (a lockfile in staging needs a manager push test first); the
+   buildpack is the landscape's system buildpack; stack `cflinuxfs4` is
+   deprecated (new pushes end 2027-04, `cflinuxfs5` default from 2027-02);
+   the Figaf-tool deploy templates are unversioned
+   (`FIGAF-TOOL-MANAGEMENT-GAPS.md` 2.4). Seen in the first pinned build
+   (2026-09-04): `@sap/xsenv` 4.2.0 declares Node up to 20 in its `engines`
+   (npm warns on 22; check for a newer release), and the dev machine runs
+   Node 24, so `npm install` warns about `engines.node` 22.x there (the
+   container is what counts; CI builds with 22).
 8. **Password login for persons** (Alex's login screen shows "Username &
    password - coming soon"): product decision open. Today by design only the
    passcode (the person's password never reaches the manager; works with
@@ -54,6 +64,15 @@ Last edited 2026-09-03.
 11. **Customer manual for the L3 console**: Alex's manual covers the
     Figaf-tool flow only. The customer prerequisites are in figaf-l3-l4
     `docs/d1/MANUAL-RUNBOOK.md`.
+12. **E2E seeding and the refresh token** (2026-09-04): `e2e/global-setup.js`
+    copies the developer's `~/.cf/config.json` into each seeded server
+    session. When the access token has expired at start, the first session to
+    refresh rotates the refresh token and the UAA revokes the copies,
+    including the developer's own login (`cf oauth-token` then fails with
+    "token expired, was revoked"). Cure today: `cf login --sso` again, then
+    `cf oauth-token` right before the run (`e2e/README.md`). Fix to make:
+    global-setup refreshes the token once before copying, or seeds one
+    session only. Part of the test-suite discussion.
 
 ## Design notes still in force
 

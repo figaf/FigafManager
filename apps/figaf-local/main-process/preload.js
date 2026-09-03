@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld("figaf", {
   prereq: {
     whichBtp: () => ipcRenderer.invoke("prereq:whichBtp"),
     whichCf: () => ipcRenderer.invoke("prereq:whichCf"),
+    bundledVersions: () => ipcRenderer.invoke("prereq:bundledVersions"),
     dockerHub: () => ipcRenderer.invoke("prereq:dockerHub"),
     disk: () => ipcRenderer.invoke("prereq:disk"),
     getCliPaths: () => ipcRenderer.invoke("prereq:getCliPaths"),

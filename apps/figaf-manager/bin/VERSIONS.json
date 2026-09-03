@@ -1,0 +1,11 @@
+{
+  "manager": "26.5.0",
+  "btp": "2.106.1",
+  "cf": "8.19.0",
+  "node": "22.x",
+  "builtAt": "2026-09-03T21:44:48.064Z",
+  "sources": {
+    "btp": "https://tools.hana.ondemand.com/additional/btp-cli-linux-amd64-2.106.1.tar.gz",
+    "cf": "https://packages.cloudfoundry.org/stable?release=linux64-binary&version=8.19.0&source=github"
+  }
+}

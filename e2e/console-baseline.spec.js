@@ -223,6 +223,12 @@ test("about page shows version, update state, and environment checks", async ({ 
   await expect(page.getByText("Environment checks")).toBeVisible();
   // The hosted checks: bundled CLIs + container marked ok, Docker Hub probed.
   await expect(page.getByText("bundled in container").first()).toBeVisible();
+  // Versions card (2026-09-04): what the manager runs with, against the build's pins.
+  await expect(page.getByText("Versions", { exact: true })).toBeVisible();
+  await expect(page.getByText("Node.js runtime")).toBeVisible();
+  await expect(page.getByText("cf CLI", { exact: true })).toBeVisible();
+  // The cf row carries a real version once the check ran (the dev machine's cf).
+  await expect(page.locator('[data-version-row="cf CLI"] .kbd')).not.toHaveText("…", { timeout: 30000 });
 });
 
 test("figaf tool hub starts the update flow as a local stepper, and abandon returns", async ({ page }) => {

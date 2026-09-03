@@ -50,5 +50,6 @@
       "Bash(mkdir -p ar)",
       "Bash(tar --force-local -xzf manager-approuter.tar.gz -C ar)"
     ]
-  }
+  },
+  "outputStyle": "Explanatory"
 }

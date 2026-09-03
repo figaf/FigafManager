@@ -20,8 +20,40 @@ function AboutCheckRow({ p }) {
   );
 }
 
+// One line of the Versions card: name, the value the container reports, an
+// optional note (the build's pin), red when the two disagree.
+function VersionRow({ name, value, note, ok }) {
+  const bad = ok === false;
+  return (
+    <div data-version-row={name} style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "5px 0", borderBottom: "1px solid var(--line)" }}>
+      <div style={{ width: 220, fontWeight: 600, fontSize: 13 }}>{name}</div>
+      <span className="kbd" style={bad ? { color: "var(--fg-red, #c0392b)" } : undefined}>{value}</span>
+      {note && (
+        <span style={{ fontSize: 12, color: bad ? "var(--fg-red, #c0392b)" : "var(--ink-3)" }}>{note}</span>
+      )}
+    </div>
+  );
+}
+
+// prereq:bundledVersions result for one CLI -> VersionRow props.
+function cliRow(x) {
+  if (!x) return { value: "…" };
+  if (!x.ok) return { value: "did not start", note: x.raw || null, ok: false };
+  const value = x.version || x.raw || "version unknown";
+  if (x.expected && x.matches === false) return { value, note: `build pinned ${x.expected}`, ok: false };
+  return { value, note: x.expected ? `build pinned ${x.expected}` : "no build record", ok: true };
+}
+
+// engines.node is a line like "22.x"; the runtime reports "v22.12.0".
+function nodeMatches(runtime, engine) {
+  if (!engine || !runtime) return undefined;
+  const major = String(engine).match(/^\D*(\d+)/);
+  return major ? runtime.replace(/^v/, "").split(".")[0] === major[1] : undefined;
+}
+
 function ScreenAbout({ ctx, setCtx, onRunChecks }) {
   const api = typeof window !== "undefined" ? window.figaf : null;
+  const versions = ctx.versions || null;
   const check = ctx.selfUpdate && ctx.selfUpdate.check;
   const version =
     (typeof window !== "undefined" && window.figafVersion) ||
@@ -45,6 +77,40 @@ function ScreenAbout({ ctx, setCtx, onRunChecks }) {
         <p className="pane-desc">
           Version <span className="kbd">{version ? `v${version}` : "…"}</span> · SAP BTP · Cloud Foundry
         </p>
+      </div>
+
+      <div className="card" style={{ marginBottom: 14 }}>
+        <div style={{ fontWeight: 700, marginBottom: 4 }}>Versions</div>
+        <p style={{ fontSize: 13, color: "var(--ink-3)", margin: "0 0 8px" }}>
+          What this manager runs with. The build pins the CLI and Node versions
+          (<span className="kbd">bin/VERSIONS.json</span>); a difference shows in red.
+        </p>
+        {!versions && (
+          <div style={{ fontSize: 13, color: "var(--ink-3)" }}>
+            Loading… (filled in by the checks that run at boot; use "Run checks again" below if it stays empty)
+          </div>
+        )}
+        {versions && (
+          <div>
+            <VersionRow name="Manager" value={versions.manager ? `v${versions.manager}` : "…"} />
+            <VersionRow
+              name="Node.js runtime"
+              value={versions.node || "…"}
+              note={versions.nodeExpected ? `build pinned ${versions.nodeExpected}` : "not pinned by the build"}
+              ok={nodeMatches(versions.node, versions.nodeExpected)}
+            />
+            <VersionRow name="btp CLI" {...cliRow(versions.btp)} />
+            <VersionRow name="cf CLI" {...cliRow(versions.cf)} />
+            {versions.npm && Object.entries(versions.npm).map(([n, v]) => (
+              <VersionRow key={n} name={n} value={v || "?"} />
+            ))}
+            <VersionRow
+              name="Built"
+              value={versions.builtAt ? versions.builtAt.replace("T", " ").slice(0, 16) + " UTC" : "no build record"}
+              note={versions.bundled ? null : "dev checkout: CLIs come from PATH"}
+            />
+          </div>
+        )}
       </div>
 
       <div className="card">

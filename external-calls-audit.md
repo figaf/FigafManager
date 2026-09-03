@@ -13,7 +13,7 @@ Binary resolved via `host.resolveBinary("btp")`.
 
 | # | Command | IPC handler | Scope | Notes |
 |---|---------|-------------|-------|-------|
-| 1 | `btp --version` | `prereq:installBtp`, `prereq:locateCli` | desktop | Run after download/locate to verify the binary |
+| 1 | `btp --version` | `prereq:installBtp`, `prereq:locateCli`, `prereq:bundledVersions` | both | Run after download/locate to verify the binary; `bundledVersions` compares the reported version with the build's pin (`bin/VERSIONS.json`) for the About page and the environment checks |
 | 2 | `btp set config --login.showglobalaccounts true` | `btp:loginStart` | both | Forces GA prompt so the flow is deterministic; runs once before `btp login` |
 | 3 | `btp login --url https://cli.btp.cloud.sap --sso` | `btp:loginStart` | both | Long-lived spawn; stdout/stderr piped through GA-prompt detector + SSO-URL extractor |
 | 4 | `btp target --hierarchy true` (stdin interaction) | `btp:listGlobalAccounts`, `btp:selectGlobalAccount` | both | Long-lived spawn via `runTargetHierarchy()`; chosen index written to stdin |
@@ -53,7 +53,7 @@ Binary resolved via `host.resolveBinary("cf")`.
 
 | # | Command | IPC handler | Scope | Notes |
 |---|---------|-------------|-------|-------|
-| 1 | `cf --version` | `prereq:installCf`, `prereq:locateCli` | desktop | Verify after download/locate |
+| 1 | `cf --version` / `cf version` | `prereq:installCf`, `prereq:locateCli`, `prereq:bundledVersions` | both | Verify after download/locate; `bundledVersions` compares the reported version with the build's pin (`bin/VERSIONS.json`) |
 | 2 | `cf login -a https://api.<landscape>.hana.ondemand.com --sso` | `cf:loginStart` | both | Long-lived spawn; parses "Select an org / space" picker output |
 | 3 | `cf logout` | `btp:cancelLogin`, `btp:logout`, `cf:logout` | both | |
 | 4 | `cf target` | `cf:targetOrgSpace` | both | Reads org/space/user from output |
@@ -180,7 +180,7 @@ All runtime calls go through `https.get` (Node built-in). No third-party HTTP li
 | # | URL | Purpose | Auth / Headers |
 |---|-----|---------|----------------|
 | 15 | `https://tools.hana.ondemand.com/additional/btp-cli-linux-amd64-<version>.tar.gz` | Download btp Linux binary for the cloud zip | EULA cookie |
-| 16 | `https://packages.cloudfoundry.org/stable?release=linux64-binary&version=v8&source=github` | Download cf CLI v8 Linux binary for the cloud zip | None |
+| 16 | `https://packages.cloudfoundry.org/stable?release=linux64-binary&version=<cfCliVersion>&source=github` | Download the pinned cf CLI Linux binary for the cloud zip. The redirect chain must resolve to `cf8-cli_<cfCliVersion>_linux_x86-64.tgz`, otherwise the build fails. Both pins live in `apps/figaf-manager/package.json`; the result is recorded in `bin/VERSIONS.json` | None |
 
 ---
 

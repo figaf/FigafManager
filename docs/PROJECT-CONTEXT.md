@@ -101,7 +101,7 @@ the manager consumes it.
 ## 7. Facts a session needs
 
 - Dev space: org `Figaf ApS_figafpartner-1`, space `figaf-l3-l4`, landscape eu10-004. Never target Emil's `figaf-dev` space.
-- Dev machine: cf CLI 7.5.0, MultiApps plugin 3.11.1, mbt 1.2.47. The manager bundles btp 2.106.1 and cf v8 (Linux builds).
+- Dev machine: cf CLI 8.7.11 (winget package `CloudFoundry.CLI.v8`), MultiApps plugin 3.11.1, mbt 1.2.47. The manager bundles btp 2.106.1 and cf 8.19.0 (Linux builds; pinned in `apps/figaf-manager/package.json`, recorded in `bin/VERSIONS.json`).
 - Manager version 26.5.0; release 0.4.0 (B2B Archiving Setup + shared backend).
 - Virgin runs #1 to #7 passed in the dev space (record: figaf-l3-l4 `docs/d1/RUNBOOK-VIRGIN.md`). Run #7 (2026-09-03) proved the install order of decision 0009: one token, one passcode, one restart, one XSUAA instance.
 - The branch `poc/l3-app-manager` is pushed to GitHub but not merged into master. Merging is coordinated with Alex.

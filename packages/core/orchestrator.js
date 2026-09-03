@@ -82,6 +82,11 @@ const DEPLOYMENT_ZIP_URL =
  *   mode after a v2-aware build-zip run. Electron returns null (the v2
  *   XSUAA upgrade flow does not apply to the desktop installer).
  *
+ * @property {() => object|null} [getBundledVersions]
+ *   Cloud only: the contents of bin/VERSIONS.json written by build-zip.js
+ *   ({ manager, btp, cf, node, npm, builtAt }). Null when absent (dev
+ *   checkout, desktop). Read by prereq:bundledVersions.
+ *
  * @property {() => string} getInstalledVersion
  *   Semver of the running app — surfaced to the renderer for the self-update
  *   banner. Electron: app.getVersion(). Cloud: figaf-manager's package.json
@@ -250,7 +255,10 @@ function createOrchestrator({ host, send, audit }) {
         // opts.quiet suppresses per-line streaming to the terminal drawer (used
         // for large JSON payloads like `list accounts/subscription`, which carry
         // base64 icons). stdout is still captured for the return value + audit.
-        if (opts.quiet) return;
+        // opts.silent goes further: no stdout, stderr or spawn-error lines in
+        // the drawer at all (the command echo and the audit stay). For probes
+        // whose result has its own place in the UI, e.g. prereq:bundledVersions.
+        if (opts.quiet || opts.silent) return;
         for (const line of text.split(/\r?\n/)) {
           if (line.length) log(opts.source || cmd, "line", line);
         }
@@ -258,12 +266,13 @@ function createOrchestrator({ host, send, audit }) {
       proc.stderr.on("data", (buf) => {
         const text = buf.toString();
         stderr += text;
+        if (opts.silent) return;
         for (const line of text.split(/\r?\n/)) {
           if (line.length) log(opts.source || cmd, "err", line);
         }
       });
       proc.on("error", (err) => {
-        log(opts.source || cmd, "err", err.message);
+        if (!opts.silent) log(opts.source || cmd, "err", err.message);
         auditHandle.exit({ code: -1, stdout: opts.auditStdout === false ? "[not recorded: contains credentials]" : stdout, stderr, errorMessage: err.message });
         resolve({ code: -1, stdout, stderr, error: err.message });
       });
@@ -901,6 +910,46 @@ function createOrchestrator({ host, send, audit }) {
     },
 
     // prerequisites ───────────────────────────────────────────────────────────
+
+    /**
+     * What the manager runs with: the Node runtime, the btp and cf CLIs it
+     * will spawn (their own version output) against the versions the build
+     * pinned (bin/VERSIONS.json), and the pinned npm dependencies. Hosted:
+     * the bundled binaries. Desktop or dev checkout: the CLIs from PATH, no
+     * build record. Never throws; a CLI that does not start is reported.
+     */
+    async "prereq:bundledVersions"() {
+      const build = (host.getBundledVersions && host.getBundledVersions()) || null;
+      async function probe(bin, args, re) {
+        try {
+          // silent: the result is shown on the About page and in the checks;
+          // its lines would only bury real failures in the terminal drawer.
+          const r = await run(host.resolveBinary(bin), args, { source: bin, silent: true });
+          // run() never throws: a binary that does not start comes back as
+          // code -1 with the spawn error in r.error (e.g. ENOENT).
+          const text = ((r.stdout || "") + "\n" + (r.stderr || "") + "\n" + (r.error || "")).trim();
+          const m = r.code === 0 ? text.match(re) : null;
+          return { ok: r.code === 0, version: m ? m[1] : null, raw: text.split(/\r?\n/).find(Boolean) || "" };
+        } catch (e) {
+          return { ok: false, version: null, raw: e.message };
+        }
+      }
+      const btp = await probe("btp", ["--version"], /(\d+\.\d+\.\d+)/);
+      const cf  = await probe("cf",  ["version"],   /version (\d+\.\d+\.\d+)/);
+      const expected = (key) => (build && build[key]) || null;
+      const compare = (probed, want) => ({ ...probed, expected: want, matches: want ? probed.version === want : null });
+      return {
+        ok: true,
+        bundled: !!build,
+        manager: (host.getInstalledVersion && host.getInstalledVersion()) || null,
+        node: process.version,
+        nodeExpected: expected("node"),
+        btp: compare(btp, expected("btp")),
+        cf:  compare(cf,  expected("cf")),
+        npm: (build && build.npm) || null,
+        builtAt: expected("builtAt"),
+      };
+    },
 
     async "prereq:whichBtp"() {
       if (host.isHosted) {

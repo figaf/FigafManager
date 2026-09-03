@@ -134,6 +134,7 @@
     prereq: {
       whichBtp:             function ()  { return rpc("prereq:whichBtp"); },
       whichCf:              function ()  { return rpc("prereq:whichCf"); },
+      bundledVersions:      function ()  { return rpc("prereq:bundledVersions"); },
       getCliPaths:          function ()  { return rpc("prereq:getCliPaths"); },
       clearCliPath:         function (a) { return rpc("prereq:clearCliPath", a); },
       installBtp:           function ()  { return rpc("prereq:installBtp"); },

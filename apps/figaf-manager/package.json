@@ -11,7 +11,11 @@
     "download-binaries": "node scripts/build-zip.js --skip-npm --skip-zip",
     "postinstall": "node -e \"const fs=require('fs');['bin/btp','bin/cf'].forEach(p=>{try{fs.chmodSync(p,'755')}catch(_){}})\""
   },
+  "engines": {
+    "node": "22.x"
+  },
   "btpCliVersion": "2.106.1",
+  "cfCliVersion": "8.19.0",
   "dependencies": {
     "@figaf/core": "*",
     "@figaf/ui": "*",

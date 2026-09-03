@@ -57,9 +57,31 @@ async function runConsoleChecks(setCtx) {
   const mark = (id, patch) =>
     setCtx((c) => ({ ...c, prereqs: c.prereqs.map((p) => (p.id === id ? { ...p, ...patch } : p)) }));
   setCtx((c) => ({ ...c, prereqsStarted: true }));
-  mark("btp", { status: "done", sub: "bundled in container" });
-  mark("cf", { status: "done", sub: "bundled in container" });
+  mark("btp", { status: "running", sub: "bundled in container" });
+  mark("cf", { status: "running", sub: "bundled in container" });
   mark("disk", { status: "done", sub: "container filesystem ready" });
+  // The bundled CLIs report their own version; the build's pin (bin/VERSIONS.json)
+  // is the expectation. A mismatch or a CLI that does not start is a failed check.
+  try {
+    const v = api.prereq.bundledVersions ? await api.prereq.bundledVersions() : null;
+    const row = (x, name) => {
+      if (!x || !x.ok) return { status: "error", sub: `${name} did not start${x && x.raw ? `: ${x.raw}` : ""}` };
+      const ver = x.version || x.raw || "version unknown";
+      if (x.expected && x.matches === false) return { status: "error", sub: `bundled in container · ${name} ${ver}, but the build pinned ${x.expected}` };
+      return { status: "done", sub: `bundled in container · ${name} ${ver}` };
+    };
+    if (v) {
+      mark("btp", row(v.btp, "btp"));
+      mark("cf", row(v.cf, "cf"));
+      setCtx((c) => ({ ...c, versions: v }));
+    } else {
+      mark("btp", { status: "done", sub: "bundled in container" });
+      mark("cf", { status: "done", sub: "bundled in container" });
+    }
+  } catch (e) {
+    mark("btp", { status: "error", sub: e.message });
+    mark("cf", { status: "error", sub: e.message });
+  }
   mark("net", { status: "running" });
   try {
     const r = await api.prereq.dockerHub();

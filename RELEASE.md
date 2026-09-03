@@ -58,6 +58,24 @@ release pipeline.
 | `manifest.yml` | committed in repo (published verbatim) | First-time cockpit "Deploy Application" deployment descriptor |
 | `Figaf-Installer-X.Y.Z-x64.exe` (portable) | `npm run build:local` | First-time download, and the desktop self-update target (matched by `DESKTOP_ASSET_REGEX`; the row opens the release page to download it) |
 
+## Bundled CLI and Node versions (pinned)
+
+The cloud zip carries Linux builds of the SAP `btp` CLI and the `cf` CLI. Their
+versions are pinned in `apps/figaf-manager/package.json`:
+
+- `btpCliVersion` — downloaded from `tools.hana.ondemand.com`.
+- `cfCliVersion` — downloaded from `packages.cloudfoundry.org` as that exact
+  version; the build fails if the download does not resolve to it.
+- `engines.node` — the Node line the buildpack must use (`22.x`); CI builds with
+  the same major. `packages/manager-approuter` pins the same.
+
+`build-zip.js` writes `bin/VERSIONS.json` into the zip: the CLI versions, the
+Node engine, the exact npm dependency versions (taken from the workspace
+`package-lock.json`) and the build time. The manager's About page shows this
+record next to what the container really runs, and the environment checks turn
+red on a difference. To bump a CLI: change the pin, run `npm run build:manager`
+(it re-downloads), run the install smoke, release. Never edit `bin/` by hand.
+
 ## Gotchas
 
 - **Tag must be valid semver.** `vMAJOR.MINOR.PATCH` (three numeric parts,
