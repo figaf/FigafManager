@@ -133,3 +133,25 @@
 .access-name { width: 160px; flex-shrink: 0; font-size: 13px; font-weight: 600; color: var(--ink-0); }
 .access-purpose { flex: 1; min-width: 0; font-size: 12px; color: var(--ink-3); line-height: 1.45; }
 .access-row .pill { flex-shrink: 0; }
+
+/* ── Action outcome: the result of the LAST failed action (screen-l3-apps.jsx).
+   Stays until dismissed; the status refresh must never remove it. ─────────── */
+.action-outcome {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid #e0a0a0;
+  border-left: 4px solid #b42318;
+  border-radius: 10px;
+  background: #fdf3f3;
+  font-size: 13px;
+}
+.ao-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ao-title { color: var(--ink-0); }
+.ao-time { font-size: 12px; color: var(--ink-3); margin-left: auto; }
+.ao-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 10px 0 0; }
+.ao-facts dt { color: var(--ink-3); font-size: 12px; padding-top: 1px; }
+.ao-facts dd { margin: 0; color: var(--ink-1); word-break: break-word; }
+.ao-facts dd.is-mono { font-family: var(--font-mono); font-size: 12px; }
+.ao-hint { font-weight: 600; color: var(--ink-0); }
+.ao-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.pill.red { background: #fde8e8; color: #b42318; }

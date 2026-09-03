@@ -24,6 +24,7 @@ const path = require("path");
 
 const {
   VERSION_ENV,
+  APPS_DOMAIN_PLACEHOLDER,
   loadCatalog,
   computeAppStatus,
   buildDestinationsEnv,
@@ -154,7 +155,7 @@ test("computeAppStatus rollup", () => {
 
 test("buildPushArgs / buildDestinationsEnv", () => {
   const args = buildPushArgs(CATALOG.platform.cfApps[0], "/tmp/x", { noStart: true });
-  assert.deepEqual(args, ["push", "arch-backend", "-p", "/tmp/x", "-b", "nodejs_buildpack", "-m", "256M", "-k", "1024M", "--no-start"]);
+  assert.deepEqual(args, ["push", "arch-backend", "-p", "/tmp/x", "--no-manifest", "-b", "nodejs_buildpack", "-m", "256M", "-k", "1024M", "--no-start"]);
   const dest = JSON.parse(buildDestinationsEnv("figaf-b2b-gov-backend", "https://x.example"));
   assert.deepEqual(dest, [{ name: "figaf-b2b-gov-backend", url: "https://x.example", forwardAuthToken: true }]);
 });
@@ -623,4 +624,207 @@ test("handlers report a friendly error when the host has no artifact store", asy
     assert.equal(r.ok, false);
     assert.match(r.error, /artifact store/);
   }
+});
+
+// ─── D. landscape-independent release (decision 0008) ────────────────────────
+
+function makeV3DirWithPlaceholder() {
+  const dir = makeChannelDir(CATALOG_V3);
+  fs.writeFileSync(path.join(dir, "xs-security.json"), JSON.stringify({
+    xsappname: "figaf-l3l4",
+    "oauth2-configuration": { "redirect-uris": [`https://*.${APPS_DOMAIN_PLACEHOLDER}/**`] },
+  }));
+  return dir;
+}
+
+test("l3:provisionServices: fills __CF_APPS_DOMAIN__ in a release config file from the landscape's cfapps domain; the release file stays untouched", async () => {
+  const dir = makeV3DirWithPlaceholder();
+  const state = { db: "create succeeded", credstore: "create succeeded" }; // only xsuaa missing
+  const { ctx, calls, logLines } = makeCtx(dir, (args) => {
+    if (args[0] === "curl" && args[1] === "/v3/domains") {
+      return { code: 0, stdout: JSON.stringify({ resources: [{ name: "apps.internal" }, { name: "cfapps.eu10-004.hana.ondemand.com" }] }) };
+    }
+    if (args[0] === "create-service") { state[args[3]] = "create succeeded"; return { code: 0, stdout: "" }; }
+    if (args[0] === "service") { const st = state[args[1]]; return st ? { code: 0, stdout: `status:    ${st}\n` } : { code: 1, stdout: "" }; }
+    return null;
+  });
+  ctx.sleep = async () => {};
+  ctx.pollIntervalMs = 0;
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:provisionServices"]({});
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.created, ["xsuaa"]);
+  const xsCreate = calls.find((c) => c.args[0] === "create-service" && c.args[3] === "xsuaa");
+  assert.equal(xsCreate.args[4], "-c");
+  const written = fs.readFileSync(xsCreate.args[5], "utf8");
+  assert.ok(!written.includes(APPS_DOMAIN_PLACEHOLDER), "placeholder must be filled");
+  assert.ok(written.includes("https://*.cfapps.eu10-004.hana.ondemand.com/**"), written);
+  assert.notEqual(path.dirname(xsCreate.args[5]), dir, "the filled copy must not overwrite the release file");
+  assert.ok(fs.readFileSync(path.join(dir, "xs-security.json"), "utf8").includes(APPS_DOMAIN_PLACEHOLDER), "release file untouched");
+  assert.ok(logLines.some((l) => l.includes("cfapps.eu10-004.hana.ondemand.com")), "the filled domain is shown in the terminal");
+});
+
+test("l3:provisionServices: no cfapps domain in the landscape -> the XSUAA instance is reported failed with a clear error and is not created", async () => {
+  const dir = makeV3DirWithPlaceholder();
+  const state = { db: "create succeeded", credstore: "create succeeded" };
+  const { ctx, calls } = makeCtx(dir, (args) => {
+    if (args[0] === "curl" && args[1] === "/v3/domains") return { code: 0, stdout: JSON.stringify({ resources: [{ name: "apps.internal" }] }) };
+    if (args[0] === "create-service") { state[args[3]] = "create succeeded"; return { code: 0, stdout: "" }; }
+    if (args[0] === "service") { const st = state[args[1]]; return st ? { code: 0, stdout: `status:    ${st}\n` } : { code: 1, stdout: "" }; }
+    return null;
+  });
+  ctx.sleep = async () => {};
+  ctx.pollIntervalMs = 0;
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:provisionServices"]({});
+  assert.equal(r.ok, false);
+  assert.equal(r.failed.length, 1);
+  assert.equal(r.failed[0].name, "xsuaa");
+  assert.match(r.failed[0].error, /no cfapps\.\* domain/);
+  assert.ok(!calls.some((c) => c.args[0] === "create-service"), "nothing is created without a domain");
+});
+
+test("l3:provisionServices: a config file WITHOUT the placeholder is passed to cf as-is from the release dir", async () => {
+  const dir = makeV3Dir(); // xs-security.json = {"xsappname":"x"}
+  const state = { db: "create succeeded", credstore: "create succeeded" };
+  const { ctx, calls } = makeCtx(dir, (args) => {
+    if (args[0] === "create-service") { state[args[3]] = "create succeeded"; return { code: 0, stdout: "" }; }
+    if (args[0] === "service") { const st = state[args[1]]; return st ? { code: 0, stdout: `status:    ${st}\n` } : { code: 1, stdout: "" }; }
+    return null;
+  });
+  ctx.sleep = async () => {};
+  ctx.pollIntervalMs = 0;
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:provisionServices"]({});
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const xsCreate = calls.find((c) => c.args[0] === "create-service" && c.args[3] === "xsuaa");
+  assert.equal(xsCreate.args[5], path.join(dir, "xs-security.json"));
+  assert.ok(!calls.some((c) => c.args[0] === "curl" && c.args[1] === "/v3/domains"), "no domain lookup without a placeholder");
+});
+
+// ─── F. Failed actions explain themselves (live failure 2026-09-03) ──────────
+//
+// Release 0.4.0 could not be installed from a manager deployed through the BTP
+// cockpit upload: the manager's own manifest.yml sat in its working directory,
+// `cf push` applied it to the L3 app and CAPI rejected "Buildpack and
+// Buildpacks fields cannot be used together". The console showed nothing: the
+// generic error was wiped by the status refresh within a second and the CLI
+// text never reached the result. These tests lock both fixes.
+
+test("buildPushArgs always passes --no-manifest, fresh install and update alike", () => {
+  const fresh = buildPushArgs(CATALOG.platform.cfApps[0], "/tmp/x", { noStart: true });
+  assert.ok(fresh.includes("--no-manifest"), fresh.join(" "));
+  assert.ok(fresh.includes("--no-start"));
+  const update = buildPushArgs(CATALOG.apps[0].cfApps[0], "/tmp/y", { noStart: false });
+  assert.ok(update.includes("--no-manifest"), update.join(" "));
+  assert.ok(!update.includes("--no-start"));
+  // -p stays the extracted release directory; nothing else names a manifest.
+  assert.equal(update[update.indexOf("-p") + 1], "/tmp/y");
+  assert.ok(!update.includes("-f"));
+});
+
+test("cliFailureDetail: last stderr lines win, the bare FAILED marker is skipped, stdout and spawn error are fallbacks", () => {
+  const { cliFailureDetail } = require("./l3-apps");
+  assert.equal(
+    cliFailureDetail({ stdout: "Pushing app x...\nApplying manifest file /home/vcap/app/manifest.yml...\nFAILED\n", stderr: "For application 'x': Buildpack and Buildpacks fields cannot be used together.\n" }),
+    "For application 'x': Buildpack and Buildpacks fields cannot be used together."
+  );
+  assert.equal(cliFailureDetail({ stdout: "line one\nFAILED\n", stderr: "" }), "line one");
+  assert.equal(cliFailureDetail({ stdout: "", stderr: "a\nb\nc\nd\n" }), "b | c | d");
+  assert.equal(cliFailureDetail({ stdout: "", stderr: "", error: "spawn cf ENOENT" }), "spawn cf ENOENT");
+  assert.equal(cliFailureDetail(null), "");
+  assert.equal(cliFailureDetail({ stderr: "x".repeat(1000) }).length, 400);
+});
+
+test("l3:install: a failed cf push carries step, CF app, command and what cf said; the terminal ends with one FAILED line; the phase event has the detail", async () => {
+  const dir = makeChannelDir();
+  const { ctx, logLines, events } = makeCtx(dir, (args) => {
+    if (args[0] === "app" && args[2] === "--guid") return { code: 1, stdout: "" }; // fresh
+    if (args[0] === "push") {
+      return {
+        code: 1,
+        stdout: "Pushing app arch-backend to org o / space s as u...\nApplying manifest file /home/vcap/app/manifest.yml...\nFAILED\n",
+        stderr: "For application 'arch-backend': Buildpack and Buildpacks fields cannot be used together.\n",
+      };
+    }
+    return { code: 0, stdout: "" };
+  });
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:install"]({ appId: "arch" });
+  assert.equal(r.ok, false);
+  assert.equal(r.step, "push");
+  assert.equal(r.cfApp, "arch-backend");
+  assert.equal(r.failedApp, "arch-backend");
+  assert.equal(r.detail, "For application 'arch-backend': Buildpack and Buildpacks fields cannot be used together.");
+  assert.equal(r.error, "cf push arch-backend failed: For application 'arch-backend': Buildpack and Buildpacks fields cannot be used together.");
+  assert.match(r.command, /^cf push arch-backend -p \S+ --no-manifest -b nodejs_buildpack -m 256M -k 1024M --no-start$/);
+  // one red summary line closes the action in the terminal drawer
+  assert.ok(logLines.some((l) => l === `install arch FAILED at step "push" (arch-backend): ${r.error}`), logLines.join("\n"));
+  // the phase event carries the same detail (for a future stepper view)
+  const ph = events.find((e) => e.channel === "l3:phase" && e.payload.step === "push" && e.payload.state === "error");
+  assert.ok(ph);
+  assert.match(ph.payload.detail, /Buildpack and Buildpacks/);
+  // nothing after the failed push
+  assert.ok(!logLines.some((l) => /bind-service|set-env|^cf start/.test(l)));
+});
+
+test("l3:install: a required bind failure names the step, the CF app and the command", async () => {
+  const dir = makeChannelDir();
+  const { ctx } = makeCtx(dir, (args) => {
+    if (args[0] === "app" && args[2] === "--guid") return { code: 1, stdout: "" };
+    if (args[0] === "bind-service" && args[2] === "db") return { code: 1, stdout: "FAILED\n", stderr: "Service instance db not found\n" };
+    return { code: 0, stdout: "" };
+  });
+  const r = await createL3Handlers(ctx)["l3:install"]({ appId: "arch" });
+  assert.equal(r.ok, false);
+  assert.equal(r.step, "bind");
+  assert.equal(r.cfApp, "arch-backend");
+  assert.equal(r.command, "cf bind-service arch-backend db");
+  assert.match(r.error, /^bind-service db failed — does the service instance exist in this space\?: Service instance db not found$/);
+});
+
+test("l3:install: a failed cf start keeps the 'see the staging log' pointer and adds cf's last lines", async () => {
+  const dir = makeChannelDir();
+  const { ctx } = makeCtx(dir, (args) => {
+    if (args[0] === "app" && args[2] === "--guid") return { code: 1, stdout: "" };
+    if (args[0] === "app" && args[1] === "arch-backend") return { code: 0, stdout: "routes:   b.example.com\n" };
+    if (args[0] === "start") return { code: 1, stdout: "Staging app...\nFAILED\n", stderr: "Start unsuccessful\nTIP: use 'cf logs arch-backend --recent' for more information\n" };
+    return { code: 0, stdout: "" };
+  });
+  const r = await createL3Handlers(ctx)["l3:install"]({ appId: "arch" });
+  assert.equal(r.ok, false);
+  assert.equal(r.step, "start");
+  assert.equal(r.command, "cf start arch-backend");
+  assert.match(r.error, /see the staging log in the terminal: Start unsuccessful \| TIP: use 'cf logs arch-backend --recent'/);
+});
+
+test("l3:remove / l3:disable failures carry step, CF app, command and cf's message; success ends with a green done line", async () => {
+  const dir = makeChannelDir();
+  const { ctx, logLines } = makeCtx(dir, (args) => {
+    if (args[0] === "delete") return { code: 1, stdout: "FAILED\n", stderr: "App 'arch-frontend' not found\n" };
+    return { code: 0, stdout: "" };
+  });
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:remove"]({ appId: "arch" });
+  assert.equal(r.ok, false);
+  assert.equal(r.step, "delete");
+  assert.equal(r.cfApp, "arch-frontend");
+  assert.equal(r.command, "cf delete arch-frontend -f");
+  assert.equal(r.error, "cf delete arch-frontend failed: App 'arch-frontend' not found");
+  assert.ok(logLines.some((l) => l.startsWith('remove arch FAILED at step "delete" (arch-frontend):')));
+  const ok = await handlers["l3:disable"]({ appId: "arch" });
+  assert.equal(ok.ok, true);
+  assert.ok(logLines.includes("disable arch: done"));
+});
+
+test("l3:install refused for a missing required service is reported as FAILED in the terminal too", async () => {
+  const v3 = JSON.parse(JSON.stringify(CATALOG));
+  v3.services = [{ name: "db", offering: "postgresql-db", plan: "free" }];
+  const dir = makeChannelDir(v3);
+  const { ctx, logLines, calls } = makeCtx(dir, (args) => (args[0] === "service" ? { code: 1, stdout: "" } : { code: 0, stdout: "" }));
+  const r = await createL3Handlers(ctx)["l3:install"]({ appId: "arch" });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /required service instance\(s\) missing: db, xsuaa/);
+  assert.ok(logLines.some((l) => l.startsWith("install arch FAILED: required service instance(s) missing")));
+  assert.ok(!calls.some((c) => c.args[0] === "push"), "nothing may be pushed");
 });

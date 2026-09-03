@@ -20,6 +20,57 @@ function L3StatusPill({ status }) {
   return <span className={`pill ${meta.cls}`}>{meta.label}</span>;
 }
 
+// The outcome of the LAST failed action (model: packages/ui/action-outcome.js).
+// It stays until the operator dismisses it or starts the next action — the
+// status refresh that follows every action must never remove it (live
+// 2026-09-03: the error flashed for under a second, then "no logs, nothing").
+function L3ActionOutcome({ outcome, onDismiss, onOpenTerminal }) {
+  const [copied, setCopied] = React.useState(false);
+  React.useEffect(() => { setCopied(false); }, [outcome]);
+  if (!outcome || outcome.ok) return null;
+  async function copy() {
+    const api = typeof window !== "undefined" ? window.figaf : null;
+    try {
+      if (api && api.shell && api.shell.writeClipboard) await api.shell.writeClipboard(outcome.report);
+      else if (navigator.clipboard) await navigator.clipboard.writeText(outcome.report);
+      setCopied(true);
+    } catch {
+      // The report is also readable on the page; nothing else to do.
+    }
+  }
+  const when = (() => { try { return new Date(outcome.at).toLocaleTimeString(); } catch { return ""; } })();
+  return (
+    <div className="action-outcome is-error" data-outcome="error" role="alert">
+      <div className="ao-head">
+        <span className="pill red">Failed</span>
+        <strong className="ao-title">{outcome.title}</strong>
+        {when && <span className="ao-time">{when}</span>}
+      </div>
+      <dl className="ao-facts">
+        {(outcome.facts || []).map((f) => (
+          <React.Fragment key={f.label}>
+            <dt>{f.label}</dt>
+            <dd className={f.label === "Command" ? "is-mono" : ""}>{f.value}</dd>
+          </React.Fragment>
+        ))}
+        {outcome.hint && (
+          <>
+            <dt>Next</dt>
+            <dd className="ao-hint">{outcome.hint}</dd>
+          </>
+        )}
+      </dl>
+      <div className="ao-actions">
+        {onOpenTerminal && (
+          <button className="btn" onClick={onOpenTerminal}>Show CLI output</button>
+        )}
+        <button className="btn" onClick={copy} disabled={!outcome.report}>{copied ? "Copied" : "Copy report"}</button>
+        <button className="btn" onClick={onDismiss}>Dismiss</button>
+      </div>
+    </div>
+  );
+}
+
 function L3ConfigForm({ app, busy, figafSystems, onApply, onCancel }) {
   const [values, setValues] = React.useState({});
   const fields = app.configForm || [];
@@ -92,7 +143,7 @@ function L3AppRow({ app, status, busy, busyLabel, figafSystems, onAction }) {
   }
 
   return (
-    <div style={{ border: "1px solid var(--line)", borderRadius: 10, padding: 14, marginBottom: 12 }}>
+    <div className="l3-app-row" data-app={app.id} style={{ border: "1px solid var(--line)", borderRadius: 10, padding: 14, marginBottom: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div style={{ fontWeight: 700 }}>{app.name}</div>
         <L3StatusPill status={st} />
@@ -327,14 +378,40 @@ function BaseServicesCard({ services, busy, onProvision, onBind, onRestart, onRe
 // onStatus (optional): receives every fresh l3:status result, so a host frame
 // (the console's setup checklist) can follow install/remove without polling.
 // onServices (optional): the same for l3:services results.
-function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus, onServices }) {
+// onOpenTerminal (optional): opens the terminal drawer (the console frame
+// passes it so the outcome panel can offer "Show CLI output").
+function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus, onServices, onOpenTerminal }) {
   const [catalog, setCatalog] = React.useState(null);   // { releaseVersion, platform, apps } | { error }
   const [statuses, setStatuses] = React.useState({});   // appId → status row
   const [platformStatus, setPlatformStatus] = React.useState(null); // catalog-v2 platform row
   const [refreshing, setRefreshing] = React.useState(false);
   const [busyApp, setBusyApp] = React.useState(null);   // appId currently running an action
   const [busyLabel, setBusyLabel] = React.useState("");
-  const [lastError, setLastError] = React.useState(null);
+  // The outcome of the LAST action (action-outcome.js model). Set when an
+  // action fails; cleared ONLY by Dismiss or by the start of the next action.
+  // Never cleared by the status refresh (see L3ActionOutcome).
+  const [outcome, setOutcome] = React.useState(null);
+  const failed = React.useCallback((action, target, r) => {
+    const build = (typeof window !== "undefined" && window.figafActionOutcome) || null;
+    const input = {
+      action,
+      appName: target,
+      result: r || { ok: false, error: "no response from the manager" },
+      managerVersion: typeof window !== "undefined" ? window.figafVersion : null,
+      releaseVersion: catalog && catalog.releaseVersion,
+      org: ctx.login.org,
+      space: ctx.login.space,
+      at: new Date().toISOString(),
+    };
+    setOutcome(build ? build(input) : {
+      ok: false,
+      title: `${action}${target ? " of " + target : ""} failed`,
+      facts: [{ label: "Error", value: (r && r.error) || "unknown error" }],
+      hint: "Open the terminal drawer: the last red lines are the Cloud Foundry error.",
+      report: JSON.stringify(input, null, 2),
+      at: input.at,
+    });
+  }, [catalog, ctx.login.org, ctx.login.space]);
   // Discovered Figaf Tool deployments for "figaf-system" config fields.
   // null = not loaded yet; [] = looked and found none (manual entry stays).
   const [figafSystems, setFigafSystems] = React.useState(null);
@@ -359,13 +436,13 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus, onServices
   async function serviceAction(kind, fn) {
     if (servicesBusy) return;
     setServicesBusy(kind);
-    setLastError(null);
+    setOutcome(null);
     try {
       const r = await fn();
-      if (r && !r.ok && r.error) setLastError(`Base services: ${r.error}`);
+      if (r && !r.ok && r.error) failed(kind, "Base services", r);
       return r;
     } catch (e) {
-      setLastError(`Base services: ${(e && e.message) || "action failed"}`);
+      failed(kind, "Base services", { ok: false, error: (e && e.message) || "action failed" });
     } finally {
       setServicesBusy(null);
       if (kind !== "restart") refreshServices();
@@ -382,10 +459,9 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus, onServices
         for (const row of s.apps) map[row.id] = row;
         setStatuses(map);
         setPlatformStatus(s.platform || null);
-        setLastError(null);
         if (onStatus) onStatus(s);
       } else if (s && s.error) {
-        setLastError(s.error);
+        failed("status", null, s);
       }
     } finally {
       setRefreshing(false);
@@ -421,14 +497,17 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus, onServices
     };
     setBusyApp(app.id);
     setBusyLabel(labels[action] || "working…");
-    setLastError(null);
+    setOutcome(null);
     try {
       const r = await api.l3[action]({ appId: app.id, ...(extra || {}) });
-      if (r && !r.ok && r.error) setLastError(`${app.name}: ${r.error}`);
+      // Health answers non-2xx WITH a diagnostic body and no `error` — that
+      // is a result, not a failed action; only a real error opens the panel.
+      if (r && !r.ok && r.error) failed(action, app.name, r);
       return r;
     } catch (e) {
-      setLastError(`${app.name}: ${(e && e.message) || "action failed"}`);
-      return { ok: false, error: (e && e.message) || "action failed" };
+      const r = { ok: false, error: (e && e.message) || "action failed" };
+      failed(action, app.name, r);
+      return r;
     } finally {
       setBusyApp(null);
       setBusyLabel("");
@@ -447,14 +526,11 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus, onServices
             Apps install from the bundled release
             {catalog && catalog.releaseVersion ? <> (version <span className="kbd">{catalog.releaseVersion}</span>)</> : null}.
             Every action runs plain <span className="kbd">cf</span> commands — open the terminal drawer to follow along.
+            A failed action stays on this page, with what Cloud Foundry said, until you dismiss it.
           </p>
         </div>
 
-        {lastError && (
-          <div style={{ marginBottom: 12, padding: 10, border: "1px solid var(--fg-red, #c0392b)", borderRadius: 8, fontSize: 13 }}>
-            {lastError}
-          </div>
-        )}
+        <L3ActionOutcome outcome={outcome} onDismiss={() => setOutcome(null)} onOpenTerminal={onOpenTerminal} />
 
         {!catalog && <div style={{ color: "var(--ink-3)" }}>Loading catalog…</div>}
         {catalog && catalog.error && (
@@ -475,7 +551,7 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus, onServices
         )}
 
         {catalog && catalog.platform && (
-          <div style={{ border: "1px dashed var(--line)", borderRadius: 10, padding: 12, marginBottom: 14 }}>
+          <div data-platform-row="" style={{ border: "1px dashed var(--line)", borderRadius: 10, padding: 12, marginBottom: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <div style={{ fontWeight: 700 }}>{catalog.platform.name || "Platform base"}</div>
               <L3StatusPill status={platformStatus ? platformStatus.status : null} />

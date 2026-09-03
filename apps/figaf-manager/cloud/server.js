@@ -353,6 +353,15 @@ app.post("/rpc/:channel", requireAuth, async (req, res) => {
     const result = await handler(req.body || {});
     const out = result !== undefined ? result : { ok: true };
     rpcHandle.out(out);
+    if (out && out.ok === false && out.error) {
+      // One plain, readable line per failed action for `cf logs` / the cockpit
+      // log view — at EVERY log level. The JSON audit records (cli.exit) hold
+      // the full command tails; this is the line an operator can find without
+      // parsing JSON. Carries our own error text and CLI tails only, never an
+      // argument value (args are not echoed here).
+      const where = [out.step ? `at step ${out.step}` : "", out.cfApp ? `(${out.cfApp})` : ""].filter(Boolean).join(" ");
+      console.warn(`[action] ${channel} failed${where ? " " + where : ""}: ${String(out.error).slice(0, 600)}`);
+    }
     res.json(out);
   } catch (err) {
     rpcHandle.error(err);

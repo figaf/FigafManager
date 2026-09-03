@@ -1,7 +1,14 @@
 "use strict";
 // E2E harness for the hosted manager (see e2e/README.md).
-// The server under test is started by e2e/global-setup.js on port 8087 and
-// runs the REAL orchestrator with the REAL cf CLI from PATH — no mocks.
+// e2e/global-setup.js starts the REAL cloud server twice — :8087 with the
+// bundled release, :8088 with a fixture release whose every install is
+// refused early — and both run the REAL orchestrator with the REAL cf CLI
+// from PATH against the space that CLI is logged into. No mocks.
+//
+// This default suite is READ-ONLY: it never installs, removes, or deploys.
+// Mutating specs (*.mutating.spec.js — the install smoke that pushes into the
+// real space) run only through playwright.mutating.config.js
+// (`npm run test:e2e:install`).
 const { defineConfig } = require("@playwright/test");
 
 module.exports = defineConfig({
@@ -9,15 +16,28 @@ module.exports = defineConfig({
   globalSetup: "./e2e/global-setup.js",
   timeout: 60_000,
   expect: { timeout: 20_000 },
-  // All specs share one server-side wizard session (same storageState), so
-  // they must not run concurrently.
+  // All specs of a project share one server-side wizard session (same
+  // storageState), so they must not run concurrently.
   fullyParallel: false,
   workers: 1,
   retries: 0,
   reporter: [["list"]],
   use: {
-    baseURL: "http://127.0.0.1:8087",
-    storageState: "e2e/.auth/state.json",
     trace: "retain-on-failure",
   },
+  projects: [
+    {
+      // The console against the bundled release (read-only).
+      name: "console",
+      testIgnore: ["**/failure-visibility.spec.js", "**/*.mutating.spec.js"],
+      use: { baseURL: "http://127.0.0.1:8087", storageState: "e2e/.auth/state.json" },
+    },
+    {
+      // Failed actions must explain themselves: driven against the fixture
+      // release on :8088, where Install is refused before any cf change.
+      name: "failure-visibility",
+      testMatch: ["**/failure-visibility.spec.js"],
+      use: { baseURL: "http://127.0.0.1:8088", storageState: "e2e/.auth/state-failure.json" },
+    },
+  ],
 });

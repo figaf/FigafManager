@@ -327,6 +327,7 @@ function ConsoleFrame({ app }) {
           onConnections={() => navigate("connections")}
           onStatus={onL3Status}
           onServices={onL3Services}
+          onOpenTerminal={() => setTerminalOpen(true)}
         />
       </>
     );

@@ -34,6 +34,11 @@ const fs = require("fs");
 const crypto = require("crypto");
 
 const VERSION_ENV = "FIGAF_APP_VERSION";
+// Landscape-independent releases (decision 0008, figaf-l3-l4 repo): a service
+// config file in the release (xs-security.json) may carry this placeholder in
+// its redirect URI; provisionServices fills it with the cfapps domain of the
+// landscape we are logged into. No landscape is ever hard-coded in a release.
+const APPS_DOMAIN_PLACEHOLDER = "__CF_APPS_DOMAIN__";
 const MAX_ENV_VALUE_LEN = 4096;
 
 // ─── pure helpers (unit-tested in l3-apps.test.js) ──────────────────────────
@@ -134,9 +139,36 @@ function buildDestinationsEnv(destinationName, url) {
   return JSON.stringify([{ name: destinationName, url, forwardAuthToken: true }]);
 }
 
-/** cf push argument list for one catalog cfApp. */
+/**
+ * What a failed CLI call said, for the operator: the last (up to `lines`)
+ * non-empty stderr lines; when stderr is empty, the last stdout line that is
+ * not the bare "FAILED" marker; when both are empty, the spawn error.
+ * Trimmed to `maxLen` characters. Never throws.
+ */
+function cliFailureDetail(r, { lines = 3, maxLen = 400 } = {}) {
+  const pick = (text) => String(text || "").split(/\r?\n/).map((l) => l.trim()).filter((l) => l && l !== "FAILED");
+  let tail = pick(r && r.stderr).slice(-lines);
+  if (!tail.length) tail = pick(r && r.stdout).slice(-1);
+  if (!tail.length && r && r.error) tail = [String(r.error)];
+  return tail.join(" | ").slice(0, maxLen);
+}
+
+/**
+ * cf push argument list for one catalog cfApp.
+ *
+ * `--no-manifest` is mandatory. Without it the cf CLI applies any manifest.yml
+ * it finds in ITS working directory — and inside the CF container that is the
+ * manager's OWN /home/vcap/app/manifest.yml. That file is present whenever the
+ * manager was deployed through the BTP cockpit upload (the customer path):
+ * `cf push` strips manifest.yml from what it uploads, the cockpit does not.
+ * The manager's manifest then becomes the base of the L3 app push (its
+ * buildpack, command, random-route, env) and CAPI rejects the mix:
+ * "Buildpack and Buildpacks fields cannot be used together" — found live on
+ * 2026-09-03, install of release 0.4.0. An L3 app is described ONLY by the
+ * release catalog; no manifest is ever part of its push.
+ */
 function buildPushArgs(cfApp, dir, { noStart } = {}) {
-  const args = ["push", cfApp.name, "-p", dir];
+  const args = ["push", cfApp.name, "-p", dir, "--no-manifest"];
   if (cfApp.buildpack) args.push("-b", cfApp.buildpack);
   if (cfApp.memory) args.push("-m", cfApp.memory);
   if (cfApp.disk) args.push("-k", cfApp.disk);
@@ -187,6 +219,18 @@ function createL3Handlers(ctx) {
   const PROVISION_TIMEOUT_MS = ctx.provisionTimeoutMs != null ? ctx.provisionTimeoutMs : 15 * 60_000;
 
   /** The manager's own CF app name (cloud only; null on desktop / outside CF). */
+  /** The landscape's shared `cfapps.` domain, read from the CF API (never hard-coded). */
+  async function resolveAppsDomain() {
+    const r = await run(resolveCf(), ["curl", "/v3/domains"], { source: "cf", quiet: true });
+    if (r.code !== 0) return { ok: false, error: `cf curl /v3/domains failed: ${(r.stderr || r.stdout || "").trim().slice(0, 200)}` };
+    let names = [];
+    try { names = (JSON.parse(r.stdout).resources || []).map((d) => d.name).filter(Boolean); }
+    catch { return { ok: false, error: "cf curl /v3/domains returned no JSON" }; }
+    const domain = names.find((n) => n.startsWith("cfapps."));
+    if (!domain) return { ok: false, error: `no cfapps.* domain in this landscape (domains: ${names.join(", ") || "none"}) - cannot fill ${APPS_DOMAIN_PLACEHOLDER}` };
+    return { ok: true, domain };
+  }
+
   function selfAppName() {
     const t = host.getDeployTargetForSelf && host.getDeployTargetForSelf();
     return t && t.appName ? t.appName : null;
@@ -253,9 +297,28 @@ function createL3Handlers(ctx) {
   }
 
   /**
+   * The structured failure of one deploy step. Carries what cf said (`detail`),
+   * WHERE it happened (`step`, `cfApp`) and the exact command (masked where it
+   * carried a secret), so the console can show it and the operator can report
+   * it. Also emits the l3:phase error event with the detail.
+   */
+  function stepFailure(app, cfApp, step, r, summary, command) {
+    const detail = cliFailureDetail(r);
+    phase(app.id, cfApp.name, step, "error", detail || null);
+    return {
+      ok: false,
+      error: detail ? `${summary}: ${detail}` : summary,
+      step,
+      cfApp: cfApp.name,
+      command: command || undefined,
+      detail: detail || undefined,
+    };
+  }
+
+  /**
    * Deploy one catalog cfApp: fresh install (push --no-start, bind, env,
    * start) or in-place update (env refresh, push). Returns { ok } or
-   * { ok:false, error }.
+   * { ok:false, error, step, cfApp, command?, detail? }.
    */
   async function deployPart(app, cfApp, channelDir) {
     const name = cfApp.name;
@@ -268,11 +331,11 @@ function createL3Handlers(ctx) {
         actual = crypto.createHash("sha256").update(fs.readFileSync(zipPath)).digest("hex");
       } catch (e) {
         phase(app.id, name, "extract", "error", e.message);
-        return { ok: false, error: `could not read ${cfApp.artifact}: ${e.message}` };
+        return { ok: false, error: `could not read ${cfApp.artifact}: ${e.message}`, step: "extract", cfApp: name };
       }
       if (actual !== String(cfApp.sha256).toLowerCase()) {
         phase(app.id, name, "extract", "error", "checksum mismatch");
-        return { ok: false, error: `checksum mismatch for ${cfApp.artifact} — the release is corrupt or was tampered with; nothing was deployed` };
+        return { ok: false, error: `checksum mismatch for ${cfApp.artifact} — the release is corrupt or was tampered with; nothing was deployed`, step: "extract", cfApp: name };
       }
     }
 
@@ -284,7 +347,7 @@ function createL3Handlers(ctx) {
       await normalizeTreePerms(workDir);
     } catch (e) {
       phase(app.id, name, "extract", "error", e.message);
-      return { ok: false, error: `extract ${cfApp.artifact} failed: ${e.message}` };
+      return { ok: false, error: `extract ${cfApp.artifact} failed: ${e.message}`, step: "extract", cfApp: name };
     }
     phase(app.id, name, "extract", "ok");
 
@@ -292,16 +355,17 @@ function createL3Handlers(ctx) {
 
     if (fresh) {
       phase(app.id, name, "push", "running");
-      let r = await run(resolveCf(), buildPushArgs(cfApp, workDir, { noStart: true }), { source: "cf" });
-      if (r.code !== 0) { phase(app.id, name, "push", "error"); return { ok: false, error: `cf push ${name} failed` }; }
+      const pushArgs = buildPushArgs(cfApp, workDir, { noStart: true });
+      let r = await run(resolveCf(), pushArgs, { source: "cf" });
+      if (r.code !== 0) return stepFailure(app, cfApp, "push", r, `cf push ${name} failed`, `cf ${pushArgs.join(" ")}`);
       phase(app.id, name, "push", "ok");
 
       phase(app.id, name, "bind", "running");
       for (const s of cfApp.services || []) {
-        r = await run(resolveCf(), ["bind-service", name, s], { source: "cf" });
+        const bindArgs = ["bind-service", name, s];
+        r = await run(resolveCf(), bindArgs, { source: "cf" });
         if (r.code !== 0) {
-          phase(app.id, name, "bind", "error", s);
-          return { ok: false, error: `bind-service ${s} failed — does the service instance exist in this space?` };
+          return stepFailure(app, cfApp, "bind", r, `bind-service ${s} failed — does the service instance exist in this space?`, `cf ${bindArgs.join(" ")}`);
         }
       }
       for (const s of cfApp.optionalServices || []) {
@@ -320,12 +384,15 @@ function createL3Handlers(ctx) {
     const envPairs = { ...(cfApp.env || {}), [VERSION_ENV]: app.version };
     if (cfApp.destinationTo) {
       const url = await routeUrl(cfApp.destinationTo);
-      if (!url) { phase(app.id, name, "env", "error"); return { ok: false, error: `could not resolve the route of ${cfApp.destinationTo}` }; }
+      if (!url) {
+        phase(app.id, name, "env", "error", `no route on ${cfApp.destinationTo}`);
+        return { ok: false, error: `could not resolve the route of ${cfApp.destinationTo} — is the platform base deployed and started?`, step: "env", cfApp: name, command: `cf app ${cfApp.destinationTo}` };
+      }
       envPairs.destinations = buildDestinationsEnv(cfApp.destinationName || cfApp.destinationTo, url);
     }
     for (const [k, v] of Object.entries(envPairs)) {
       const r = await setEnvMasked(name, k, v);
-      if (r.code !== 0) { phase(app.id, name, "env", "error", k); return { ok: false, error: `cf set-env ${k} failed` }; }
+      if (r.code !== 0) return stepFailure(app, cfApp, "env", r, `cf set-env ${k} failed`, `cf set-env ${name} ${k} <value hidden>`);
     }
     phase(app.id, name, "env", "ok");
 
@@ -333,8 +400,7 @@ function createL3Handlers(ctx) {
     const startArgs = fresh ? ["start", name] : buildPushArgs(cfApp, workDir, { noStart: false });
     const r = await run(resolveCf(), startArgs, { source: "cf" });
     if (r.code !== 0) {
-      phase(app.id, name, "start", "error");
-      return { ok: false, error: `${fresh ? "cf start" : "cf push"} ${name} failed — see the staging log in the terminal` };
+      return stepFailure(app, cfApp, "start", r, `${fresh ? "cf start" : "cf push"} ${name} failed — see the staging log in the terminal`, `cf ${startArgs.join(" ")}`);
     }
     phase(app.id, name, "start", "ok");
     return { ok: true };
@@ -396,10 +462,37 @@ function createL3Handlers(ctx) {
     if (req.error) return { ok: false, error: req.error };
     const parts = reverse ? [...req.app.cfApps].reverse() : req.app.cfApps;
     for (const cfApp of parts) {
-      const r = await run(resolveCf(), argsFor(cfApp), { source: "cf" });
-      if (r.code !== 0) return { ok: false, error: `cf ${argsFor(cfApp)[0]} ${cfApp.name} failed`, failedApp: cfApp.name };
+      const args = argsFor(cfApp);
+      const r = await run(resolveCf(), args, { source: "cf" });
+      if (r.code !== 0) {
+        const detail = cliFailureDetail(r);
+        return {
+          ok: false,
+          error: `cf ${args[0]} ${cfApp.name} failed${detail ? `: ${detail}` : ""}`,
+          failedApp: cfApp.name,
+          step: args[0],
+          cfApp: cfApp.name,
+          command: `cf ${args.join(" ")}`,
+          detail: detail || undefined,
+        };
+      }
     }
     return { ok: true };
+  }
+
+  /**
+   * Every state-changing action ends with ONE clear line in the terminal
+   * drawer: green "done" or red "FAILED at step … (cf app): what cf said".
+   * The RPC result carries the same facts for the console's outcome panel.
+   */
+  function reportOutcome(action, appId, r) {
+    if (r && r.ok) {
+      log("l3", "ok", `${action} ${appId}: done`);
+    } else {
+      const where = [r && r.step ? `at step "${r.step}"` : "", r && r.cfApp ? `(${r.cfApp})` : ""].filter(Boolean).join(" ");
+      log("l3", "err", `${action} ${appId} FAILED${where ? " " + where : ""}: ${(r && r.error) || "unknown error"}`);
+    }
+    return r;
   }
 
   return {
@@ -556,7 +649,18 @@ function createL3Handlers(ctx) {
         if (s.configFile) {
           const file = path.join(dir, s.configFile);
           if (!fs.existsSync(file)) { failed.push({ name: s.name, error: `config file ${s.configFile} missing from the release` }); continue; }
-          args.push("-c", file);
+          let cfgPath = file;
+          const text = fs.readFileSync(file, "utf8");
+          if (text.includes(APPS_DOMAIN_PLACEHOLDER)) {
+            const dom = await resolveAppsDomain();
+            if (!dom.ok) { failed.push({ name: s.name, error: dom.error }); continue; }
+            const cfgDir = path.join(host.getUserDataDir(), "l3-services");
+            fs.mkdirSync(cfgDir, { recursive: true });
+            cfgPath = path.join(cfgDir, s.configFile);
+            fs.writeFileSync(cfgPath, text.split(APPS_DOMAIN_PLACEHOLDER).join(dom.domain));
+            log("l3", "dim", `${s.configFile}: ${APPS_DOMAIN_PLACEHOLDER} -> ${dom.domain}`);
+          }
+          args.push("-c", cfgPath);
         } else if (s.config && typeof s.config === "object") {
           // cf -c accepts a file path; never pass JSON on the command line.
           const cfgDir = path.join(host.getUserDataDir(), "l3-services");
@@ -629,28 +733,28 @@ function createL3Handlers(ctx) {
     async "l3:install"({ appId } = {}) {
       if (!appId) return { ok: false, error: "appId required" };
       log("l3", "line", `Installing ${appId} …`);
-      return deployAll(appId);
+      return reportOutcome("install", appId, await deployAll(appId));
     },
 
     async "l3:update"({ appId } = {}) {
       if (!appId) return { ok: false, error: "appId required" };
       log("l3", "line", `Updating ${appId} …`);
-      return deployAll(appId);
+      return reportOutcome("update", appId, await deployAll(appId));
     },
 
     async "l3:disable"({ appId } = {}) {
       if (!appId) return { ok: false, error: "appId required" };
-      return forEachPart(appId, (c) => ["stop", c.name], { reverse: true });
+      return reportOutcome("disable", appId, await forEachPart(appId, (c) => ["stop", c.name], { reverse: true }));
     },
 
     async "l3:enable"({ appId } = {}) {
       if (!appId) return { ok: false, error: "appId required" };
-      return forEachPart(appId, (c) => ["start", c.name]);
+      return reportOutcome("enable", appId, await forEachPart(appId, (c) => ["start", c.name]));
     },
 
     async "l3:remove"({ appId } = {}) {
       if (!appId) return { ok: false, error: "appId required" };
-      return forEachPart(appId, (c) => ["delete", c.name, "-f"], { reverse: true });
+      return reportOutcome("remove", appId, await forEachPart(appId, (c) => ["delete", c.name, "-f"], { reverse: true }));
     },
 
     /**
@@ -767,12 +871,14 @@ function createL3Handlers(ctx) {
 }
 
 module.exports = {
+  APPS_DOMAIN_PLACEHOLDER,
   VERSION_ENV,
   loadCatalog,
   platformPseudoApp,
   computeAppStatus,
   buildDestinationsEnv,
   buildPushArgs,
+  cliFailureDetail,
   validateConfigEnv,
   serviceStatusFromCf,
   createL3Handlers,

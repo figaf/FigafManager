@@ -13,7 +13,8 @@
     "build:local": "npm --workspace apps/figaf-local run build:win",
     "build:manager": "npm --workspace apps/figaf-manager run build-zip",
     "test": "node --test \"packages/core/*.test.js\" \"packages/ui/*.test.js\"",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright test --config playwright.mutating.config.js"
   },
   "dependencies": {
     "@sap/approuter": "^22.0.1",
