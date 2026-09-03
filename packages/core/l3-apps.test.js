@@ -1043,7 +1043,7 @@ test("l3:install refused for a missing required service is reported as FAILED in
   assert.ok(!calls.some((c) => c.args[0] === "push"), "nothing may be pushed");
 });
 
-// ─── Setup step 1: l3:prepareSpaceServices (figaf-l3-l4 SPEC 5.2) ────────────
+// ─── Setup step 1: l3:prepareSpaceServices (docs/l3-console/SPEC.md 5.2) ────────────
 
 test("l3:prepareSpaceServices: creates every missing instance except XSUAA with the chosen plans, waits only for the Credential Store, binds it, leaves the database creating (pending); no restart", async () => {
   const dir = makeV3DirWithPlaceholder();

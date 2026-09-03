@@ -10,7 +10,7 @@
 //   figaf:    connections:figafStatus-> { configured }
 // plus `ssoDone` (window.figafXsuaaMode). Every value may be missing.
 //
-// Order (figaf-l3-l4 SPEC section 6, 2026-09-03):
+// Order (docs/l3-console/SPEC.md section 6, 2026-09-03):
 //   1 Prepare the space   creates the instances (plans asked here), turns on
 //                         SAP IAS sign-in, restarts the manager once; the
 //                         database is started here and finishes later

@@ -46,7 +46,7 @@ Prerequisites on the dev machine:
   space (today: org `Figaf ApS_figafpartner-1`, space `figaf-l3-l4`).
 - Node deps installed at the repo root (`npm install`).
 - For the install smoke: the release built into `l3-artifacts/`
-  (`build-artifacts.ps1` in the figaf-l3-l4 repo) and a space WITHOUT the
+  (`release/build-artifacts.ps1` in the figaf-l3-l4 repo) and a space WITHOUT the
   release's CF apps (the smoke refuses to start otherwise) but WITH the base
   service instances (`figaf-l3l4-db`, `-xsuaa`, `-credstore`).
 
@@ -80,3 +80,19 @@ Prerequisites on the dev machine:
   session.
 - Assertions use generous timeouts: real `cf` calls take seconds; a fresh
   install takes minutes.
+
+## Tools (`e2e/tools/`)
+
+Dev-space helpers, run by a person, never by the specs:
+
+- `wipe-and-provision.ps1 -Mode status|wipe|provision` — empties the dev
+  space before a virgin run (guardrail: refuses any target other than
+  `Figaf ApS_figafpartner-1` / `figaf-l3-l4`). `provision` creates the base
+  services from the bundled release's `xs-security.json`
+  (`apps/figaf-manager/l3-artifacts/`, override with `-XsSecurity`); the
+  customer path is the manager's Setup page, not this mode.
+- `manager-log-failures.ps1` — reads `cf logs --recent` of the manager and
+  prints the failed CLI calls and failed actions in readable form
+  (`docs/l3-console/TROUBLESHOOTING.md`).
+
+The full virgin install procedure (D1) is figaf-l3-l4 `docs/d1/MANUAL-RUNBOOK.md`.

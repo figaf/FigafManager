@@ -1,5 +1,5 @@
 /* global React, Ico, CheckRow, ScreenLogin, BaseServicesCard, L3ActionOutcome */
-// Console page: Setup (#/setup) - figaf-l3-l4 SPEC section 6.
+// Console page: Setup (#/setup) - docs/l3-console/SPEC.md section 6.
 // ONE page owns the installation of a fresh space. The steps come from the
 // pure model (setup-checklist.js, built by console.jsx); this file renders
 // them and gives each open step its body:

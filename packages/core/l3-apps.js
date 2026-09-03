@@ -907,7 +907,7 @@ function createL3Handlers(ctx) {
     },
 
     /**
-     * Setup step 1 "Prepare the space" (figaf-l3-l4 SPEC 5.2): create every
+     * Setup step 1 "Prepare the space" (docs/l3-console/SPEC.md 5.2): create every
      * MISSING catalog instance except the XSUAA one (l3:ensureXsuaa owns it)
      * with the plans the person chose on the page, wait only for the
      * manager-bound ones (the Credential Store) and bind them to the manager

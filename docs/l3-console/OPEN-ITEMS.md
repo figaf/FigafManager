@@ -1,0 +1,107 @@
+# L3 console — open items and design notes
+
+This file holds only what is still OPEN for the Figaf Manager's L3 console,
+plus the design notes that are still in force. It is not a log. History is in
+git (`git log -p docs/l3-console/OPEN-ITEMS.md`; before 2026-09-03 the file
+was `spikes/app-manager-poc/FINDINGS.md` in the figaf-l3-l4 repo). Behavior
+is in `SPEC.md`, reasons are in figaf-l3-l4 `decisions/`, run records in
+figaf-l3-l4 `docs/d1/RUNBOOK-VIRGIN.md`. Platform-level notes (release model,
+Figaf API client scopes) live in figaf-l3-l4 `docs/SOLUTION.md`.
+Last edited 2026-09-03.
+
+## Open items
+
+1. **Run with a dedicated technical user.** Every virgin run so far (#1-#7)
+   used Arsenii's own account as the stored management user.
+2. **Figaf Tool flows** (Alex's deploy / update / connect) never tested through
+   the console; one known bug: Figaf-tool login/settings not kept when
+   re-entering the flow. Root cause: the manager keeps no state of its own
+   (see "The manager has no memory" below). Requirements for Figaf-tool
+   management via the manager are plan Step 2 (env vars, manifest
+   parameters, persisted deployment metadata).
+3. **Remove + reinstall repeatability** check (remove exists; reinstall after
+   remove not yet done by hand).
+4. **R2 artifact store**: bucket + scoped credentials from Daniel (figaf-l3-l4
+   decision 0003); then the catalog fetch from R2
+   (`host.resolveL3ArtifactsDir()` is the seam) and the manager's own release
+   publishing.
+5. **Space Auditor** for the management user in the Figaf-tool spaces, so
+   cross-space discovery of Figaf-tool deployments works under the technical
+   user (a single-space user sees only its own space; manual URL entry is the
+   fallback).
+6. **Pre-existing failing cloud test** `btp:listGlobalAccounts with a single GA
+   auto-selects it` — fails on master too; fix or quarantine. The cloud tests
+   (`apps/figaf-manager/cloud/*.test.js`) are not part of `npm test` and so
+   not part of CI.
+7. **`packages/ui/styles.css`** ends in a mis-encoded UTF-16 block (Alex's
+   file; ripgrep treats it as binary). Clean up with Alex.
+8. **Pinning**: cf CLI is downloaded as "latest v8" at build time, no
+   `engines.node`, buildpack unpinned; the Dockerfile says Node 20, CI uses
+   Node 22. CF stack `cflinuxfs4` is deprecated (new pushes end 2027-04,
+   `cflinuxfs5` default from 2027-02).
+9. **Password login for persons** (Alex's login screen shows "Username &
+   password - coming soon"): product decision open. Today by design only the
+   passcode (the person's password never reaches the manager; works with
+   2FA) and the technical user (unattended sign-in).
+10. **No-2FA technical user**: acceptable for customers? Question for Daniel
+    and Alex.
+11. **Repo identity and hygiene** (2026-09-03): root package is still named
+    `figaf-installer`; CLAUDE.md and README describe the Figaf-tool wizard
+    only; Alex's planning documents from May-June 2026 (`docs/plan.md`,
+    `docs/instructions.md`, `docs/let-s-look-at-...md`, `docs/superpowers/`),
+    `apps/figaf-manager/Dockerfile` (not used by any build or deploy path),
+    `apps/figaf-manager/saml-9c492946trial-sp.xml` (trial-tenant SAML
+    metadata, referenced nowhere) and `packages/deploy-templates/notes.txt`
+    wait for a decision with Alex.
+12. **Desktop installer** (`apps/figaf-local`): keep as a product or not? The
+    L3 console, the connections screen and the Setup page are hosted-only
+    (`mode.js`: `manageL3Apps`, `consoleUI`, `cfFirstLogin`). Every shared
+    change must still keep the desktop wizard working.
+13. **Customer manual for the L3 console**: Alex's manual covers the
+    Figaf-tool flow only. The customer prerequisites are in figaf-l3-l4
+    `docs/d1/MANUAL-RUNBOOK.md`.
+
+## Design notes still in force
+
+### The manager has no memory (fact, 2026-09-03)
+
+The manager has no database. Its per-session user data lives under
+`$HOME/sessions/<sessionId>` in the container and is gone after a restart or
+restage. What survives a restart comes from three places only: the service
+bindings (`VCAP_SERVICES`), the Credential Store (management user,
+connections) and the Cloud Foundry space itself. For the L3 console this is by
+design: the installed apps and their versions are read live from the space
+(`cf env <app>`, the release version env var), so nothing needs to be stored.
+For the Figaf-tool flows it is a gap: `vars.yml` and the update state under
+the session directory are lost, so a re-entered flow starts blank.
+
+### Auth roadmap (Arsenii, 2026-08-31, updated 2026-09-03)
+
+Token mode exists only until the Secure-access step (now step 1). The
+management user (Credential Store, option B of decision 0004 item 3) covers
+unattended sign-in: restarts, scheduled updates, L4-triggered actions.
+Attribution then comes from the manager's audit log (the XSUAA login says
+who). Middle option to evaluate later: keep each person's own CF refresh
+token per IAS user, so a passcode is needed only rarely and the technical
+user is reserved for automation. Zero passcodes on a virgin space is
+impossible: the first cf login is also the authorization moment.
+
+### Naming rules confirmed
+
+Release / artifact store (not "channel"); `figaf-l3l4-` = shared by L3 and
+L4; `figaf-l3-<app-id>` = one L3 frontend; the shared backend connector is
+"Shared backend" in the UI, CF app `figaf-l3l4-backend`; "approuter", not
+"authentication proxy". Frozen identifiers: figaf-l3-l4 decisions 0008 and 0009.
+
+### Environment facts
+
+- `credstore` free plan: exactly one instance per subaccount; standard is the
+  realistic plan (cost belongs in pricing).
+- PostgreSQL: ~8 min to delete, ~7 min to create.
+- The `it-rt/api` broker returned 500s on 2026-09-02; it is not part of the
+  L3 install.
+- Windows build machine: release zips must be made with figaf-l3-l4
+  `release/zip-dir.js` (Unix permission bits), `build-zip.js` uses
+  `System32\tar.exe`, JSON written without a BOM.
+- The cockpit upload keeps `manifest.yml` inside the container; `cf push -p`
+  strips it. The install smoke runs in the container's shape on purpose.

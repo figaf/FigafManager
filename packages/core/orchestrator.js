@@ -592,7 +592,7 @@ function createOrchestrator({ host, send, audit }) {
     return { loggedIn: true };
   }
 
-  // Subaccount GUID without the BTP subaccount pick (figaf-l3-l4 SPEC "Role
+  // Subaccount GUID without the BTP subaccount pick (docs/l3-console/SPEC.md "Role
   // assignment in the SSO upgrade", run #4 finding 2): every XSUAA binding
   // or service key carries `subaccountid`. A throw-away service key on the
   // manager's own instance (created by cf:createXsuaa) is read quietly and

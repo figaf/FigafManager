@@ -65,7 +65,7 @@ const ASSIGN_ROLE = "FigafL3L4-Manager-Admin";
 
 function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
   // The automatic role assignment is decided BEFORE "Start upgrade" (run #4
-  // finding 2, figaf-l3-l4 SPEC "Role assignment in the SSO upgrade"): the
+  // finding 2, docs/l3-console/SPEC.md "Role assignment in the SSO upgrade"): the
   // server says whether a BTP login exists in THIS session and who the cf user
   // is; the pure plan (sso-role-assign.js) turns that into the panel below.
   // Local state, not threaded through global ctx; frozen once the run starts.

@@ -6,7 +6,7 @@
 //
 // The local server runs in TOKEN mode (no XSUAA binding): the space counts as
 // "not prepared", so the Setup page is the landing page and the pages that
-// need a prepared space are disabled in the rail (figaf-l3-l4 SPEC section 6).
+// need a prepared space are disabled in the rail (docs/l3-console/SPEC.md section 6).
 // Deep links still open them - that is how the specs below reach them.
 
 const { test, expect } = require("@playwright/test");

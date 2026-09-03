@@ -1,4 +1,4 @@
-// "Prepare the space" - Setup step 1 of the hosted console (figaf-l3-l4 SPEC
+// "Prepare the space" - Setup step 1 of the hosted console (docs/l3-console/SPEC.md
 // 5.2). The whole run as ONE sequence over the window.figaf RPC surface, so
 // the screen (screen-setup-page.jsx) only renders phases and the result.
 // Pure logic, browser-globals like setup-checklist.js; prepare-space.test.js

@@ -30,6 +30,10 @@ docs/*
 !docs/figaf-manager-manual.html
 !docs/manual-images/
 !docs/manual-images/**
+# L3/L4 stream documents (2026-09-03): tracked on purpose
+!docs/PROJECT-CONTEXT.md
+!docs/l3-console/
+!docs/l3-console/**
 
 # Logs
 logs/

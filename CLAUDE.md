@@ -1,5 +1,12 @@
 # CLAUDE.md
 
+> **Session start (added 2026-09-03 for the L3/L4 stream).** Before any task:
+> 1. Read `docs/PROJECT-CONTEXT.md` — who Figaf is, the L3/L4 platform, Danfoss as the first customer, the rules that apply here.
+> 2. Read `docs/l3-console/SPEC.md` — the current behavior of the L3 console. `OPEN-ITEMS.md` and `TROUBLESHOOTING.md` sit next to it.
+> 3. Then use the architecture map below. It describes the Figaf-tool wizard (Alex's product) and does not yet list the console files (`packages/ui/console.jsx`, `packages/core/l3-apps.js`, `connections.js`, `credstore-client.js`, `manager-xsuaa.js`, `e2e/`).
+>
+> The governance rules of the L3/L4 platform live in the figaf-l3-l4 repo (`docs/GOVERNANCE.md`). They are Figaf-owned and read-only.
+
 Architecture backbone for **Figaf Installer** — an npm-workspaces monorepo that
 ships **two parallel wizards** for deploying the [Figaf Tool](https://figaf.com)
 to **SAP BTP Cloud Foundry**:

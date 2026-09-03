@@ -8,7 +8,7 @@
 // INSIDE the Figaf Tool page as a local stepper.
 // Frame selection happens in app.jsx via features.consoleUI.
 //
-// The Setup page (#/setup, figaf-l3-l4 SPEC section 6) owns the installation
+// The Setup page (#/setup, docs/l3-console/SPEC.md section 6) owns the installation
 // of a fresh space. Until step 1 (Prepare the space) is done - i.e. while the
 // manager runs in token mode - it is the landing page and the pages that
 // need a prepared space are disabled in the rail. A deep link still opens

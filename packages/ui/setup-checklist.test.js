@@ -3,7 +3,7 @@
 // The module is a browser-globals script; we fake `window` and load it.
 // Run via `node --test packages/ui/setup-checklist.test.js`.
 //
-// Order under test (figaf-l3-l4 SPEC section 6): 1 Prepare the space,
+// Order under test (docs/l3-console/SPEC.md section 6): 1 Prepare the space,
 // 2 Management user, 3 Base services, 4 Shared backend and first app,
 // 5 Figaf tool connection. Everything is blocked until step 1 is done.
 

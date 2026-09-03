@@ -1,6 +1,6 @@
 "use strict";
 // Tests for the role-assignment step of the persistent-SSO upgrade
-// (figaf-l3-l4 SPEC "Role assignment in the SSO upgrade", run #4 finding 2):
+// (docs/l3-console/SPEC.md "Role assignment in the SSO upgrade", run #4 finding 2):
 //   xsuaa:roleAssignmentPrecheck and xsuaa:assignRoleCollection.
 //
 // Harness: patch child_process.spawn BEFORE requiring the orchestrator (repo
