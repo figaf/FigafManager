@@ -254,3 +254,37 @@ test("defaultVerifier: malformed Bearer through requireJwt returns 401 (never 5x
   assert.equal(getStatus(), 401);
   assert.equal(getBody().error, "unauthenticated");
 });
+
+// ─── decision 0009: shared instance (figaf-l3l4) ───────────────────────────
+
+test("findXsuaaBinding: prefers the SHARED instance (xsappname figaf-l3l4, with tenant suffix) over the legacy one", () => {
+  process.env.VCAP_SERVICES = JSON.stringify({
+    xsuaa: [
+      { credentials: { xsappname: "figaf-manager-xsuaa!t1", clientid: "legacy" } },
+      { credentials: { xsappname: "figaf-l3l4!t1", clientid: "shared" } },
+    ],
+  });
+  const b = xa.findXsuaaBinding();
+  assert.equal(b.credentials.clientid, "shared");
+});
+
+test("findXsuaaBinding: the legacy instance is still recognized when it is the only one", () => {
+  process.env.VCAP_SERVICES = JSON.stringify({
+    xsuaa: [
+      { credentials: { xsappname: "some-other-app!t1", clientid: "other" } },
+      { credentials: { xsappname: "figaf-manager-xsuaa!t1", clientid: "legacy" } },
+    ],
+  });
+  assert.equal(xa.findXsuaaBinding().credentials.clientid, "legacy");
+});
+
+test("operatorScopeFor: the shared instance requires <xsappname>.FigafL3L4ManagerOperator", () => {
+  assert.equal(
+    xa.operatorScopeFor({ credentials: { xsappname: "figaf-l3l4!t12345" } }),
+    "figaf-l3l4!t12345.FigafL3L4ManagerOperator"
+  );
+  assert.equal(
+    xa.operatorScopeFor({ credentials: { xsappname: "figaf-l3l4" } }),
+    "figaf-l3l4.FigafL3L4ManagerOperator"
+  );
+});

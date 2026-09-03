@@ -139,11 +139,11 @@ async function seedPasscodeUser(handlers) {
 }
 
 const SERVICE_KEY_STDOUT = [
-  "Getting key figaf-manager-role-key for service instance figaf-manager-xsuaa as ais@figaf.com...",
+  "Getting key figaf-manager-role-key for service instance figaf-l3l4-xsuaa as ais@figaf.com...",
   "",
   JSON.stringify({
     credentials: {
-      clientid: "sb-figaf-manager-xsuaa!t1",
+      clientid: "sb-figaf-l3l4-xsuaa!t1",
       clientsecret: "S3CRET-VALUE-NEVER-IN-AUDIT",
       subaccountid: "sub-guid-123",
       zoneid: "sub-guid-123",
@@ -193,7 +193,7 @@ test("assign with a BTP login and no captured subaccount: GUID from a throw-away
   events.length = 0;
   responses = [
     { match: isBtpGet, stdout: JSON.stringify({ guid: "ga-guid-1", licenseType: "PRODUCTIVE" }), code: 0 },
-    { match: (a) => a[0] === "create-service-key", stdout: "Creating service key figaf-manager-role-key for service instance figaf-manager-xsuaa as ais@figaf.com...\nOK", code: 0 },
+    { match: (a) => a[0] === "create-service-key", stdout: "Creating service key figaf-manager-role-key for service instance figaf-l3l4-xsuaa as ais@figaf.com...\nOK", code: 0 },
     { match: (a) => a[0] === "service-key", stdout: SERVICE_KEY_STDOUT, code: 0 },
     { match: (a) => a[0] === "delete-service-key", stdout: "OK", code: 0 },
     { match: (a) => a[0] === "assign", stdout: "OK", code: 0 },
@@ -207,9 +207,9 @@ test("assign with a BTP login and no captured subaccount: GUID from a throw-away
 
   assert.deepEqual(seq(), ["btp --format", "cf create-service-key", "cf service-key", "cf delete-service-key", "btp assign"]);
   const key = spawnCalls[2];
-  assert.deepEqual(key.args, ["service-key", "figaf-manager-xsuaa", "figaf-manager-role-key"]);
+  assert.deepEqual(key.args, ["service-key", "figaf-l3l4-xsuaa", "figaf-manager-role-key"]);
   const del = spawnCalls[3];
-  assert.deepEqual(del.args, ["delete-service-key", "figaf-manager-xsuaa", "figaf-manager-role-key", "-f"]);
+  assert.deepEqual(del.args, ["delete-service-key", "figaf-l3l4-xsuaa", "figaf-manager-role-key", "-f"]);
   const assign = spawnCalls[4];
   assert.deepEqual(assign.args, [
     "assign", "security/role-collection", "FigafManagerAdmin",

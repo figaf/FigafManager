@@ -273,6 +273,10 @@ function BaseServicesCard({ services, busy, onProvision, onBind, onRestart, onRe
   const [plans, setPlans] = React.useState({});
   const [bindingLive, setBindingLive] = React.useState(null); // login:storedUserStatus.bindingPresent
   const [confirmRestart, setConfirmRestart] = React.useState(false);
+  // Token mode (before step 1, Secure access): nothing on this card may restart
+  // the manager - a restart would cost a second setup token (decision 0009).
+  // Step 1 creates and binds the Credential Store itself.
+  const ssoMode = typeof window !== "undefined" && window.figafXsuaaMode === true;
 
   React.useEffect(() => {
     let cancelled = false;
@@ -317,6 +321,10 @@ function BaseServicesCard({ services, busy, onProvision, onBind, onRestart, onRe
       <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 4 }}>
         Service instances this release needs in the space. Created by the manager with plain
         <span className="kbd">cf create-service</span>; plans that cost money are your choice.
+        {!ssoMode && (
+          <span data-token-mode-note=""> Before step 1 (Secure access) nothing here restarts the manager: that step creates the XSUAA
+          instance and the Credential Store and binds them to the manager itself.</span>
+        )}
       </div>
       {services.map((s) => {
         const meta = L3_SERVICE_STATUS_META[s.status] || L3_SERVICE_STATUS_META.unknown;
@@ -340,10 +348,13 @@ function BaseServicesCard({ services, busy, onProvision, onBind, onRestart, onRe
             )}
             <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{s.purpose}</span>
             <div className="spacer" style={{ flex: 1 }} />
-            {s.bindToManager && s.status === "ready" && s.boundToManager === false && (
+            {s.bindToManager && s.status === "ready" && s.boundToManager === false && ssoMode && (
               <button className="btn" onClick={() => onBind(s.name)} disabled={!!busy}>
                 {busy === "bind" ? "Binding…" : "Bind to manager"}
               </button>
+            )}
+            {s.bindToManager && s.status === "ready" && s.boundToManager === false && !ssoMode && (
+              <span style={{ fontSize: 12, color: "var(--ink-3)" }} data-gated="bind">bound by step 1 (Secure access)</span>
             )}
             {s.bindToManager && s.status === "ready" && s.boundToManager === true && bindingLive === false && (
               <span style={{ fontSize: 12, color: "var(--ink-3)" }}>bound · restart needed</span>
@@ -354,11 +365,17 @@ function BaseServicesCard({ services, busy, onProvision, onBind, onRestart, onRe
           </div>
         );
       })}
-      {credstore && credstore.boundToManager === true && bindingLive === false && (
+      {credstore && credstore.boundToManager === true && bindingLive === false && !ssoMode && (
+        <div style={{ marginTop: 10, padding: 10, border: "1px solid var(--line)", borderRadius: 8, fontSize: 13 }} data-gated="restart">
+          <strong>Binding not active yet.</strong> It becomes active with the restage at the end of step 1
+          (Secure access). No separate restart here: in token mode a restart would cost a new setup token.
+        </div>
+      )}
+      {credstore && credstore.boundToManager === true && bindingLive === false && ssoMode && (
         <div style={{ marginTop: 10, padding: 10, border: "1px solid var(--line)", borderRadius: 8, fontSize: 13 }}>
           <strong>Restart needed.</strong> The Credential Store is bound to the manager, but a binding only
-          becomes active after a restart. The restart ends this session: reload the page in about 30
-          seconds — in token mode you must claim a new setup token from the logs first.
+          becomes active after a restart. The restart ends this session; reload the page in about 30
+          seconds and sign in again with SAP IAS.
           {!confirmRestart ? (
             <div style={{ marginTop: 8 }}>
               <button className="btn" onClick={() => setConfirmRestart(true)} disabled={!!busy}>Restart manager…</button>
@@ -553,7 +570,7 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus, onServices
         {catalog && catalog.platform && (
           <div data-platform-row="" style={{ border: "1px dashed var(--line)", borderRadius: 10, padding: 12, marginBottom: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <div style={{ fontWeight: 700 }}>{catalog.platform.name || "Platform base"}</div>
+              <div style={{ fontWeight: 700 }}>{catalog.platform.name || "Shared backend"}</div>
               <L3StatusPill status={platformStatus ? platformStatus.status : null} />
               <div className="spacer" style={{ flex: 1 }} />
               <div style={{ fontSize: 12, color: "var(--ink-3)" }}>

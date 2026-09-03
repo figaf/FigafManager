@@ -144,7 +144,7 @@ function AccessMapCard({ ctx }) {
     {
       name: "Browser access",
       purpose: ssoMode
-        ? "SAP IAS sign-in through the approuter; the FigafManagerAdmin role is required. Survives restarts and redeploys."
+        ? "SAP IAS sign-in through the approuter; the FigafL3L4-Manager-Admin (or -Operator) role collection is required. Survives restarts and redeploys."
         : "A one-time setup token from the app logs, until persistent SSO is enabled. Dies on every restart.",
       state: ssoMode ? { cls: "green", text: "SAP IAS" } : { cls: "gray", text: "setup token" },
     },
@@ -201,17 +201,18 @@ function PersistentSsoCard({ ctx, onAddBtp, onStart }) {
   return (
     <div className="card" style={{ marginTop: 14 }} data-card="persistent-sso">
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-        <div style={{ fontWeight: 700 }}>Persistent SSO (once per installation)</div>
+        <div style={{ fontWeight: 700 }}>Secure access — persistent SSO (step 1, once per installation)</div>
         <span className="pill gray">not enabled</span>
       </div>
       <p style={{ fontSize: 13, color: "var(--ink-3)", margin: "0 0 8px" }}>
-        Replaces the setup token with SAP IAS sign-in and the <span className="kbd">FigafManagerAdmin</span> role.
+        Replaces the setup token with SAP IAS sign-in and the <span className="kbd">FigafL3L4-Manager-Admin</span> role collection.
         After it, access survives restarts and redeploys, and nobody needs the logs to get in.
       </p>
       <p style={{ fontSize: 13, color: "var(--ink-3)", margin: "0 0 10px" }}>
-        What happens: one XSUAA instance is created, an approuter app is pushed and takes over the public URL,
-        the manager moves to an internal URL and restarts (30-90 s offline). About 3 minutes in total.
-        Do it after the management user is stored, so the manager signs itself back in.
+        What happens: the shared XSUAA instance <span className="kbd">figaf-l3l4-xsuaa</span> is prepared (roles of the manager
+        and the apps), the Credential Store is created and bound to the manager, an approuter app is pushed and takes over the
+        public URL, the manager moves to an internal URL and restarts once (30-90 s offline). About 3-4 minutes in total.
+        Do it FIRST: after the IAS sign-in you store the management user on the sign-in gate and never need a second passcode.
       </p>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10, padding: "8px 10px", border: "1px solid var(--line)", borderRadius: 8, fontSize: 13 }}>
         {btpOn ? (
@@ -223,7 +224,7 @@ function PersistentSsoCard({ ctx, onAddBtp, onStart }) {
           <>
             <span className="pill gray">no BTP login</span>
             <span style={{ color: "var(--ink-3)", flex: 1, minWidth: 200 }}>
-              Without it the upgrade cannot assign the role. You then add <span className="kbd">FigafManagerAdmin</span> to
+              Without it the upgrade cannot assign the role. You then add <span className="kbd">FigafL3L4-Manager-Admin</span> to
               your user in the BTP cockpit before you continue. A BTP login made before the last restart does not
               count: the manager forgets it on every restart.
             </span>

@@ -37,33 +37,46 @@ test("base services card (catalog v3) reports the real instances of the space", 
   await expect(card.getByRole("button", { name: /Create missing services/ })).toBeDisabled();
 });
 
-test("setup checklist shows the numbered install steps with why-lines, SSO last", async ({ page }) => {
-  // Locally the manager has no credstore binding and no SSO, so the banner must show.
+test("setup checklist shows the numbered install steps with why-lines, Secure access (SSO) FIRST", async ({ page }) => {
+  // Locally the manager runs in token mode, so the banner must show and step 1 is current.
   await page.goto("/#/apps");
   const banner = page.locator(".setup-checklist");
   await expect(banner).toContainText("Set up this installation");
   await expect(banner.locator(".pill.blue").first()).toHaveText(/^\d of 5 done$/);
-  // Catalog v3: five steps, in the install order, all visible (done ones compact).
+  // Catalog v3: five steps, in the install order (decision 0009), all visible.
   const steps = banner.locator(".setup-step");
   await expect(steps).toHaveCount(5);
-  await expect(steps.nth(0)).toContainText("1. Base services");
+  await expect(steps.nth(0)).toContainText("1. Secure access");
   await expect(steps.nth(1)).toContainText("2. Management user");
-  await expect(steps.nth(2)).toContainText("3. Platform base");
-  await expect(steps.nth(3)).toContainText("4. Figaf tool connection");
-  await expect(steps.nth(4)).toContainText("5. Persistent SSO");
-  // Exactly one current step; every open step explains itself.
+  await expect(steps.nth(2)).toContainText("3. Base services");
+  await expect(steps.nth(3)).toContainText("4. Shared backend");
+  await expect(steps.nth(4)).toContainText("5. Figaf tool connection");
+  // Exactly one current step - step 1; every other step waits for it.
   await expect(banner.locator(".setup-step.is-current")).toHaveCount(1);
+  await expect(banner.locator('.setup-step[data-step="sso"]')).toHaveClass(/is-current/);
+  for (const id of ["mgmt-user", "services", "platform", "figaf-connection"]) {
+    await expect(banner.locator(`.setup-step[data-step="${id}"]`)).toContainText("after step 1");
+  }
   const openSteps = banner.locator(".setup-step:not(.is-done)");
   expect(await openSteps.count()).toBeGreaterThan(0);
   expect(await banner.locator(".setup-why").count()).toBe(await openSteps.count());
-  // SSO explains its side effect and its prerequisite; its button is gated on the stored user.
+  // Step 1 explains the passcode, the single restart and the role collection; its button is live.
   const sso = banner.locator('.setup-step[data-step="sso"]');
   await expect(sso).toContainText("30-90 s");
-  await expect(sso).toContainText("after step 2");
-  await expect(sso.getByRole("button", { name: "Start upgrade" })).toBeVisible();
+  await expect(sso).toContainText("passcode");
+  await expect(sso).toContainText("FigafL3L4-Manager-Admin");
+  await expect(sso.getByRole("button", { name: "Start upgrade" })).toBeEnabled();
   // Hide is per page load.
   await banner.getByRole("button", { name: "Hide" }).click();
   await expect(banner).toHaveCount(0);
+});
+
+test("base services card in token mode: nothing that restarts the manager is offered", async ({ page }) => {
+  await page.goto("/#/apps");
+  const card = page.getByText("Base services", { exact: true }).locator("..").locator("..");
+  await expect(card).toContainText("Before step 1 (Secure access) nothing here restarts the manager");
+  await expect(card.getByRole("button", { name: /Restart manager/ })).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "Bind to manager" })).toHaveCount(0);
 });
 
 test("setup checklist re-reads the management-user and Figaf states when the dashboard is shown again", async ({ page }) => {
@@ -122,7 +135,12 @@ test("session page: access map first, then CF session, BTP, management user, per
   await expect(page.getByText("SAP BTP session")).toBeVisible();
   await expect(page.getByText("Management user (automatic sign-in)")).toBeVisible();
   const sso = page.locator('[data-card="persistent-sso"]');
-  await expect(sso).toContainText("Persistent SSO");
+  // Decision 0009: secure access is step 1, and the card says what it creates.
+  await expect(sso).toContainText("persistent SSO");
+  await expect(sso).toContainText("step 1");
+  await expect(sso).toContainText("figaf-l3l4-xsuaa");
+  await expect(sso).toContainText("Credential Store");
+  await expect(sso).toContainText("FigafL3L4-Manager-Admin");
   await expect(sso).toContainText("30-90 s");
   // No BTP login in this session: the card says so and offers it BEFORE the upgrade.
   await expect(sso).toContainText("no BTP login");

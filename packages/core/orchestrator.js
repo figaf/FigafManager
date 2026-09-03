@@ -25,6 +25,8 @@ const releaseConfig = require("./release-config");
 const { createL3Handlers } = require("./l3-apps");
 const { createConnectionsHandlers } = require("./connections");
 const credstoreClient = require("./credstore-client");
+// One XSUAA instance for the manager and the apps (figaf-l3-l4 decision 0009).
+const managerXsuaa = require("./manager-xsuaa");
 
 const DEPLOYMENT_ZIP_URL =
   process.env.FIGAF_DEPLOYMENT_ZIP_URL ||
@@ -173,6 +175,32 @@ function createOrchestrator({ host, send, audit }) {
   async function probeApprouterPresence() {
     const r = await run(resolveCf(), ["app", "figaf-manager-approuter"], { source: "cf" });
     return r.code === 0;
+  }
+
+  // One XSUAA instance (decision 0009). New installations bind the manager to
+  // the shared `figaf-l3l4-xsuaa` (roles of the manager AND the apps). Alex's
+  // shipped installations are bound to the legacy `figaf-manager-xsuaa` and
+  // keep working: when THIS process is bound to the legacy instance, every
+  // xsuaa:* handler keeps talking to it. Nothing creates the legacy instance
+  // any more.
+  function boundXsuaaInstanceName() {
+    try {
+      const vs = JSON.parse(process.env.VCAP_SERVICES || "{}");
+      for (const b of vs.xsuaa || []) {
+        if (b && b.credentials && managerXsuaa.isLegacyXsappname(b.credentials.xsappname)) {
+          return managerXsuaa.LEGACY_INSTANCE;
+        }
+        if (b && b.credentials && managerXsuaa.isSharedXsappname(b.credentials.xsappname)) {
+          return managerXsuaa.SHARED_INSTANCE;
+        }
+      }
+    } catch { /* not in CF, or unreadable */ }
+    return null;
+  }
+  function targetXsuaaInstance() {
+    return boundXsuaaInstanceName() === managerXsuaa.LEGACY_INSTANCE
+      ? managerXsuaa.LEGACY_INSTANCE
+      : managerXsuaa.SHARED_INSTANCE;
   }
 
   // ─── subprocess helpers ────────────────────────────────────────────────────
@@ -572,7 +600,7 @@ function createOrchestrator({ host, send, audit }) {
   // is neither streamed to the terminal nor written to the audit tail.
   async function deriveSubaccountGuidFromXsuaa() {
     if (state.subaccountFromXsuaa) return { ok: true, guid: state.subaccountFromXsuaa };
-    const inst = "figaf-manager-xsuaa";
+    const inst = targetXsuaaInstance();
     const keyName = "figaf-manager-role-key";
     const c = await run(resolveCf(), ["create-service-key", inst, keyName], { source: "cf" });
     if (c.code !== 0 && !/already exists/i.test(`${c.stderr}\n${c.stdout}`)) {
@@ -2214,8 +2242,16 @@ function createOrchestrator({ host, send, audit }) {
      */
     async "xsuaa:upgradeStatus"() {
       if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
-      const result = { ok: true, hasXsuaaService: false, hasApprouterApp: false, managerBound: false, route: null, mode: "token" };
-      const svc = await run(resolveCf(), ["service", "figaf-manager-xsuaa"], { source: "cf" });
+      const inst = targetXsuaaInstance();
+      const result = {
+        ok: true, hasXsuaaService: false, hasApprouterApp: false, managerBound: false, route: null, mode: "token",
+        // decision 0009: which instance this manager talks to, and the role
+        // collection the upgrade assigns by default.
+        instance: inst,
+        legacy: inst === managerXsuaa.LEGACY_INSTANCE,
+        roleCollection: managerXsuaa.adminCollectionFor(inst),
+      };
+      const svc = await run(resolveCf(), ["service", inst], { source: "cf" });
       result.hasXsuaaService = svc.code === 0;
       result.hasApprouterApp = await probeApprouterPresence();
       // Read manager's own routes from VCAP_APPLICATION (set by CF on every dyno).
@@ -2226,7 +2262,7 @@ function createOrchestrator({ host, send, audit }) {
       // managerBound: try cf services and look for figaf-manager in the
       // bound apps column. CF v8 doesn't have a direct "show bindings for
       // service X" CLI, so we use cf curl on the service binding endpoint.
-      const sb = await run(resolveCf(), ["curl", "/v3/service_credential_bindings?service_instance_names=figaf-manager-xsuaa&app_names=figaf-manager"], { source: "cf" });
+      const sb = await run(resolveCf(), ["curl", `/v3/service_credential_bindings?service_instance_names=${inst}&app_names=figaf-manager`], { source: "cf" });
       if (sb.code === 0) {
         try {
           const parsed = JSON.parse(sb.stdout);
@@ -2238,49 +2274,32 @@ function createOrchestrator({ host, send, audit }) {
     },
 
     /**
-     * Phase 1.1 — create the wizard's XSUAA service instance using the
-     * bundled xs-security.json. Idempotent: if the service already exists,
-     * we return ok with alreadyExists=true.
+     * Phase 1 — prepare the SHARED XSUAA instance (decision 0009): create
+     * `figaf-l3l4-xsuaa` when missing, update it when present, always from the
+     * composed document (manager part + release part). Runs on every upgrade,
+     * so an instance that came from the release or a script gets the manager
+     * roles too. Delegates to l3:ensureXsuaa (packages/core/l3-apps.js).
+     * A manager already bound to the legacy instance has nothing to create.
      */
     async "cf:createXsuaa"() {
       if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
-      const approuterDir = host.resolveManagerApprouterDir && host.resolveManagerApprouterDir();
-      if (!approuterDir) {
-        return { ok: false, error: "manager-approuter not bundled in this build; redeploy with v2 zip" };
-      }
-      const xsSecurityPath = path.join(approuterDir, "xs-security.json");
-      if (!fs.existsSync(xsSecurityPath)) {
-        return { ok: false, error: `xs-security.json not found at ${xsSecurityPath}` };
+      const inst = targetXsuaaInstance();
+      if (inst === managerXsuaa.LEGACY_INSTANCE) {
+        send("xsuaa:upgradePhase", { phase: "create-xsuaa", state: "done" });
+        return { ok: true, alreadyExists: true, instance: inst, legacy: true };
       }
       send("xsuaa:upgradePhase", { phase: "create-xsuaa", state: "running" });
-      const args = ["create-service", "xsuaa", "application", "figaf-manager-xsuaa", "-c", xsSecurityPath];
-      const r = await run(resolveCf(), args, { source: "cf" });
-      const alreadyExists = /already exists/i.test(r.stdout + r.stderr);
-      if (r.code !== 0 && !alreadyExists) {
-        send("xsuaa:upgradePhase", { phase: "create-xsuaa", state: "failed", error: r.stderr || "create-service failed" });
-        return { ok: false, error: r.stderr || "create-service failed" };
+      send("cf:serviceStatus", { name: inst, status: "preparing" });
+      const r = await handlers["l3:ensureXsuaa"]({});
+      if (!r || !r.ok) {
+        const error = (r && r.error) || "prepare XSUAA failed";
+        send("xsuaa:upgradePhase", { phase: "create-xsuaa", state: "failed", error });
+        return { ok: false, error, instance: inst };
       }
-      // Poll until provisioning succeeds. Reuse the cf:pollService loop
-      // pattern; emit cf:serviceStatus so the UI's existing polling-screen
-      // pattern lights up.
-      const start = Date.now();
-      const timeoutMs = 10 * 60 * 1000;
-      while (Date.now() - start < timeoutMs) {
-        const s = await run(resolveCf(), ["service", "figaf-manager-xsuaa"], { source: "cf" });
-        const line = /status:\s+(.+)/i.exec(s.stdout)?.[1]?.trim() || "unknown";
-        send("cf:serviceStatus", { name: "figaf-manager-xsuaa", status: line });
-        if (/succeeded/i.test(line)) {
-          send("xsuaa:upgradePhase", { phase: "create-xsuaa", state: "done" });
-          return { ok: true, alreadyExists, status: line };
-        }
-        if (/failed/i.test(line)) {
-          send("xsuaa:upgradePhase", { phase: "create-xsuaa", state: "failed", error: line });
-          return { ok: false, error: line };
-        }
-        await new Promise((r) => setTimeout(r, 5000));
-      }
-      send("xsuaa:upgradePhase", { phase: "create-xsuaa", state: "failed", error: "timeout" });
-      return { ok: false, error: "timeout polling figaf-manager-xsuaa" };
+      const status = r.created ? "create succeeded" : "update succeeded";
+      send("cf:serviceStatus", { name: inst, status });
+      send("xsuaa:upgradePhase", { phase: "create-xsuaa", state: "done" });
+      return { ok: true, alreadyExists: !r.created, created: !!r.created, updated: !!r.updated, instance: inst, status };
     },
 
     /**
@@ -2355,7 +2374,7 @@ function createOrchestrator({ host, send, audit }) {
         return { ok: false, error: r.stderr || "cf push failed" };
       }
       // 1.5 bind-service
-      const b = await run(resolveCf(), ["bind-service", "figaf-manager-approuter", "figaf-manager-xsuaa"], { source: "cf" });
+      const b = await run(resolveCf(), ["bind-service", "figaf-manager-approuter", targetXsuaaInstance()], { source: "cf" });
       if (b.code !== 0 && !/already bound/i.test(b.stdout + b.stderr)) {
         send("xsuaa:upgradePhase", { phase: "push-approuter", state: "failed", error: b.stderr });
         return { ok: false, error: b.stderr || "bind-service failed" };
@@ -2467,6 +2486,9 @@ function createOrchestrator({ host, send, audit }) {
     async "cf:restage"({ app, bindXsuaa, skipIfBound, unmapRoute } = {}) {
       if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
       const appName = app || "figaf-manager";
+      // The shared instance for new installations; the legacy one only when
+      // this process is already bound to it (decision 0009).
+      const xsuaaInst = targetXsuaaInstance();
 
       // Short-circuit: if the caller asked us to be conservative AND the
       // binding already exists, do nothing. The manager is already (or will
@@ -2475,7 +2497,7 @@ function createOrchestrator({ host, send, audit }) {
       if (skipIfBound) {
         const probe = await run(
           resolveCf(),
-          ["curl", `/v3/service_credential_bindings?service_instance_names=figaf-manager-xsuaa&app_names=${appName}`],
+          ["curl", `/v3/service_credential_bindings?service_instance_names=${xsuaaInst}&app_names=${appName}`],
           { source: "cf" }
         );
         if (probe.code === 0) {
@@ -2483,7 +2505,7 @@ function createOrchestrator({ host, send, audit }) {
             const parsed = JSON.parse(probe.stdout);
             if (Array.isArray(parsed.resources) && parsed.resources.length > 0) {
               send("xsuaa:upgradePhase", { phase: "restage", state: "done" });
-              return { ok: true, alreadyBound: true, message: "manager already bound to figaf-manager-xsuaa; bind+restage skipped" };
+              return { ok: true, alreadyBound: true, message: `manager already bound to ${xsuaaInst}; bind+restage skipped` };
             }
           } catch { /* fall through to the real bind path */ }
         }
@@ -2504,7 +2526,7 @@ function createOrchestrator({ host, send, audit }) {
       }
 
       if (bindXsuaa) {
-        const b = await run(resolveCf(), ["bind-service", appName, "figaf-manager-xsuaa"], { source: "cf" });
+        const b = await run(resolveCf(), ["bind-service", appName, xsuaaInst], { source: "cf" });
         if (b.code !== 0 && !/already bound/i.test(b.stdout + b.stderr)) {
           return { ok: false, error: b.stderr || "bind-service failed" };
         }
@@ -2550,11 +2572,12 @@ function createOrchestrator({ host, send, audit }) {
      * from a throw-away service key of the manager's own XSUAA instance; the
      * user is the e-mail named on the panel (default: the cf identity).
      *
-     * Default role is FigafManagerAdmin because the Admin role-template's
-     * scope-references include FigafManagerOperator (xs-security.json), so a
-     * single assignment covers both. The role parameter is plumbed through
-     * to make swapping to FigafManagerOperator a one-line change at the
-     * caller, no contract change here.
+     * Default role is the Admin collection of the bound instance
+     * (FigafL3L4-Manager-Admin on the shared instance, FigafManagerAdmin on a
+     * legacy one - decision 0009) because the Admin role-template's
+     * scope-references include the Operator scope, so a single assignment
+     * covers both. The role parameter is plumbed through so a caller can
+     * assign the Operator collection instead, no contract change here.
      *
      * NOT shell-concatenated: spawn() with an args array via run(). No user
      * input ever lands in shell syntax. The user/subaccount values come from
@@ -2573,7 +2596,7 @@ function createOrchestrator({ host, send, audit }) {
      */
     async "xsuaa:assignRoleCollection"({ role, user } = {}) {
       if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
-      const rc = role || "FigafManagerAdmin";
+      const rc = role || managerXsuaa.adminCollectionFor(targetXsuaaInstance());
       const cockpitHint = "assign the role in the BTP cockpit (subaccount > Security > Users)";
       // Who gets the role: the e-mail named on the upgrade screen. The default,
       // state.user, is the cf identity - after the stored management user
@@ -2666,7 +2689,7 @@ function createOrchestrator({ host, send, audit }) {
       // here, which is wrong for the #/globalaccount/<…>/ fragment.)
       const base = cockpitBaseFromLicense(state.licenseType);
       const url = `${base}#/globalaccount/${encodeURIComponent(gaGuid)}/subaccount/${encodeURIComponent(sub)}/users`;
-      return { ok: true, url, roleCollection: "FigafManagerOperator" };
+      return { ok: true, url, roleCollection: managerXsuaa.adminCollectionFor(targetXsuaaInstance()) };
     },
 
     /**
@@ -2713,14 +2736,19 @@ function createOrchestrator({ host, send, audit }) {
       if (!host.isHosted) return { ok: false, error: "not available in desktop mode" };
       // Schedule teardown after the current call frame so the RPC response
       // can flush back to the browser before any blocking work begins.
+      // One XSUAA instance (decision 0009): the shared instance also holds the
+      // apps' roles and every user assignment - it is unbound, never deleted.
+      // Only the legacy manager-only instance goes away with the manager.
+      const xsuaaInst = targetXsuaaInstance();
+      const legacy = xsuaaInst === managerXsuaa.LEGACY_INSTANCE;
       setImmediate(async () => {
         const steps = [
-          { name: "unbind-service approuter", args: ["unbind-service", "figaf-manager-approuter", "figaf-manager-xsuaa"] },
-          { name: "unbind-service manager",   args: ["unbind-service", "figaf-manager", "figaf-manager-xsuaa"] },
+          { name: "unbind-service approuter", args: ["unbind-service", "figaf-manager-approuter", xsuaaInst] },
+          { name: "unbind-service manager",   args: ["unbind-service", "figaf-manager", xsuaaInst] },
           { name: "delete approuter",         args: ["delete", "figaf-manager-approuter", "-r", "-f"] },
           { name: "delete manager",           args: ["delete", "figaf-manager", "-r", "-f"] },
-          { name: "delete-service xsuaa",     args: ["delete-service", "figaf-manager-xsuaa", "-f"] },
         ];
+        if (legacy) steps.push({ name: "delete-service xsuaa", args: ["delete-service", xsuaaInst, "-f"] });
         for (const step of steps) {
           log("teardown", "line", `Running: cf ${step.args.join(" ")}`);
           await run(resolveCf(), step.args, { source: "cf" }).catch((e) => {
@@ -2728,7 +2756,10 @@ function createOrchestrator({ host, send, audit }) {
           });
         }
         if (deleteRoleCollections) {
-          for (const rc of ["FigafManagerOperator", "FigafManagerAdmin"]) {
+          const collections = legacy
+            ? [managerXsuaa.LEGACY_OPERATOR_COLLECTION, managerXsuaa.LEGACY_ADMIN_COLLECTION]
+            : [managerXsuaa.SHARED_OPERATOR_COLLECTION, managerXsuaa.SHARED_ADMIN_COLLECTION];
+          for (const rc of collections) {
             const args = ["delete", "security/role-collection", rc, "--force"];
             if (state.subaccount) args.push("--subaccount", state.subaccount);
             await run(resolveBtp(), args, { source: "btp" }).catch(() => {});

@@ -40,6 +40,10 @@ const VERSION_ENV = "FIGAF_APP_VERSION";
 // landscape we are logged into. No landscape is ever hard-coded in a release.
 const APPS_DOMAIN_PLACEHOLDER = "__CF_APPS_DOMAIN__";
 const MAX_ENV_VALUE_LEN = 4096;
+// One XSUAA instance for the manager and the apps (decision 0009): the
+// manager part of xs-security is merged into the release part whenever the
+// instance is created or updated.
+const managerXsuaa = require("./manager-xsuaa");
 
 // ─── pure helpers (unit-tested in l3-apps.test.js) ──────────────────────────
 
@@ -107,15 +111,16 @@ function serviceStatusFromCf(exitCode, stdout) {
 }
 
 /**
- * The platform base (shared backend connector) as a pseudo-app, so the deploy
- * machinery treats it exactly like an app's CF apps. Null on v1 catalogs.
+ * The shared backend connector (catalog key `platform`) as a pseudo-app, so
+ * the deploy machinery treats it exactly like an app's CF apps. Null on v1
+ * catalogs. UI name: "Shared backend" (decision 0009 naming).
  */
 function platformPseudoApp(catalog) {
   const p = catalog && catalog.platform;
   if (!p || !Array.isArray(p.cfApps) || p.cfApps.length === 0) return null;
   return {
     id: "platform",
-    name: p.name || "Platform base (shared backend)",
+    name: p.name || "Shared backend (connector)",
     version: catalog.releaseVersion || catalog.channelVersion || "unknown",
     cfApps: p.cfApps,
   };
@@ -234,6 +239,126 @@ function createL3Handlers(ctx) {
   function selfAppName() {
     const t = host.getDeployTargetForSelf && host.getDeployTargetForSelf();
     return t && t.appName ? t.appName : null;
+  }
+
+  /** Last non-empty line the CLI printed, for error texts. */
+  const cfTail = (r) => ((r.stderr || r.stdout || "").trim().split(/\r?\n/).filter(Boolean).pop() || "").slice(0, 300);
+
+  /**
+   * Wait until every named instance reports a succeeded operation. Failed
+   * instances are collected, the rest is polled until PROVISION_TIMEOUT_MS.
+   */
+  async function waitForServices(names) {
+    const failed = [];
+    const timedOut = [];
+    const deadline = Date.now() + PROVISION_TIMEOUT_MS;
+    let pending = [...names];
+    while (pending.length) {
+      const still = [];
+      for (const name of pending) {
+        const r = await run(resolveCf(), ["service", name], { source: "cf", quiet: true });
+        const status = serviceStatusFromCf(r.code, r.stdout);
+        if (status === "ready") continue;
+        if (status === "failed") { failed.push({ name, error: "service operation failed (see cf service)" }); continue; }
+        still.push(name);
+      }
+      pending = still;
+      if (!pending.length) break;
+      if (Date.now() > deadline) { timedOut.push(...pending); break; }
+      log("l3", "dim", `waiting for: ${pending.join(", ")} …`);
+      await sleep(POLL_MS);
+    }
+    const ok = failed.length === 0 && timedOut.length === 0;
+    return {
+      ok, failed, timedOut,
+      error: ok ? undefined :
+        [failed.map((f) => `${f.name}: ${f.error}`).join("; "), timedOut.length ? `still not ready: ${timedOut.join(", ")}` : ""]
+          .filter(Boolean).join(" | "),
+    };
+  }
+
+  /**
+   * The full xs-security document for the shared XSUAA instance (decision
+   * 0009): the release part (the xsuaa entry's configFile, when a release is
+   * present) merged with the manager part, the __CF_APPS_DOMAIN__ placeholder
+   * filled with the landscape's cfapps domain (decision 0008). Written to
+   * <userData>/l3-services/ so the release file stays untouched.
+   * Returns { ok, path, doc } or { ok:false, error }.
+   */
+  async function composedXsuaaConfig(dir, catalog) {
+    let release = null;
+    const svc = catalog && Array.isArray(catalog.services) ? catalog.services.find((s) => s.offering === "xsuaa") : null;
+    if (dir && svc && svc.configFile) {
+      const file = path.join(dir, svc.configFile);
+      if (!fs.existsSync(file)) return { ok: false, error: `config file ${svc.configFile} missing from the release` };
+      try { release = JSON.parse(fs.readFileSync(file, "utf8").replace(/^﻿/, "")); }
+      catch (e) { return { ok: false, error: `${svc.configFile} is not valid JSON: ${e.message}` }; }
+    }
+    const dom = await resolveAppsDomain();
+    if (!dom.ok) return dom;
+    const composed = managerXsuaa.composeXsSecurity({ release, appsDomain: dom.domain });
+    if (!composed.ok) return composed;
+    const cfgDir = path.join(host.getUserDataDir(), "l3-services");
+    fs.mkdirSync(cfgDir, { recursive: true });
+    const out = path.join(cfgDir, "xs-security.composed.json");
+    fs.writeFileSync(out, JSON.stringify(composed.doc, null, 2));
+    log("l3", "dim", `xs-security = manager part + release part; ${APPS_DOMAIN_PLACEHOLDER} -> ${dom.domain}`);
+    return { ok: true, path: out, doc: composed.doc };
+  }
+
+  /**
+   * Make the shared XSUAA instance carry the current roles (decision 0009):
+   * create `figaf-l3l4-xsuaa` when missing, update it when present, always
+   * from the composed document. Waits until the operation succeeded.
+   * updateOnly: do nothing when the instance is missing (before install and
+   * update, where the required-services check reports a missing instance).
+   */
+  async function ensureXsuaa({ updateOnly } = {}) {
+    const inst = managerXsuaa.SHARED_INSTANCE;
+    const dir = artifactsDir();
+    let catalog = null;
+    if (dir) {
+      const c = loadCatalog(dir);
+      if (!c.ok) return { ok: false, instance: inst, error: c.error };
+      catalog = c.catalog;
+    }
+    const probe = await run(resolveCf(), ["service", inst], { source: "cf", quiet: true });
+    let status = serviceStatusFromCf(probe.code, probe.stdout);
+    if (status === "missing" && updateOnly) return { ok: true, instance: inst, skipped: true, note: `${inst} does not exist yet` };
+    if (status === "in-progress") {
+      const w = await waitForServices([inst]);
+      if (!w.ok) return { ok: false, instance: inst, error: w.error };
+      status = "ready";
+    }
+    const cfg = await composedXsuaaConfig(dir, catalog);
+    if (!cfg.ok) return { ok: false, instance: inst, error: cfg.error };
+    if (status === "failed") {
+      log("l3", "warn", `${inst} is in a failed state — deleting it before creating again`);
+      const del = await run(resolveCf(), ["delete-service", inst, "-f"], { source: "cf" });
+      if (del.code !== 0) return { ok: false, instance: inst, error: `could not delete the failed instance ${inst}: ${cfTail(del)}` };
+      const gone = Date.now() + PROVISION_TIMEOUT_MS;
+      while ((await run(resolveCf(), ["service", inst], { source: "cf", quiet: true })).code === 0) {
+        if (Date.now() > gone) return { ok: false, instance: inst, error: `${inst}: deletion did not finish in time` };
+        await sleep(POLL_MS);
+      }
+      status = "missing";
+    }
+    let created = false;
+    if (status === "missing") {
+      const svc = (catalog && (catalog.services || []).find((s) => s.offering === "xsuaa")) || null;
+      const plan = (svc && svc.plan) || "application";
+      log("l3", "line", `Creating service instance ${inst} (xsuaa / ${plan}) — roles of the manager and the apps …`);
+      const r = await run(resolveCf(), ["create-service", "xsuaa", plan, inst, "-c", cfg.path], { source: "cf" });
+      if (r.code !== 0) return { ok: false, instance: inst, error: `cf create-service ${inst} failed: ${cfTail(r)}` };
+      created = true;
+    } else {
+      log("l3", "line", `Updating service instance ${inst} — roles of the manager and the apps …`);
+      const r = await run(resolveCf(), ["update-service", inst, "-c", cfg.path], { source: "cf" });
+      if (r.code !== 0) return { ok: false, instance: inst, error: `cf update-service ${inst} failed: ${cfTail(r)}` };
+    }
+    const w = await waitForServices([inst]);
+    if (!w.ok) return { ok: false, instance: inst, error: w.error };
+    return { ok: true, instance: inst, created, updated: !created };
   }
 
   function artifactsDir() {
@@ -386,7 +511,7 @@ function createL3Handlers(ctx) {
       const url = await routeUrl(cfApp.destinationTo);
       if (!url) {
         phase(app.id, name, "env", "error", `no route on ${cfApp.destinationTo}`);
-        return { ok: false, error: `could not resolve the route of ${cfApp.destinationTo} — is the platform base deployed and started?`, step: "env", cfApp: name, command: `cf app ${cfApp.destinationTo}` };
+        return { ok: false, error: `could not resolve the route of ${cfApp.destinationTo} — is the shared backend deployed and started?`, step: "env", cfApp: name, command: `cf app ${cfApp.destinationTo}` };
       }
       envPairs.destinations = buildDestinationsEnv(cfApp.destinationName || cfApp.destinationTo, url);
     }
@@ -437,7 +562,17 @@ function createL3Handlers(ctx) {
         };
       }
     }
-    // Platform base FIRST (catalog v2): the shared connector is deployed /
+    // One XSUAA instance (decision 0009): refresh its roles from the release
+    // before anything is deployed, so a new app's role collections exist when
+    // its frontend starts. Update only — a missing instance was reported above.
+    if (Array.isArray(req.catalog.services) && req.catalog.services.some((s) => s.offering === "xsuaa")) {
+      const x = await ensureXsuaa({ updateOnly: true });
+      if (!x.ok) {
+        const inst = x.instance || managerXsuaa.SHARED_INSTANCE;
+        return { ok: false, error: `role refresh of ${inst} failed: ${x.error}`, step: "roles", cfApp: inst, command: `cf update-service ${inst} -c xs-security.json` };
+      }
+    }
+    // Shared backend FIRST (catalog v2): the shared connector is deployed /
     // updated before any frontend, so the only mixed state that ever exists
     // is "new backend + old frontend" — the state the backward-compatibility
     // gate (decision 0005) covers. Idempotent: an already-current connector
@@ -493,6 +628,111 @@ function createL3Handlers(ctx) {
       log("l3", "err", `${action} ${appId} FAILED${where ? " " + where : ""}: ${(r && r.error) || "unknown error"}`);
     }
     return r;
+  }
+
+  /**
+   * Create every MISSING catalog service, then wait until all are ready.
+   * plans: optional { <name>: <plan> } overrides, validated against the
+   * catalog's allowed plans. only: optional list of service names that
+   * restricts the run (the Secure-access step creates just the manager-bound
+   * ones). Progress lines go to the terminal drawer.
+   */
+  async function provisionServices({ plans, only } = {}) {
+      const dir = artifactsDir();
+      if (!dir) return { ok: false, error: "No L3 artifact store on this host" };
+      const c = loadCatalog(dir);
+      if (!c.ok) return c;
+      let declared = c.catalog.services || [];
+      if (Array.isArray(only)) declared = declared.filter((s) => only.includes(s.name));
+      if (declared.length === 0) {
+        return { ok: true, created: [], note: Array.isArray(only) ? "nothing to create for the requested services" : "this release declares no services" };
+      }
+
+      const created = [];
+      const failed = [];
+      for (const s of declared) {
+        const probe = await run(resolveCf(), ["service", s.name], { source: "cf", quiet: true });
+        if (probe.code === 0) {
+          // Exists. A FAILED instance blocks re-creation under the same name;
+          // remove it and create again (the admin already asked to provision).
+          if (serviceStatusFromCf(probe.code, probe.stdout) !== "failed") continue;
+          log("l3", "warn", `${s.name} is in a failed state — deleting it before creating again`);
+          const del = await run(resolveCf(), ["delete-service", s.name, "-f"], { source: "cf" });
+          if (del.code !== 0) { failed.push({ name: s.name, error: `could not delete the failed instance: ${cfTail(del)}` }); continue; }
+          // Deletion is asynchronous — wait until the name is free.
+          const gone = Date.now() + PROVISION_TIMEOUT_MS;
+          while ((await run(resolveCf(), ["service", s.name], { source: "cf", quiet: true })).code === 0) {
+            if (Date.now() > gone) break;
+            await sleep(POLL_MS);
+          }
+        }
+        const allowed = s.plans || [s.plan];
+        const plan = (plans && plans[s.name]) || s.plan;
+        if (!allowed.includes(plan)) {
+          failed.push({ name: s.name, error: `plan '${plan}' is not allowed for ${s.name} (allowed: ${allowed.join(", ")})` });
+          continue;
+        }
+        const args = ["create-service", s.offering, plan, s.name];
+        if (s.offering === "xsuaa") {
+          // One XSUAA instance for the manager and the apps (decision 0009):
+          // always the composed document (release part + manager part).
+          const cfg = await composedXsuaaConfig(dir, c.catalog);
+          if (!cfg.ok) { failed.push({ name: s.name, error: cfg.error }); continue; }
+          args.push("-c", cfg.path);
+        } else if (s.configFile) {
+          const file = path.join(dir, s.configFile);
+          if (!fs.existsSync(file)) { failed.push({ name: s.name, error: `config file ${s.configFile} missing from the release` }); continue; }
+          let cfgPath = file;
+          const text = fs.readFileSync(file, "utf8");
+          if (text.includes(APPS_DOMAIN_PLACEHOLDER)) {
+            const dom = await resolveAppsDomain();
+            if (!dom.ok) { failed.push({ name: s.name, error: dom.error }); continue; }
+            const cfgDir = path.join(host.getUserDataDir(), "l3-services");
+            fs.mkdirSync(cfgDir, { recursive: true });
+            cfgPath = path.join(cfgDir, s.configFile);
+            fs.writeFileSync(cfgPath, text.split(APPS_DOMAIN_PLACEHOLDER).join(dom.domain));
+            log("l3", "dim", `${s.configFile}: ${APPS_DOMAIN_PLACEHOLDER} -> ${dom.domain}`);
+          }
+          args.push("-c", cfgPath);
+        } else if (s.config && typeof s.config === "object") {
+          // cf -c accepts a file path; never pass JSON on the command line.
+          const cfgDir = path.join(host.getUserDataDir(), "l3-services");
+          fs.mkdirSync(cfgDir, { recursive: true });
+          const file = path.join(cfgDir, `${s.name}.json`);
+          fs.writeFileSync(file, JSON.stringify(s.config));
+          args.push("-c", file);
+        }
+        log("l3", "line", `Creating service instance ${s.name} (${s.offering} / ${plan}) …`);
+        const r = await run(resolveCf(), args, { source: "cf" });
+        if (r.code !== 0) { failed.push({ name: s.name, error: `cf create-service ${s.name} failed: ${cfTail(r)}` }); continue; }
+        created.push(s.name);
+      }
+
+      // Wait for asynchronous creations (PostgreSQL takes minutes).
+      const w = await waitForServices(declared.filter((s) => !failed.some((f) => f.name === s.name)).map((s) => s.name));
+      failed.push(...w.failed);
+      const timedOut = w.timedOut;
+      const ok = failed.length === 0 && timedOut.length === 0;
+      return {
+        ok, created, failed, timedOut,
+        error: ok ? undefined :
+          [failed.map((f) => `${f.name}: ${f.error}`).join("; "), timedOut.length ? `still not ready: ${timedOut.join(", ")}` : ""]
+            .filter(Boolean).join(" | "),
+      };
+  }
+
+  async function bindManagerService(name) {
+      const dir = artifactsDir();
+      if (!dir) return { ok: false, error: "No L3 artifact store on this host" };
+      const c = loadCatalog(dir);
+      if (!c.ok) return c;
+      const s = (c.catalog.services || []).find((x) => x.name === name);
+      if (!s || !s.bindToManager) return { ok: false, error: `${name || "?"} is not a manager-bound service in this release` };
+      const self = selfAppName();
+      if (!self) return { ok: false, error: "cannot determine the manager's own app name (not running in CF?)" };
+      const r = await run(resolveCf(), ["bind-service", self, name], { source: "cf" });
+      if (r.code !== 0) return { ok: false, error: `cf bind-service ${self} ${name} failed` };
+      return { ok: true, restartRequired: true, note: `${name} is bound to ${self}; the binding becomes active after a restart of the manager` };
   }
 
   return {
@@ -612,110 +852,50 @@ function createL3Handlers(ctx) {
      * plans: optional { <name>: <plan> } overrides, validated against the
      * catalog's allowed plans. Progress lines go to the terminal drawer.
      */
-    async "l3:provisionServices"({ plans } = {}) {
+    async "l3:provisionServices"(args) {
+      return provisionServices(args || {});
+    },
+
+    /**
+     * Make the shared XSUAA instance carry the current roles of the manager
+     * and the apps (create or update, decision 0009). See ensureXsuaa().
+     */
+    async "l3:ensureXsuaa"(args) {
+      return ensureXsuaa(args || {});
+    },
+
+    /**
+     * Secure-access step (decision 0009): create the release's manager-bound
+     * services (the Credential Store) when missing and bind them to the
+     * manager — WITHOUT a restart. The restage at the end of the SSO upgrade
+     * activates the binding, so the management user can be stored right after
+     * the IAS sign-in and no second passcode is needed.
+     */
+    async "l3:prepareManagerServices"({ plans } = {}) {
       const dir = artifactsDir();
-      if (!dir) return { ok: false, error: "No L3 artifact store on this host" };
+      if (!dir) return { ok: true, created: [], bound: [], note: "no release on this host - nothing to prepare" };
       const c = loadCatalog(dir);
       if (!c.ok) return c;
-      const declared = c.catalog.services || [];
-      if (declared.length === 0) return { ok: true, created: [], note: "this release declares no services" };
-
-      const created = [];
-      const failed = [];
-      const cfTail = (r) => ((r.stderr || r.stdout || "").trim().split(/\r?\n/).filter(Boolean).pop() || "").slice(0, 300);
-      for (const s of declared) {
-        const probe = await run(resolveCf(), ["service", s.name], { source: "cf", quiet: true });
-        if (probe.code === 0) {
-          // Exists. A FAILED instance blocks re-creation under the same name;
-          // remove it and create again (the admin already asked to provision).
-          if (serviceStatusFromCf(probe.code, probe.stdout) !== "failed") continue;
-          log("l3", "warn", `${s.name} is in a failed state — deleting it before creating again`);
-          const del = await run(resolveCf(), ["delete-service", s.name, "-f"], { source: "cf" });
-          if (del.code !== 0) { failed.push({ name: s.name, error: `could not delete the failed instance: ${cfTail(del)}` }); continue; }
-          // Deletion is asynchronous — wait until the name is free.
-          const gone = Date.now() + PROVISION_TIMEOUT_MS;
-          while ((await run(resolveCf(), ["service", s.name], { source: "cf", quiet: true })).code === 0) {
-            if (Date.now() > gone) break;
-            await sleep(POLL_MS);
-          }
+      const targets = (c.catalog.services || []).filter((s) => s.bindToManager);
+      if (!targets.length) return { ok: true, created: [], bound: [], note: "this release declares no manager-bound service" };
+      const self = selfAppName();
+      if (!self) return { ok: false, error: "cannot determine the manager's own app name (not running in CF?)" };
+      const prov = await provisionServices({ plans, only: targets.map((s) => s.name) });
+      if (!prov.ok) return { ok: false, created: prov.created || [], bound: [], error: prov.error };
+      const bound = [];
+      for (const s of targets) {
+        const r = await run(resolveCf(), ["bind-service", self, s.name], { source: "cf" });
+        if (r.code !== 0 && !/already bound/i.test(`${r.stdout}\n${r.stderr}`)) {
+          return { ok: false, created: prov.created, bound, error: `cf bind-service ${self} ${s.name} failed: ${cfTail(r)}` };
         }
-        const allowed = s.plans || [s.plan];
-        const plan = (plans && plans[s.name]) || s.plan;
-        if (!allowed.includes(plan)) {
-          failed.push({ name: s.name, error: `plan '${plan}' is not allowed for ${s.name} (allowed: ${allowed.join(", ")})` });
-          continue;
-        }
-        const args = ["create-service", s.offering, plan, s.name];
-        if (s.configFile) {
-          const file = path.join(dir, s.configFile);
-          if (!fs.existsSync(file)) { failed.push({ name: s.name, error: `config file ${s.configFile} missing from the release` }); continue; }
-          let cfgPath = file;
-          const text = fs.readFileSync(file, "utf8");
-          if (text.includes(APPS_DOMAIN_PLACEHOLDER)) {
-            const dom = await resolveAppsDomain();
-            if (!dom.ok) { failed.push({ name: s.name, error: dom.error }); continue; }
-            const cfgDir = path.join(host.getUserDataDir(), "l3-services");
-            fs.mkdirSync(cfgDir, { recursive: true });
-            cfgPath = path.join(cfgDir, s.configFile);
-            fs.writeFileSync(cfgPath, text.split(APPS_DOMAIN_PLACEHOLDER).join(dom.domain));
-            log("l3", "dim", `${s.configFile}: ${APPS_DOMAIN_PLACEHOLDER} -> ${dom.domain}`);
-          }
-          args.push("-c", cfgPath);
-        } else if (s.config && typeof s.config === "object") {
-          // cf -c accepts a file path; never pass JSON on the command line.
-          const cfgDir = path.join(host.getUserDataDir(), "l3-services");
-          fs.mkdirSync(cfgDir, { recursive: true });
-          const file = path.join(cfgDir, `${s.name}.json`);
-          fs.writeFileSync(file, JSON.stringify(s.config));
-          args.push("-c", file);
-        }
-        log("l3", "line", `Creating service instance ${s.name} (${s.offering} / ${plan}) …`);
-        const r = await run(resolveCf(), args, { source: "cf" });
-        if (r.code !== 0) { failed.push({ name: s.name, error: `cf create-service ${s.name} failed: ${cfTail(r)}` }); continue; }
-        created.push(s.name);
+        bound.push(s.name);
       }
-
-      // Wait for asynchronous creations (PostgreSQL takes minutes).
-      const timedOut = [];
-      const deadline = Date.now() + PROVISION_TIMEOUT_MS;
-      let pending = declared.filter((s) => !failed.some((f) => f.name === s.name)).map((s) => s.name);
-      while (pending.length) {
-        const still = [];
-        for (const name of pending) {
-          const r = await run(resolveCf(), ["service", name], { source: "cf", quiet: true });
-          const status = serviceStatusFromCf(r.code, r.stdout);
-          if (status === "ready") continue;
-          if (status === "failed") { failed.push({ name, error: "service operation failed (see cf service)" }); continue; }
-          still.push(name);
-        }
-        pending = still;
-        if (!pending.length) break;
-        if (Date.now() > deadline) { timedOut.push(...pending); break; }
-        log("l3", "dim", `waiting for: ${pending.join(", ")} …`);
-        await sleep(POLL_MS);
-      }
-      const ok = failed.length === 0 && timedOut.length === 0;
-      return {
-        ok, created, failed, timedOut,
-        error: ok ? undefined :
-          [failed.map((f) => `${f.name}: ${f.error}`).join("; "), timedOut.length ? `still not ready: ${timedOut.join(", ")}` : ""]
-            .filter(Boolean).join(" | "),
-      };
+      return { ok: true, created: prov.created, bound, note: "bindings become active with the restart at the end of this step" };
     },
 
     /** Bind a bindToManager catalog service to the manager app itself. */
     async "l3:bindManagerService"({ name } = {}) {
-      const dir = artifactsDir();
-      if (!dir) return { ok: false, error: "No L3 artifact store on this host" };
-      const c = loadCatalog(dir);
-      if (!c.ok) return c;
-      const s = (c.catalog.services || []).find((x) => x.name === name);
-      if (!s || !s.bindToManager) return { ok: false, error: `${name || "?"} is not a manager-bound service in this release` };
-      const self = selfAppName();
-      if (!self) return { ok: false, error: "cannot determine the manager's own app name (not running in CF?)" };
-      const r = await run(resolveCf(), ["bind-service", self, name], { source: "cf" });
-      if (r.code !== 0) return { ok: false, error: `cf bind-service ${self} ${name} failed` };
-      return { ok: true, restartRequired: true, note: `${name} is bound to ${self}; the binding becomes active after a restart of the manager` };
+      return bindManagerService(name);
     },
 
     /**

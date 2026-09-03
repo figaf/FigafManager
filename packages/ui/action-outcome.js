@@ -79,7 +79,7 @@
     {
       id: "no-route",
       re: /no route|could not resolve the route/i,
-      hint: "The platform base is not deployed or not started. Install it first (Install deploys the platform base before the app).",
+      hint: "The shared backend is not deployed or not started. Install it first (Install deploys the shared backend before the app).",
     },
   ];
 

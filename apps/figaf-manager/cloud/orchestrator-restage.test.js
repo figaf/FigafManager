@@ -138,6 +138,8 @@ test("cf:restage bindXsuaa=true on fresh app: bind then spawn restage, ok=true",
   assert.ok(bindIdx !== -1, "bind-service invoked");
   assert.ok(restageIdx !== -1, "restage spawned");
   assert.ok(bindIdx < restageIdx, "bind precedes restage");
+  // Decision 0009: a fresh installation binds the SHARED instance.
+  assert.deepEqual(spawnCalls[bindIdx].args, ["bind-service", "figaf-manager", "figaf-l3l4-xsuaa"]);
   const phaseRunning = send.events.find(
     (e) => e.channel === "xsuaa:upgradePhase" && e.payload.phase === "restage" && e.payload.state === "running"
   );
@@ -301,4 +303,48 @@ test("cf:restage unmapRoute fails for non-idempotent reason: ok=false, bind+rest
   assert.match(String(r.error || ""), /privilege/i, "stderr propagates as error");
   assert.ok(!spawnCalls.some((c) => c.args[0] === "bind-service"), "bind NOT run after unmap failure");
   assert.ok(!spawnCalls.some((c) => c.args[0] === "restage"), "restage NOT spawned after unmap failure");
+});
+
+// ─── decision 0009: legacy installations keep their instance ───────────────
+
+test("cf:restage bindXsuaa=true on a manager bound to the LEGACY instance: binds figaf-manager-xsuaa (Alex's shipped installations keep working)", async () => {
+  process.env.VCAP_SERVICES = JSON.stringify({
+    xsuaa: [{ instance_name: "figaf-manager-xsuaa", credentials: { xsappname: "figaf-manager-xsuaa!t77", clientid: "x" } }],
+  });
+  try {
+    responses.push(
+      { match: (a) => a[0] === "bind-service", stdout: "", stderr: "", code: 0 },
+      { match: (a) => a[0] === "restage", stdout: "", stderr: "", code: 0 },
+    );
+    const send = makeSend();
+    const orch = createOrchestrator({ host: makeHost(), send: send.fn });
+    const r = await orch.handlers["cf:restage"]({ app: "figaf-manager", bindXsuaa: true });
+    await flush();
+    assert.equal(r.ok, true);
+    const bind = spawnCalls.find((c) => c.args[0] === "bind-service");
+    assert.deepEqual(bind.args, ["bind-service", "figaf-manager", "figaf-manager-xsuaa"]);
+  } finally {
+    delete process.env.VCAP_SERVICES;
+  }
+});
+
+test("cf:restage on a manager bound to the SHARED instance (or nothing): binds figaf-l3l4-xsuaa", async () => {
+  process.env.VCAP_SERVICES = JSON.stringify({
+    xsuaa: [{ instance_name: "figaf-l3l4-xsuaa", credentials: { xsappname: "figaf-l3l4!t77", clientid: "x" } }],
+  });
+  try {
+    responses.push(
+      { match: (a) => a[0] === "bind-service", stdout: "", stderr: "", code: 0 },
+      { match: (a) => a[0] === "restage", stdout: "", stderr: "", code: 0 },
+    );
+    const send = makeSend();
+    const orch = createOrchestrator({ host: makeHost(), send: send.fn });
+    const r = await orch.handlers["cf:restage"]({ app: "figaf-manager", bindXsuaa: true });
+    await flush();
+    assert.equal(r.ok, true);
+    const bind = spawnCalls.find((c) => c.args[0] === "bind-service");
+    assert.deepEqual(bind.args, ["bind-service", "figaf-manager", "figaf-l3l4-xsuaa"]);
+  } finally {
+    delete process.env.VCAP_SERVICES;
+  }
 });

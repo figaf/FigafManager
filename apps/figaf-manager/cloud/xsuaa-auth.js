@@ -25,6 +25,12 @@
 // isXsuaaActive() so the tests can drive both branches deterministically.
 
 const crypto = require("crypto");
+// One XSUAA instance for the manager and the apps (figaf-l3-l4 decision 0009):
+// the shared instance (xsappname figaf-l3l4, scope FigafL3L4ManagerOperator)
+// is the rule for new installations; the legacy instance (xsappname
+// figaf-manager-xsuaa, scope FigafManagerOperator) keeps working for Alex's
+// shipped installations. The bound xsappname decides which scope is checked.
+const { isSharedXsappname, isLegacyXsappname, operatorScopeName } = require("@figaf/core/manager-xsuaa");
 
 // ─── Boot-time detection ───────────────────────────────────────────────────
 
@@ -41,21 +47,24 @@ function findXsuaaBinding(envVcap) {
   try { parsed = JSON.parse(raw); } catch { return null; }
   const x = parsed && parsed.xsuaa;
   if (!Array.isArray(x) || x.length === 0) return null;
-  // If more than one xsuaa is bound, prefer the one whose xsappname matches
-  // the wizard's namespace; otherwise take the first.
-  const wizard = x.find((b) => b && b.credentials && b.credentials.xsappname === "figaf-manager-xsuaa");
-  return wizard || x[0];
+  // If more than one xsuaa is bound, prefer the shared instance, then the
+  // legacy one; otherwise take the first.
+  const shared = x.find((b) => b && b.credentials && isSharedXsappname(b.credentials.xsappname));
+  const legacy = x.find((b) => b && b.credentials && isLegacyXsappname(b.credentials.xsappname));
+  return shared || legacy || x[0];
 }
 
 function isXsuaaActive() {
   return findXsuaaBinding() !== null;
 }
 
-// The required scope for the wizard. Constructed from xsappname at validation
-// time so it's tied to the actual bound service, not a hardcoded string.
+// The required scope for the manager. Constructed from xsappname at validation
+// time so it's tied to the actual bound service, not a hardcoded string:
+// shared instance -> <xsappname>.FigafL3L4ManagerOperator, legacy ->
+// <xsappname>.FigafManagerOperator.
 function operatorScopeFor(binding) {
   const app = (binding && binding.credentials && binding.credentials.xsappname) || "figaf-manager-xsuaa";
-  return app + ".FigafManagerOperator";
+  return app + "." + operatorScopeName(app);
 }
 
 // ─── Verifier indirection (test seam) ──────────────────────────────────────
@@ -102,11 +111,11 @@ function defaultVerifier(binding) {
       return { ok: false, code: "INVALID", reason: "createSecurityContext returned no context" };
     }
     try {
-      // ctx.checkLocalScope(name) — name is appended to xsappname. We
-      // pass just "FigafManagerOperator" so the lib resolves to
-      // <xsappname>.FigafManagerOperator regardless of the actual app.
-      if (!ctx.checkLocalScope("FigafManagerOperator")) {
-        return { ok: false, code: "NO_SCOPE", reason: "missing FigafManagerOperator scope" };
+      // ctx.checkLocalScope(name) — name is appended to xsappname. The scope
+      // name follows the bound instance (shared vs legacy, decision 0009).
+      const scope = operatorScopeName(binding.credentials.xsappname);
+      if (!ctx.checkLocalScope(scope)) {
+        return { ok: false, code: "NO_SCOPE", reason: `missing ${scope} scope` };
       }
     } catch (e) {
       return { ok: false, code: "INVALID", reason: e.message };

@@ -9,15 +9,25 @@
 //   figaf:    connections:figafStatus-> { configured }
 // plus `ssoDone` (window.figafXsuaaMode). Every value may be missing.
 //
+// Order (figaf-l3-l4 decision 0009, 2026-09-03): SECURE ACCESS FIRST.
+//   1 Secure access (persistent SSO; creates the XSUAA instance and the
+//     Credential Store, binds both, one restart)
+//   2 Management user (offered on the gate right after the IAS sign-in)
+//   3 Base services (the database; omitted for a v2 release)
+//   4 Shared backend (installed with the first app)
+//   5 Figaf tool connection
+// Everything after step 1 is blocked until step 1 is done: one token, one
+// passcode, one restart.
+//
 // Output: ordered steps in the INSTALL order. Each step:
 //   { id, n, title, why, when, done, blocked, current, cta }
 //   blocked  = "" or the reason ("after step 1")
 //   current  = first step that is neither done nor blocked
-// Step 1 (base services) is omitted for a v2 release (no `services` block);
-// numbering stays dense.
 
 (function () {
   "use strict";
+
+  var MANAGER_ROLE = "FigafL3L4-Manager-Admin";
 
   function figafSetupSteps(data, opts) {
     data = data || {};
@@ -36,10 +46,36 @@
     var credstore = hasServices ? svc.filter(function (s) { return s.bindToManager; })[0] || null : null;
     var credBound = !!(credstore && credstore.boundToManager === true);
 
+    var afterSso = ssoDone ? "" : "after step 1";
     var steps = [];
-    var servicesStepN = 0;
 
+    steps.push({
+      id: "sso",
+      n: 1,
+      title: "Secure access (persistent SSO)",
+      why: "Replaces the setup token from the logs with SAP IAS sign-in and the " + MANAGER_ROLE +
+        " role collection. Creates the XSUAA instance (roles of the manager and the apps) and the Credential Store, and binds both to the manager. Sessions survive restarts and redeploys.",
+      when: "Needs your Cloud Foundry sign-in (the passcode) - once. Restarts the manager once (30-90 s). For the automatic role assignment add the BTP login first; without it, assign " +
+        MANAGER_ROLE + " to yourself in the BTP cockpit before you sign in again.",
+      done: ssoDone,
+      blocked: "",
+      cta: "Start upgrade",
+    });
+
+    steps.push({
+      id: "mgmt-user",
+      n: 2,
+      title: "Management user",
+      why: "A technical CF user stored in the Credential Store. The manager signs in by itself after every restart - no passcode.",
+      when: "Offered on the sign-in gate right after the IAS sign-in. Needs the Credential Store binding active (step 1).",
+      done: storedDone,
+      blocked: storedDone ? "" : (!ssoDone ? afterSso : (bindingActive ? "" : "Credential Store binding not active")),
+      cta: "Session & access",
+    });
+
+    var servicesStepN = 0;
     if (hasServices) {
+      servicesStepN = steps.length + 1;
       var servicesDone = allReady && (!credstore || (credBound && bindingActive));
       var when;
       if (!allReady) {
@@ -47,44 +83,30 @@
       } else if (credstore && !credBound) {
         when = "Instances ready. Now click \"Bind to manager\" on the Credential Store row below.";
       } else if (credstore && !bindingActive) {
-        when = "Bound. Restart the manager (box below) to activate the binding; in token mode claim a new setup token afterwards.";
+        when = "Bound. Restart the manager (box below) to activate the binding.";
       } else {
         when = "";
       }
-      servicesStepN = steps.length + 1;
       steps.push({
         id: "services",
         n: servicesStepN,
         title: "Base services",
-        why: "Database, app roles and the Credential Store the platform needs, created as service instances in this space.",
+        why: "The database and the other service instances this release needs. Step 1 already created the XSUAA instance and the Credential Store; the database takes minutes.",
         when: when,
         done: servicesDone,
-        blocked: "",
+        blocked: servicesDone ? "" : afterSso,
         cta: null,
       });
     }
 
-    var afterServices = servicesStepN ? "after step " + servicesStepN : "";
-
-    steps.push({
-      id: "mgmt-user",
-      n: steps.length + 1,
-      title: "Management user",
-      why: "A technical CF user stored in the Credential Store. The manager signs in by itself after every restart - no passcode.",
-      when: "Needs the Credential Store bound to the manager and active" + (servicesStepN ? " (step " + servicesStepN + ")." : "."),
-      done: storedDone,
-      blocked: storedDone || bindingActive ? "" : (afterServices || "Credential Store binding not active"),
-      cta: "Session & access",
-    });
-
     steps.push({
       id: "platform",
       n: steps.length + 1,
-      title: "Platform base (shared connector)",
-      why: "The shared backend every L3 app talks to. Installing the first app deploys it automatically.",
+      title: "Shared backend",
+      why: "The shared backend connector every L3 app talks to. Installing the first app deploys it automatically.",
       when: hasServices ? "Install refuses while a base service is missing." : "",
       done: platformDone,
-      blocked: platformDone || !hasServices || allReady ? "" : afterServices,
+      blocked: platformDone ? "" : (!ssoDone ? afterSso : (hasServices && !allReady ? "after step " + servicesStepN : "")),
       cta: null,
     });
 
@@ -93,22 +115,10 @@
       n: steps.length + 1,
       title: "Figaf tool connection",
       why: "URL plus API client of the Figaf tool, stored in the Credential Store. Apps list its systems through the connector; no secret is typed into an app.",
-      when: "Needs the Credential Store binding active" + (servicesStepN ? " (step " + servicesStepN + ")." : "."),
+      when: "Needs the Credential Store binding active (step 1).",
       done: figafDone,
-      blocked: figafDone || bindingActive ? "" : (afterServices || "Credential Store binding not active"),
+      blocked: figafDone ? "" : (!ssoDone ? afterSso : (bindingActive ? "" : "Credential Store binding not active")),
       cta: "Connections",
-    });
-
-    var mgmtStep = steps.filter(function (s) { return s.id === "mgmt-user"; })[0];
-    steps.push({
-      id: "sso",
-      n: steps.length + 1,
-      title: "Persistent SSO (IAS sign-in and roles)",
-      why: "Replaces the setup token from the logs with SAP IAS sign-in and the FigafManagerAdmin role. Sessions survive restarts and redeploys.",
-      when: "Restarts the manager (30-90 s downtime). Do it after step " + mgmtStep.n + ", so the manager signs itself back in. For the automatic role assignment add the BTP login in this session, after the last restart: earlier BTP logins are forgotten.",
-      done: ssoDone,
-      blocked: ssoDone || storedDone ? "" : "after step " + mgmtStep.n,
-      cta: "Start upgrade",
     });
 
     var currentSet = false;

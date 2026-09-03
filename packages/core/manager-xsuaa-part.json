@@ -1,0 +1,55 @@
+{
+  "xsappname": "figaf-l3l4",
+  "tenant-mode": "dedicated",
+  "description": "Figaf L3/L4 apps platform: roles of the Figaf Manager and of all L3 apps in this installation. Identifiers frozen by decisions 0008 and 0009 - add, never rename.",
+  "scopes": [
+    {
+      "name": "$XSAPPNAME.FigafL3L4ManagerOperator",
+      "description": "Figaf Manager: operate the installation (install, update, connect, sign in)"
+    },
+    {
+      "name": "$XSAPPNAME.FigafL3L4ManagerAdmin",
+      "description": "Figaf Manager: destructive operations (remove apps, delete deployments)"
+    }
+  ],
+  "role-templates": [
+    {
+      "name": "FigafL3L4ManagerOperator",
+      "description": "Figaf Manager - operator",
+      "scope-references": [
+        "$XSAPPNAME.FigafL3L4ManagerOperator"
+      ]
+    },
+    {
+      "name": "FigafL3L4ManagerAdmin",
+      "description": "Figaf Manager - administrator (includes operator)",
+      "scope-references": [
+        "$XSAPPNAME.FigafL3L4ManagerOperator",
+        "$XSAPPNAME.FigafL3L4ManagerAdmin"
+      ]
+    }
+  ],
+  "role-collections": [
+    {
+      "name": "FigafL3L4-Manager-Operator",
+      "description": "Figaf Manager - operator",
+      "role-template-references": [
+        "$XSAPPNAME.FigafL3L4ManagerOperator"
+      ]
+    },
+    {
+      "name": "FigafL3L4-Manager-Admin",
+      "description": "Figaf Manager - administrator",
+      "role-template-references": [
+        "$XSAPPNAME.FigafL3L4ManagerAdmin"
+      ]
+    }
+  ],
+  "oauth2-configuration": {
+    "redirect-uris": [
+      "https://*.__CF_APPS_DOMAIN__/**"
+    ],
+    "token-validity": 3600,
+    "refresh-token-validity": 86400
+  }
+}

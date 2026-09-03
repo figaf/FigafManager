@@ -41,19 +41,27 @@ const fg = () => (typeof window !== "undefined" && window.figaf) || null;
 // (map-route unmaps the manager and the next browser request is bounced to
 // IAS); otherwise the operator would re-authenticate, get a JWT without the
 // scope, and the auto-assign would land too late to matter for that session.
+//
+// Decision 0009 (2026-09-03): ONE XSUAA instance (figaf-l3l4-xsuaa) carries the
+// roles of the manager and the apps, and this step runs FIRST in a fresh
+// space. The Credential Store is created and bound here too (no restart yet),
+// so the restage at the end activates it and the management user can be
+// stored right after the IAS sign-in - one token, one passcode, one restart.
 const ALL_PHASES = [
-  { id: "create-xsuaa",   label: "Create XSUAA service",        sub: "cf create-service xsuaa application figaf-manager-xsuaa" },
-  { id: "assign-role",    label: "Assign role collection",      sub: "btp assign security/role-collection (optional)" },
-  { id: "push-approuter", label: "Deploy authentication proxy", sub: "cf push figaf-manager-approuter (bundled in zip)" },
-  { id: "map-route",      label: "Hand off public route",       sub: "approuter now serves the public route" },
-  { id: "restage",        label: "Restage manager",             sub: "manager rebinds to XSUAA — 30-90s downtime expected" },
+  { id: "create-xsuaa",     label: "Prepare the XSUAA instance",           sub: "cf create-service / update-service xsuaa application figaf-l3l4-xsuaa — roles of the manager and the apps" },
+  { id: "assign-role",      label: "Assign role collection",               sub: "btp assign security/role-collection (optional)" },
+  { id: "manager-services", label: "Create and bind the Credential Store", sub: "cf create-service credstore + cf bind-service figaf-manager — active after the restage" },
+  { id: "push-approuter",   label: "Deploy approuter",                     sub: "cf push figaf-manager-approuter (bundled in zip)" },
+  { id: "map-route",        label: "Hand off public route",                sub: "approuter now serves the public route" },
+  { id: "restage",          label: "Restage manager",                      sub: "manager rebinds to XSUAA — 30-90s downtime expected" },
 ];
 
-// The role we self-assign. Admin includes Operator (its scope-references in
-// xs-security.json include $XSAPPNAME.FigafManagerOperator), so this single
-// assignment covers both scopes. To switch to FigafManagerOperator instead,
-// change just this constant; the orchestrator handler accepts the role param.
-const ASSIGN_ROLE = "FigafManagerAdmin";
+// The role collection we self-assign (shared instance, decision 0009). Admin
+// includes Operator (its role template references both scopes), so this single
+// assignment covers both. The server reports the collection of the bound
+// instance in xsuaa:upgradeStatus (legacy installations differ); this constant
+// is the display default.
+const ASSIGN_ROLE = "FigafL3L4-Manager-Admin";
 
 function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
   // The automatic role assignment is decided BEFORE "Start upgrade" (run #4
@@ -200,8 +208,8 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
       markPhase(msg.phase, { status, sub: msg.error || undefined });
     });
     const offSvc = api.on("cf:serviceStatus", (msg) => {
-      if (msg && msg.name === "figaf-manager-xsuaa") {
-        markPhase("create-xsuaa", { sub: `status: ${msg.status}` });
+      if (msg && /xsuaa/.test(String(msg.name || ""))) {
+        markPhase("create-xsuaa", { sub: `${msg.name}: ${msg.status}` });
       }
     });
     return () => { offPhase && offPhase(); offSvc && offSvc(); };
@@ -223,15 +231,24 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
       // left off if the dyno restarted mid-flow.
       const pre = await api.xsuaa.upgradeStatus();
 
-      // Phase 1.1-1.2
-      if (!pre || !pre.hasXsuaaService) {
-        markPhase("create-xsuaa", { status: "running" });
-        const r1 = await api.cf.createXsuaa();
-        if (!r1.ok) { setError("createXsuaa: " + (r1.error || "failed")); markPhase("create-xsuaa", { status: "error", sub: r1.error }); return; }
-        markPhase("create-xsuaa", { status: "done" });
-      } else {
-        markPhase("create-xsuaa", { status: "done", sub: "already provisioned" });
+      // Phase 1 — ALWAYS runs (decision 0009): the shared instance is created
+      // when missing and UPDATED when present, so the manager's roles are in
+      // it even when the instance came from the release or from a script.
+      const roleName = (pre && pre.roleCollection) || ASSIGN_ROLE;
+      markPhase("create-xsuaa", { status: "running" });
+      const r1 = await api.cf.createXsuaa();
+      if (!r1 || !r1.ok) {
+        setError("prepare XSUAA: " + ((r1 && r1.error) || "failed"));
+        markPhase("create-xsuaa", { status: "error", sub: r1 && r1.error });
+        return;
       }
+      const instName = r1.instance || "figaf-l3l4-xsuaa";
+      markPhase("create-xsuaa", {
+        status: "done",
+        sub: r1.legacy ? "legacy instance already bound — nothing to create"
+          : r1.updated ? `${instName} updated with the current roles`
+          : `${instName} created`,
+      });
 
       // Optional auto-assign step. Runs HERE — immediately after the XSUAA
       // service is up — because:
@@ -251,11 +268,11 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
       let assignedTo = null;
       if (autoAssign) {
         const who = String(assignTo || "").trim();
-        markPhase("assign-role", { status: "running", sub: `btp assign ${ASSIGN_ROLE} --to-user ${who}` });
+        markPhase("assign-role", { status: "running", sub: `btp assign ${roleName} --to-user ${who}` });
         // The server probes the BTP login live and derives the subaccount GUID
         // from the manager's own XSUAA instance when the BTP flow did not
         // capture one (run #4 finding 2).
-        const ar = await api.xsuaa.assignRoleCollection(ASSIGN_ROLE, who);
+        const ar = await api.xsuaa.assignRoleCollection(roleName, who);
         if (!ar || ar.ok === false) {
           assignFailedReason = (ar && ar.error) || "unknown";
           markPhase("assign-role", { status: "error", sub: assignFailedReason });
@@ -266,6 +283,28 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
           const via = ar.subaccountSource === "xsuaa-service-key" ? " (subaccount taken from the XSUAA service key)" : "";
           markPhase("assign-role", { status: "done", sub: `assigned ${ar.role} to ${assignedTo}${via}` });
         }
+      }
+
+      // Credential Store: created and bound NOW, without a restart (decision
+      // 0009). The restage at the end activates the binding, so the management
+      // user can be stored right after the IAS sign-in — no second passcode.
+      // Non-fatal: SSO does not need the Credential Store; on a failure the
+      // success state says what to do (passcode once more, Base services card).
+      let servicesWarning = null;
+      markPhase("manager-services", { status: "running" });
+      let ms = null;
+      try {
+        ms = api.l3 && api.l3.prepareManagerServices ? await api.l3.prepareManagerServices() : { ok: true, note: "not available in this build" };
+      } catch (e) {
+        ms = { ok: false, error: e && e.message ? e.message : "prepareManagerServices failed" };
+      }
+      if (!ms || ms.ok === false) {
+        servicesWarning = (ms && ms.error) || "unknown error";
+        markPhase("manager-services", { status: "error", sub: servicesWarning });
+      } else {
+        const boundTxt = ms.bound && ms.bound.length ? `bound to the manager: ${ms.bound.join(", ")} (active after the restage)` : (ms.note || "nothing to do");
+        const createdTxt = ms.created && ms.created.length ? `created ${ms.created.join(", ")}; ` : "";
+        markPhase("manager-services", { status: "done", sub: createdTxt + boundTxt });
       }
 
       // Phase 1.3-1.6
@@ -365,6 +404,8 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
         assignFailed: assignFailedReason,
         assignSkipped: !autoAssign,
         assignedTo,
+        servicesWarning,
+        roleName,
         // If the manager was already bound, it's already in XSUAA mode; the
         // poll below would otherwise wait pointlessly for a mode-flip that
         // already happened.
@@ -510,10 +551,10 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
           <div className="pane-eyebrow">XSUAA upgrade</div>
           <h1 className="pane-title">Enable persistent SSO login</h1>
           <p className="pane-desc">
-            Replace the cockpit-log setup token with SAP IAS authentication. After this upgrade, anyone you add to the <strong>{ASSIGN_ROLE}</strong> role collection will be able to access the application with SAP IAS.
+            Step 1 of a fresh installation. Replaces the cockpit-log setup token with SAP IAS authentication: afterwards anyone in the <strong>{ASSIGN_ROLE}</strong> role collection (or <strong>FigafL3L4-Manager-Operator</strong>) reaches the manager with SAP IAS, and the token is never needed again.
           </p>
           <p className="pane-desc" style={{ fontSize: 12, color: "var(--ink-3)" }}>
-            This will create one XSUAA service instance, push an approuter sibling app, optionally assign you to the role collection, and restage figaf-manager. Expect ~2-3 minutes total, with 30-90 seconds of downtime mid-flow.
+            What runs: the shared XSUAA instance <code>figaf-l3l4-xsuaa</code> is created or updated with the roles of the manager and the apps, the role collection is optionally assigned to you, the Credential Store is created and bound to the manager, an approuter app is pushed and takes over the public route, and figaf-manager is restaged once. Expect 3-4 minutes total, with 30-90 seconds of downtime at the end. After the IAS sign-in the gate offers <strong>Set up management user</strong> — no second passcode.
           </p>
         </div>
 
@@ -649,6 +690,18 @@ function ScreenXsuaaUpgrade({ ctx, setCtx, onNext, onBack, setStep, STEPS }) {
             <p style={{ margin: "10px 0 0", lineHeight: 1.55 }}>
               <strong>You must fully re-authenticate</strong> for the new scope to appear in your JWT. Your current cookies were issued before the role assignment and won't have it. After you click Continue, the approuter will redirect you through SAP IAS — sign in there to get a fresh token. If you see anything unexpected, use a private/incognito window or clear cookies for this hostname.
             </p>
+            <p style={{ margin: "10px 0 0", lineHeight: 1.55 }} data-next-step="management-user">
+              <strong>Next:</strong> after the IAS sign-in the sign-in gate offers <strong>Set up management user</strong> (the Credential Store binding is active now). Store it, and the manager signs itself in from then on — no second passcode.
+            </p>
+            {outcome.servicesWarning && (
+              <p style={{ margin: "10px 0 0", padding: "10px 12px", borderRadius: 6, background: "rgba(225,29,72,0.07)", border: "1px solid rgba(225,29,72,0.2)", color: "var(--ink-1)", lineHeight: 1.5 }} data-services-warning="">
+                <strong style={{ color: "var(--ink-0)" }}>Credential Store step did not complete:</strong> {outcome.servicesWarning}
+                <br />
+                <span style={{ color: "var(--ink-2)" }}>
+                  After the IAS sign-in, sign in to Cloud Foundry with a passcode once more and use the Base services card (create, bind to manager, restart). Then store the management user.
+                </span>
+              </p>
+            )}
             {outcome.assignFailed && (
               <p style={{ margin: "10px 0 0", padding: "10px 12px", borderRadius: 6, background: "rgba(225,29,72,0.07)", border: "1px solid rgba(225,29,72,0.2)", color: "var(--ink-1)", lineHeight: 1.5 }}>
                 <strong style={{ color: "var(--ink-0)" }}>Assignment error:</strong> {outcome.assignFailed}
@@ -772,14 +825,14 @@ function ScreenXsuaaAssignRole({ ctx, setCtx, onNext, onBack }) {
           <div className="pane-eyebrow">XSUAA upgrade · manual role assignment</div>
           <h1 className="pane-title">Assign yourself a role collection</h1>
           <p className="pane-desc">
-            The auto-assignment didn't complete (or you opted out). Open BTP cockpit, find your user under your subaccount's Users tab, and assign <code>FigafManagerAdmin</code> (or <code>FigafManagerOperator</code> if you prefer non-destructive scope only). Takes about 30 seconds.
+            The auto-assignment didn't complete (or you opted out). Open BTP cockpit, find your user under your subaccount's Users tab, and assign <code>FigafL3L4-Manager-Admin</code> (or <code>FigafL3L4-Manager-Operator</code> if you prefer non-destructive scope only). Takes about 30 seconds.
           </p>
         </div>
 
         <ol style={{ margin: "0 0 18px", paddingLeft: 18, color: "var(--ink-1)", fontSize: 14, lineHeight: 1.6 }}>
           <li>Click "Open cockpit" below — it deep-links to your subaccount's user-management page.</li>
           <li>Find yourself in the user list and open your row.</li>
-          <li>In the "Role Collections" tab, assign <code>FigafManagerAdmin</code>.</li>
+          <li>In the "Role Collections" tab, assign <code>FigafL3L4-Manager-Admin</code>.</li>
           <li>Return here and click "Continue to wizard" — you'll be redirected through SAP IAS for a fresh sign-in.</li>
         </ol>
 

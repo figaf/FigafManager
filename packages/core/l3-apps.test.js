@@ -382,8 +382,16 @@ const CATALOG_V3 = {
 
 function makeV3Dir() {
   const dir = makeChannelDir(CATALOG_V3);
-  fs.writeFileSync(path.join(dir, "xs-security.json"), "{\"xsappname\":\"x\"}");
+  fs.writeFileSync(path.join(dir, "xs-security.json"), "{\"xsappname\":\"figaf-l3l4\"}");
   return dir;
+}
+
+// `cf curl /v3/domains` fake: the landscape has one cfapps domain.
+function domainsResponder(args) {
+  if (args[0] === "curl" && args[1] === "/v3/domains") {
+    return { code: 0, stdout: JSON.stringify({ resources: [{ name: "apps.internal" }, { name: "cfapps.eu10-004.hana.ondemand.com" }] }) };
+  }
+  return null;
 }
 
 // `cf service <name>` fake: names in `existing` report the given status text.
@@ -441,6 +449,7 @@ test("l3:provisionServices: creates only the missing ones, passes configs as fil
   const state = { credstore: "create succeeded" }; // db + xsuaa missing
   let polls = 0;
   const { ctx, calls } = makeCtx(dir, (args) => {
+    if (domainsResponder(args)) return domainsResponder(args);
     if (args[0] === "create-service") {
       state[args[3]] = "create in progress";
       return { code: 0, stdout: "Create in progress" };
@@ -466,8 +475,9 @@ test("l3:provisionServices: creates only the missing ones, passes configs as fil
   assert.deepEqual(dbCreate.args, ["create-service", "postgresql-db", "standard", "db"]);
   const xsCreate = creates.find((c) => c.args[3] === "xsuaa");
   assert.equal(xsCreate.args[4], "-c");
-  assert.equal(path.basename(xsCreate.args[5]), "xs-security.json");
-  assert.ok(fs.existsSync(xsCreate.args[5]), "config file must come from the release dir");
+  // decision 0009: the xsuaa config is the COMPOSED document (release + manager part)
+  assert.equal(path.basename(xsCreate.args[5]), "xs-security.composed.json");
+  assert.ok(fs.existsSync(xsCreate.args[5]), "the composed config file must exist");
   // credstore existed → never re-created
   assert.ok(!creates.some((c) => c.args[3] === "credstore"));
 });
@@ -476,6 +486,7 @@ test("l3:provisionServices: rejects a plan that the catalog does not allow; inli
   const dir = makeV3Dir();
   const state = {}; // everything missing
   const { ctx, calls } = makeCtx(dir, (args) => {
+    if (domainsResponder(args)) return domainsResponder(args);
     if (args[0] === "create-service") { state[args[3]] = "create succeeded"; return { code: 0, stdout: "" }; }
     if (args[0] === "service") return state[args[1]] ? { code: 0, stdout: `status: ${state[args[1]]}` } : { code: 1, stdout: "" };
     return null;
@@ -684,10 +695,11 @@ test("l3:provisionServices: no cfapps domain in the landscape -> the XSUAA insta
   assert.ok(!calls.some((c) => c.args[0] === "create-service"), "nothing is created without a domain");
 });
 
-test("l3:provisionServices: a config file WITHOUT the placeholder is passed to cf as-is from the release dir", async () => {
-  const dir = makeV3Dir(); // xs-security.json = {"xsappname":"x"}
+test("l3:provisionServices: the XSUAA config is ALWAYS composed - the manager's roles are added to the release part (decision 0009)", async () => {
+  const dir = makeV3Dir(); // release part: {"xsappname":"figaf-l3l4"}, no placeholder
   const state = { db: "create succeeded", credstore: "create succeeded" };
   const { ctx, calls } = makeCtx(dir, (args) => {
+    if (domainsResponder(args)) return domainsResponder(args);
     if (args[0] === "create-service") { state[args[3]] = "create succeeded"; return { code: 0, stdout: "" }; }
     if (args[0] === "service") { const st = state[args[1]]; return st ? { code: 0, stdout: `status:    ${st}\n` } : { code: 1, stdout: "" }; }
     return null;
@@ -698,8 +710,210 @@ test("l3:provisionServices: a config file WITHOUT the placeholder is passed to c
   const r = await handlers["l3:provisionServices"]({});
   assert.equal(r.ok, true, JSON.stringify(r));
   const xsCreate = calls.find((c) => c.args[0] === "create-service" && c.args[3] === "xsuaa");
-  assert.equal(xsCreate.args[5], path.join(dir, "xs-security.json"));
+  assert.notEqual(xsCreate.args[5], path.join(dir, "xs-security.json"), "the composed copy, never the release file");
+  const doc = JSON.parse(fs.readFileSync(xsCreate.args[5], "utf8"));
+  assert.equal(doc.xsappname, "figaf-l3l4");
+  assert.ok(doc.scopes.some((s) => s.name === "$XSAPPNAME.FigafL3L4ManagerOperator"), "manager scope merged in");
+  assert.ok(doc["role-collections"].some((c) => c.name === "FigafL3L4-Manager-Admin"), "manager collection merged in");
+  assert.deepEqual(doc["oauth2-configuration"]["redirect-uris"], ["https://*.cfapps.eu10-004.hana.ondemand.com/**"]);
+});
+
+test("l3:provisionServices: a NON-xsuaa config file without the placeholder is passed to cf as-is from the release dir", async () => {
+  const catalog = {
+    ...CATALOG_V3,
+    services: [{ name: "dest", offering: "destination", plan: "lite", configFile: "dest.json", purpose: "destinations" }],
+  };
+  const dir = makeChannelDir(catalog);
+  fs.writeFileSync(path.join(dir, "dest.json"), "{\"HTML5Runtime_enabled\":false}");
+  const state = {};
+  const { ctx, calls } = makeCtx(dir, (args) => {
+    if (args[0] === "create-service") { state[args[3]] = "create succeeded"; return { code: 0, stdout: "" }; }
+    if (args[0] === "service") { const st = state[args[1]]; return st ? { code: 0, stdout: `status:    ${st}\n` } : { code: 1, stdout: "" }; }
+    return null;
+  });
+  ctx.sleep = async () => {};
+  ctx.pollIntervalMs = 0;
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:provisionServices"]({});
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const create = calls.find((c) => c.args[0] === "create-service" && c.args[3] === "dest");
+  assert.equal(create.args[5], path.join(dir, "dest.json"));
   assert.ok(!calls.some((c) => c.args[0] === "curl" && c.args[1] === "/v3/domains"), "no domain lookup without a placeholder");
+});
+
+// ─── E. one XSUAA instance for the manager and the apps (decision 0009) ──────
+
+test("l3:ensureXsuaa: instance missing -> create-service figaf-l3l4-xsuaa with the composed document, then wait until ready", async () => {
+  const dir = makeV3DirWithPlaceholder();
+  const state = {};
+  const { ctx, calls } = makeCtx(dir, (args) => {
+    if (domainsResponder(args)) return domainsResponder(args);
+    if (args[0] === "create-service") { state[args[3]] = "create succeeded"; return { code: 0, stdout: "" }; }
+    if (args[0] === "service") { const st = state[args[1]]; return st ? { code: 0, stdout: `status:    ${st}\n` } : { code: 1, stdout: "" }; }
+    return null;
+  });
+  ctx.sleep = async () => {};
+  ctx.pollIntervalMs = 0;
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:ensureXsuaa"]({});
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.created, true);
+  assert.equal(r.instance, "figaf-l3l4-xsuaa");
+  const create = calls.find((c) => c.args[0] === "create-service");
+  assert.deepEqual(create.args.slice(0, 5), ["create-service", "xsuaa", "application", "figaf-l3l4-xsuaa", "-c"]);
+  const doc = JSON.parse(fs.readFileSync(create.args[5], "utf8"));
+  assert.equal(doc.xsappname, "figaf-l3l4");
+  assert.ok(doc.scopes.some((s) => s.name === "$XSAPPNAME.FigafL3L4ManagerOperator"), "manager scope added");
+  assert.ok(doc["role-collections"].some((c) => c.name === "FigafL3L4-Manager-Admin"));
+  assert.deepEqual(doc["oauth2-configuration"]["redirect-uris"], ["https://*.cfapps.eu10-004.hana.ondemand.com/**"]);
+  assert.ok(!calls.some((c) => c.args[0] === "update-service"), "no update on a fresh create");
+});
+
+test("l3:ensureXsuaa: instance present -> update-service with the composed document; updateOnly on a missing instance does nothing", async () => {
+  const dir = makeV3DirWithPlaceholder();
+  const state = { "figaf-l3l4-xsuaa": "create succeeded" };
+  const { ctx, calls } = makeCtx(dir, (args) => {
+    if (domainsResponder(args)) return domainsResponder(args);
+    if (args[0] === "update-service") { state[args[1]] = "update succeeded"; return { code: 0, stdout: "" }; }
+    if (args[0] === "service") { const st = state[args[1]]; return st ? { code: 0, stdout: `status:    ${st}\n` } : { code: 1, stdout: "" }; }
+    return null;
+  });
+  ctx.sleep = async () => {};
+  ctx.pollIntervalMs = 0;
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:ensureXsuaa"]({});
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.updated, true);
+  assert.equal(r.created, false);
+  const upd = calls.find((c) => c.args[0] === "update-service");
+  assert.deepEqual(upd.args.slice(0, 3), ["update-service", "figaf-l3l4-xsuaa", "-c"]);
+  assert.ok(!calls.some((c) => c.args[0] === "create-service"));
+
+  delete state["figaf-l3l4-xsuaa"];
+  calls.length = 0;
+  const r2 = await handlers["l3:ensureXsuaa"]({ updateOnly: true });
+  assert.equal(r2.ok, true);
+  assert.equal(r2.skipped, true);
+  assert.ok(!calls.some((c) => c.args[0] === "update-service" || c.args[0] === "create-service"), "nothing created or updated");
+});
+
+test("l3:ensureXsuaa: without a release on the host the manager part alone is used (xsappname figaf-l3l4)", async () => {
+  const { ctx, calls } = makeCtx(null, (args) => {
+    if (domainsResponder(args)) return domainsResponder(args);
+    if (args[0] === "create-service") return { code: 0, stdout: "" };
+    if (args[0] === "service") return calls.some((c) => c.args[0] === "create-service") ? { code: 0, stdout: "status:    create succeeded\n" } : { code: 1, stdout: "" };
+    return null;
+  });
+  ctx.host.resolveL3ArtifactsDir = () => null;
+  ctx.sleep = async () => {};
+  ctx.pollIntervalMs = 0;
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:ensureXsuaa"]({});
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const create = calls.find((c) => c.args[0] === "create-service");
+  const doc = JSON.parse(fs.readFileSync(create.args[5], "utf8"));
+  assert.equal(doc.xsappname, "figaf-l3l4");
+  assert.deepEqual(doc["role-collections"].map((c) => c.name), ["FigafL3L4-Manager-Operator", "FigafL3L4-Manager-Admin"]);
+});
+
+test("l3:prepareManagerServices: creates ONLY the manager-bound services and binds them to the manager - no restart, db and xsuaa untouched", async () => {
+  const dir = makeV3DirWithPlaceholder();
+  const state = {};
+  const { ctx, calls } = makeCtx(dir, (args) => {
+    if (args[0] === "create-service") { state[args[3]] = "create succeeded"; return { code: 0, stdout: "" }; }
+    if (args[0] === "service") { const st = state[args[1]]; return st ? { code: 0, stdout: `status:    ${st}\n` } : { code: 1, stdout: "" }; }
+    if (args[0] === "bind-service") return { code: 0, stdout: "OK" };
+    return null;
+  });
+  ctx.host.getDeployTargetForSelf = () => ({ appName: "figaf-manager", apiUrl: "u", orgName: "o", spaceName: "s" });
+  ctx.sleep = async () => {};
+  ctx.pollIntervalMs = 0;
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:prepareManagerServices"]({});
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.created, ["credstore"]);
+  assert.deepEqual(r.bound, ["credstore"]);
+  assert.deepEqual(calls.filter((c) => c.args[0] === "create-service").map((c) => c.args[3]), ["credstore"]);
+  const create = calls.find((c) => c.args[0] === "create-service");
+  assert.equal(create.args[4], "-c", "the credstore basic-auth config is passed as a file");
+  assert.deepEqual(calls.find((c) => c.args[0] === "bind-service").args, ["bind-service", "figaf-manager", "credstore"]);
+  assert.ok(!calls.some((c) => c.args[0] === "restart"), "no restart in this step");
+  assert.ok(!calls.some((c) => c.args[0] === "curl" && c.args[1] === "/v3/domains"), "xsuaa is not touched here");
+});
+
+test("l3:prepareManagerServices: re-run with the instance present and already bound is a success; a create failure is reported and nothing is bound", async () => {
+  const dir = makeV3DirWithPlaceholder();
+  const { ctx: ctx1, calls: calls1 } = makeCtx(dir, (args) => {
+    if (args[0] === "service" && args[1] === "credstore") return { code: 0, stdout: "status:    create succeeded\n" };
+    if (args[0] === "bind-service") return { code: 1, stdout: "", stderr: "Service instance credstore is already bound to application figaf-manager." };
+    return null;
+  });
+  ctx1.host.getDeployTargetForSelf = () => ({ appName: "figaf-manager", apiUrl: "u", orgName: "o", spaceName: "s" });
+  ctx1.sleep = async () => {}; ctx1.pollIntervalMs = 0;
+  const r1 = await createL3Handlers(ctx1)["l3:prepareManagerServices"]({});
+  assert.equal(r1.ok, true, JSON.stringify(r1));
+  assert.deepEqual(r1.created, []);
+  assert.deepEqual(r1.bound, ["credstore"]);
+  assert.ok(!calls1.some((c) => c.args[0] === "create-service"));
+
+  const { ctx: ctx2, calls: calls2 } = makeCtx(dir, (args) => {
+    if (args[0] === "create-service") return { code: 1, stdout: "", stderr: "Service plan free: only one instance allowed per subaccount" };
+    if (args[0] === "service") return { code: 1, stdout: "" };
+    return null;
+  });
+  ctx2.host.getDeployTargetForSelf = () => ({ appName: "figaf-manager", apiUrl: "u", orgName: "o", spaceName: "s" });
+  ctx2.sleep = async () => {}; ctx2.pollIntervalMs = 0;
+  const r2 = await createL3Handlers(ctx2)["l3:prepareManagerServices"]({});
+  assert.equal(r2.ok, false);
+  assert.match(r2.error, /only one instance allowed/);
+  assert.ok(!calls2.some((c) => c.args[0] === "bind-service"), "nothing bound after a failed create");
+});
+
+test("l3:install on a v3 release: the shared XSUAA instance is UPDATED (role refresh) before the shared backend is pushed", async () => {
+  const dir = makeV3DirWithPlaceholder();
+  const state = { db: "create succeeded", xsuaa: "create succeeded", credstore: "create succeeded", "figaf-l3l4-xsuaa": "create succeeded" };
+  const { ctx, calls } = makeCtx(dir, (args) => {
+    if (domainsResponder(args)) return domainsResponder(args);
+    if (args[0] === "update-service") { state[args[1]] = "update succeeded"; return { code: 0, stdout: "" }; }
+    if (args[0] === "service") { const st = state[args[1]]; return st ? { code: 0, stdout: `status:    ${st}\n` } : { code: 1, stdout: "" }; }
+    if (args[0] === "app" && args[2] === "--guid") return { code: 1, stdout: "" }; // fresh
+    if (args[0] === "app" && args[1] === "arch-backend") return { code: 0, stdout: "routes:   arch-backend.cfapps.eu10.hana.ondemand.com\n" };
+    return { code: 0, stdout: "" };
+  });
+  ctx.sleep = async () => {};
+  ctx.pollIntervalMs = 0;
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:install"]({ appId: "arch" });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const seq = calls.map((c) => c.args[0]);
+  const upd = seq.indexOf("update-service");
+  const push = seq.indexOf("push");
+  assert.ok(upd !== -1, "update-service ran");
+  assert.ok(push !== -1, "push ran");
+  assert.ok(upd < push, "role refresh happens before the first push");
+  assert.equal(calls[upd].args[1], "figaf-l3l4-xsuaa");
+});
+
+test("l3:install on a v3 release: a failed role refresh stops the install before any push, with step/cfApp/command", async () => {
+  const dir = makeV3DirWithPlaceholder();
+  const state = { db: "create succeeded", xsuaa: "create succeeded", credstore: "create succeeded", "figaf-l3l4-xsuaa": "create succeeded" };
+  const { ctx, calls } = makeCtx(dir, (args) => {
+    if (domainsResponder(args)) return domainsResponder(args);
+    if (args[0] === "update-service") return { code: 1, stdout: "", stderr: "Service broker error: invalid xs-security" };
+    if (args[0] === "service") { const st = state[args[1]]; return st ? { code: 0, stdout: `status:    ${st}\n` } : { code: 1, stdout: "" }; }
+    if (args[0] === "app" && args[2] === "--guid") return { code: 1, stdout: "" };
+    return { code: 0, stdout: "" };
+  });
+  ctx.sleep = async () => {};
+  ctx.pollIntervalMs = 0;
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:install"]({ appId: "arch" });
+  assert.equal(r.ok, false);
+  assert.equal(r.step, "roles");
+  assert.equal(r.cfApp, "figaf-l3l4-xsuaa");
+  assert.match(r.error, /role refresh of figaf-l3l4-xsuaa failed/);
+  assert.match(r.error, /invalid xs-security/);
+  assert.ok(!calls.some((c) => c.args[0] === "push"), "nothing pushed");
 });
 
 // ─── F. Failed actions explain themselves (live failure 2026-09-03) ──────────
