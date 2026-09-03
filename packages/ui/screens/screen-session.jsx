@@ -3,9 +3,9 @@
 // The old wizard "Sign in" step, reframed as a settings page:
 //   - signed out  → the full ScreenLogin (passcode, stored user, CF-only)
 //   - signed in   → the access map (what each sign-in is for, and its state),
-//                   then the cards: CF session, BTP session, management user,
-//                   and the persistent-SSO upgrade (started from HERE; it runs
-//                   on #/session/sso-upgrade, see console.jsx).
+//                   then the cards: CF session, BTP session, management user.
+// The installation itself (Prepare the space, the first management user) is
+// on the Setup page (#/setup); this page is for the running manager.
 // Sign-out clears the server-side CLI login AND the client login context,
 // which makes the console's auth gate take over again.
 
@@ -20,7 +20,7 @@ function SessionInfoRow({ label, value }) {
 
 // Management user card — set up / replace the technical CF user stored in
 // the SAP Credential Store (namespace figaf-manager, name cf-management-user).
-// Mirrors the card inside ScreenLogin, but standalone so it is usable while
+// Mirrors the form on the Setup page, but standalone so it is usable while
 // signed in. The handler verifies the credentials against CF before storing.
 function MgmtUserCard() {
   const api = typeof window !== "undefined" ? window.figaf : null;
@@ -71,7 +71,7 @@ function MgmtUserCard() {
       {status && !status.bindingPresent && (
         <div style={{ fontSize: 13, color: "var(--ink-3)" }}>
           The manager is not bound to a Credential Store instance, so no user can be
-          stored. Bind <span className="kbd">figaf-l3l4-credstore</span> and restage.
+          stored. Repair it on the Setup page, step 3 (create, bind to manager, restart).
         </div>
       )}
 
@@ -145,7 +145,7 @@ function AccessMapCard({ ctx }) {
       name: "Browser access",
       purpose: ssoMode
         ? "SAP IAS sign-in through the approuter; the FigafL3L4-Manager-Admin (or -Operator) role collection is required. Survives restarts and redeploys."
-        : "A one-time setup token from the app logs, until persistent SSO is enabled. Dies on every restart.",
+        : "A one-time setup token from the app logs, until step 1 of the Setup (Prepare the space) is done. Dies on every restart.",
       state: ssoMode ? { cls: "green", text: "SAP IAS" } : { cls: "gray", text: "setup token" },
     },
     {
@@ -155,7 +155,7 @@ function AccessMapCard({ ctx }) {
     },
     {
       name: "SAP BTP login",
-      purpose: "Optional. Only for the automatic role assignment in the SSO upgrade and for Figaf Tool deployments.",
+      purpose: "Optional. Only for the automatic role assignment in Setup step 1 and for Figaf Tool deployments.",
       state: btpOn ? { cls: "green", text: "signed in" } : { cls: "gray", text: "not signed in" },
     },
     {
@@ -188,70 +188,21 @@ function AccessMapCard({ ctx }) {
   );
 }
 
-// The persistent-SSO upgrade is started from here, not from the Figaf Tool
-// page: it is about the manager's own sign-in. Says what it does, what it
-// costs, and what the BTP login is for - BEFORE the operator starts it
-// (virgin run #3, finding 5: started without a BTP login, the role
-// assignment failed with no warning up front).
-function PersistentSsoCard({ ctx, onAddBtp, onStart }) {
-  const features = window.figafModeFlags.features || {};
-  const ssoMode = typeof window !== "undefined" && window.figafXsuaaMode === true;
-  if (ssoMode || !features.xsuaaUpgrade) return null;
-  const btpOn = ctx.login.btpStatus === "done";
-  return (
-    <div className="card" style={{ marginTop: 14 }} data-card="persistent-sso">
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-        <div style={{ fontWeight: 700 }}>Secure access — persistent SSO (step 1, once per installation)</div>
-        <span className="pill gray">not enabled</span>
-      </div>
-      <p style={{ fontSize: 13, color: "var(--ink-3)", margin: "0 0 8px" }}>
-        Replaces the setup token with SAP IAS sign-in and the <span className="kbd">FigafL3L4-Manager-Admin</span> role collection.
-        After it, access survives restarts and redeploys, and nobody needs the logs to get in.
-      </p>
-      <p style={{ fontSize: 13, color: "var(--ink-3)", margin: "0 0 10px" }}>
-        What happens: the shared XSUAA instance <span className="kbd">figaf-l3l4-xsuaa</span> is prepared (roles of the manager
-        and the apps), the Credential Store is created and bound to the manager, an approuter app is pushed and takes over the
-        public URL, the manager moves to an internal URL and restarts once (30-90 s offline). About 3-4 minutes in total.
-        Do it FIRST: after the IAS sign-in you store the management user on the sign-in gate and never need a second passcode.
-      </p>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10, padding: "8px 10px", border: "1px solid var(--line)", borderRadius: 8, fontSize: 13 }}>
-        {btpOn ? (
-          <>
-            <span className="pill green">BTP login present</span>
-            <span style={{ color: "var(--ink-3)" }}>The upgrade assigns the role to your user automatically.</span>
-          </>
-        ) : (
-          <>
-            <span className="pill gray">no BTP login</span>
-            <span style={{ color: "var(--ink-3)", flex: 1, minWidth: 200 }}>
-              Without it the upgrade cannot assign the role. You then add <span className="kbd">FigafL3L4-Manager-Admin</span> to
-              your user in the BTP cockpit before you continue. A BTP login made before the last restart does not
-              count: the manager forgets it on every restart.
-            </span>
-            <button className="btn" onClick={onAddBtp}>Add BTP login first</button>
-          </>
-        )}
-      </div>
-      <button className="btn btn-primary" onClick={onStart}>Start upgrade</button>
-    </div>
-  );
-}
-
-function ScreenSession({ ctx, setCtx, appendLog, onStartSso, addBtpFromRoute }) {
+function ScreenSession({ ctx, setCtx, appendLog, addBtpFromRoute }) {
   const api = typeof window !== "undefined" ? window.figaf : null;
   const [addBtp, setAddBtp] = React.useState(!!addBtpFromRoute);
-  // #/session/add-btp (the upgrade screen's "Add BTP login first"): open the
-  // BTP form at once, and return to the upgrade route when the login is done.
+  // #/session/add-btp (the Setup page's "Add BTP login first"): open the BTP
+  // form at once, and return to the Setup when the login is done.
   React.useEffect(() => { if (addBtpFromRoute) setAddBtp(true); }, [addBtpFromRoute]);
   React.useEffect(() => {
     if (addBtpFromRoute && addBtp && ctx.login.btpStatus === "done" && typeof window !== "undefined") {
       setAddBtp(false);
-      window.location.hash = "#/session/sso-upgrade";
+      window.location.hash = "#/setup";
     }
   }, [addBtpFromRoute, addBtp, ctx.login.btpStatus]);
   function leaveAddBtp() {
     setAddBtp(false);
-    if (addBtpFromRoute && typeof window !== "undefined") window.location.hash = "#/session";
+    if (addBtpFromRoute && typeof window !== "undefined") window.location.hash = "#/setup";
   }
   const [signingOut, setSigningOut] = React.useState(false);
   const signedIn = ctx.login.cfStatus === "done";
@@ -290,7 +241,7 @@ function ScreenSession({ ctx, setCtx, appendLog, onStartSso, addBtpFromRoute }) 
         {addBtp && (
           <div style={{ padding: "10px 28px 0" }}>
             <button className="btn-link" onClick={leaveAddBtp}>
-              ← Back to the session overview
+              {addBtpFromRoute ? "← Back to the Setup" : "← Back to the session overview"}
             </button>
           </div>
         )}
@@ -346,8 +297,7 @@ function ScreenSession({ ctx, setCtx, appendLog, onStartSso, addBtpFromRoute }) 
           <>
             <p style={{ fontSize: 13, color: "var(--ink-3)", margin: "0 0 10px" }}>
               Optional. Needed only for: deploying a new Figaf Tool, connecting it to Integration
-              Suite, and the automatic role assignment in the persistent-SSO upgrade. Everything
-              else works without it.
+              Suite, and the automatic role assignment in Setup step 1. Everything else works without it.
             </p>
             <button className="btn" onClick={() => setAddBtp(true)}>Add BTP login</button>
           </>
@@ -355,7 +305,6 @@ function ScreenSession({ ctx, setCtx, appendLog, onStartSso, addBtpFromRoute }) 
       </div>
 
       <MgmtUserCard />
-      <PersistentSsoCard ctx={ctx} onAddBtp={() => setAddBtp(true)} onStart={onStartSso} />
     </div>
   );
 }

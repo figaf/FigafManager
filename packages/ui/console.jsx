@@ -1,42 +1,50 @@
 /* global React, Ico,
    WinFrame, FigafMark, TerminalDrawer, SelfUpdateBanner, UpdatePreflightModal,
-   ScreenLogin, ScreenL3Apps, ScreenConnections,
+   ScreenLogin, ScreenL3Apps, ScreenConnections, ScreenSetupPage,
    ScreenSession, ScreenAbout, ScreenFigafToolHub */
 // Console frame (hosted mode): a persistent left-rail navigation instead of
-// the one-time wizard. Pages are the existing screens; the four Figaf Tool
-// flows (deploy / update / connect / SSO upgrade) keep their step sequence
-// and render INSIDE the Figaf Tool page as a local stepper.
+// the one-time wizard. Pages are the existing screens; the three Figaf Tool
+// flows (deploy / update / connect) keep their step sequence and render
+// INSIDE the Figaf Tool page as a local stepper.
 // Frame selection happens in app.jsx via features.consoleUI.
+//
+// The Setup page (#/setup, figaf-l3-l4 SPEC section 6) owns the installation
+// of a fresh space. Until step 1 (Prepare the space) is done - i.e. while the
+// manager runs in token mode - it is the landing page and the pages that
+// need a prepared space are disabled in the rail. A deep link still opens
+// them, with a notice that points back to the Setup.
 
 const CONSOLE_ROUTES = [
-  { id: "apps",        hash: "#/apps",        label: "L3 Applications",  sub: "Install · update · health",  needsCf: true },
-  { id: "connections", hash: "#/connections", label: "Connections",      sub: "Figaf tool · SAP systems",   needsCf: true },
-  { id: "figaf-tool",  hash: "#/figaf-tool",  label: "Figaf Tool",       sub: "Deploy · update · connect",  needsCf: true },
-  { id: "session",     hash: "#/session",     label: "Session & access", sub: "Sign-in · management user",  needsCf: false },
-  { id: "about",       hash: "#/about",       label: "About & updates",  sub: "Version · checks",           needsCf: false },
+  { id: "setup",       hash: "#/setup",       label: "Setup",            sub: "Prepare · sign-in · services", needsCf: false },
+  { id: "apps",        hash: "#/apps",        label: "L3 Applications",  sub: "Install · update · health",    needsCf: true,  afterPrepare: true },
+  { id: "connections", hash: "#/connections", label: "Connections",      sub: "Figaf tool · SAP systems",     needsCf: true,  afterPrepare: true },
+  { id: "figaf-tool",  hash: "#/figaf-tool",  label: "Figaf Tool",       sub: "Deploy · update · connect",    needsCf: true,  afterPrepare: true },
+  { id: "session",     hash: "#/session",     label: "Session & access", sub: "Sign-in · management user",    needsCf: false },
+  { id: "about",       hash: "#/about",       label: "About & updates",  sub: "Version · checks",             needsCf: false },
 ];
 
-// The wizard branches that are flows inside the Figaf Tool page. The
-// persistent-SSO upgrade is NOT one of them any more: it is about the
-// manager's own sign-in, so it lives under Session & access on its own route
-// (#/session/sso-upgrade) - the checklist deep-links to it and the page comes
-// back after the restage reload (virgin run #3, finding 5).
+// The wizard branches that are flows inside the Figaf Tool page.
 const FIGAF_TOOL_FLOWS = { deploy: 1, update: 1, connect: 1 };
-const SSO_FLOW = "xsuaa-upgrade";
-const SSO_SUBROUTE = "sso-upgrade";
+// The old persistent-SSO route: the work moved to the Setup page.
+const LEGACY_SSO_HASH = "#/session/sso-upgrade";
 // "#/session/add-btp": Session & access opens with the BTP sign-in form. Used by
-// the upgrade screen's "Add BTP login first"; screen-session.jsx returns to the
-// upgrade route when the BTP login completes.
+// the Setup page's "Add BTP login first"; screen-session.jsx returns to the
+// Setup when the BTP login completes.
 const ADD_BTP_SUBROUTE = "add-btp";
+const LOCKED_HINT = "Available after step 1 of the Setup (Prepare the space)";
 
-// "#/session/sso-upgrade" -> { id: "session", sub: "sso-upgrade" }.
+const consoleXsuaaMode = () => typeof window !== "undefined" && window.figafXsuaaMode === true;
+
+// "#/session/add-btp" -> { id: "session", sub: "add-btp" }. An empty or unknown
+// hash lands on the Setup while the space is not prepared, on the apps after.
 function consoleLocationFromHash(hash) {
   const h = String(hash || "");
+  if (h === LEGACY_SSO_HASH) return { id: "setup", sub: "" };
   const exact = CONSOLE_ROUTES.find((x) => x.hash === h);
   if (exact) return { id: exact.id, sub: "" };
   const parent = CONSOLE_ROUTES.find((x) => h.indexOf(x.hash + "/") === 0);
   if (parent) return { id: parent.id, sub: h.slice(parent.hash.length + 1) };
-  return { id: "apps", sub: "" };
+  return { id: consoleXsuaaMode() ? "apps" : "setup", sub: "" };
 }
 function consoleRouteFromHash(hash) { return consoleLocationFromHash(hash).id; }
 
@@ -62,7 +70,7 @@ async function runConsoleChecks(setCtx) {
   }
 }
 
-function ConsoleRail({ activeRoute, onNavigate, flowActive, ssoFlowActive, aboutBadge, ctx, version }) {
+function ConsoleRail({ activeRoute, onNavigate, flowActive, aboutBadge, ctx, version, setupSub, setupDot, xsuaaMode }) {
   return (
     <aside className="rail">
       <div className="rail-brand">
@@ -74,25 +82,32 @@ function ConsoleRail({ activeRoute, onNavigate, flowActive, ssoFlowActive, about
       </div>
 
       <nav className="cnav">
-        {CONSOLE_ROUTES.map((r) => (
-          <div
-            key={r.id}
-            data-route={r.id}
-            className={`cnav-item ${activeRoute === r.id ? "is-active" : ""}`}
-            onClick={() => onNavigate(r.id)}
-            role="link"
-            tabIndex={0}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onNavigate(r.id); }}
-          >
-            <div className="cnav-label">
-              {r.label}
-              {r.id === "figaf-tool" && flowActive && <span className="cnav-dot blue" title="A flow is in progress" />}
-              {r.id === "session" && ssoFlowActive && <span className="cnav-dot blue" title="The persistent-SSO upgrade is in progress" />}
-              {r.id === "about" && aboutBadge && <span className="cnav-dot red" title={aboutBadge} />}
+        {CONSOLE_ROUTES.map((r) => {
+          const locked = !!r.afterPrepare && !xsuaaMode;
+          const go = () => onNavigate(locked ? "setup" : r.id);
+          return (
+            <div
+              key={r.id}
+              data-route={r.id}
+              data-locked={locked ? "1" : undefined}
+              className={`cnav-item ${activeRoute === r.id ? "is-active" : ""} ${locked ? "is-disabled" : ""}`}
+              onClick={go}
+              role="link"
+              aria-disabled={locked || undefined}
+              title={locked ? LOCKED_HINT : undefined}
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") go(); }}
+            >
+              <div className="cnav-label">
+                {r.label}
+                {r.id === "figaf-tool" && flowActive && <span className="cnav-dot blue" title="A flow is in progress" />}
+                {r.id === "setup" && setupDot && <span className="cnav-dot blue" title="The setup is not finished" />}
+                {r.id === "about" && aboutBadge && <span className="cnav-dot red" title={aboutBadge} />}
+              </div>
+              <div className="cnav-sub">{r.id === "setup" && setupSub ? setupSub : locked ? "after step 1 (Setup)" : r.sub}</div>
             </div>
-            <div className="cnav-sub">{r.sub}</div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
 
       <div className="rail-foot" style={{ flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
@@ -110,51 +125,19 @@ function ConsoleRail({ activeRoute, onNavigate, flowActive, ssoFlowActive, about
   );
 }
 
-// Setup checklist on the landing page: the install steps in order, each with
-// what it gives (why) and what it needs (when). Steps come from
-// window.figafSetupSteps (setup-checklist.js); done steps stay visible but
-// compact; the first actionable step is highlighted. Hidden once all are done.
-function SetupChecklist({ setup, onDismiss }) {
-  if (!setup || !setup.steps || setup.steps.length === 0) return null;
-  if (setup.done >= setup.total) return null;
+// One line on a page that was opened before the setup is finished (deep link
+// or bookmark): where the installation stands and where to continue.
+function SetupNotice({ setup, onOpen }) {
+  if (!setup || setup.complete) return null;
+  const cur = setup.current;
   return (
-    <div className="card setup-checklist">
-      <div className="setup-head">
-        <div style={{ fontWeight: 700 }}>Set up this installation</div>
-        <span className="pill blue">{setup.done} of {setup.total} done</span>
-        <span className="setup-hint">Follow the order. Each step says what it gives and what it needs.</span>
-        <div className="spacer" style={{ flex: 1 }} />
-        <button className="btn-link" onClick={onDismiss}>Hide</button>
-      </div>
-      {setup.steps.map((s) => (
-        <div
-          key={s.id}
-          data-step={s.id}
-          className={`setup-step ${s.done ? "is-done" : s.current ? "is-current" : s.blocked ? "is-blocked" : ""}`}
-        >
-          <div className="setup-num">{s.done ? <Ico.Check /> : s.n}</div>
-          <div className="setup-body">
-            <div className="setup-title">
-              <span>{s.n}. {s.title}</span>
-              {s.done && <span className="pill green">done</span>}
-              {!s.done && s.current && <span className="pill blue">current step</span>}
-              {!s.done && !s.current && s.blocked && <span className="pill gray">{s.blocked}</span>}
-            </div>
-            {!s.done && <div className="setup-why">{s.why}</div>}
-            {!s.done && s.when && <div className="setup-when">{s.when}</div>}
-          </div>
-          {!s.done && s.cta && s.action && (
-            <button
-              className="btn"
-              onClick={s.action}
-              disabled={!!s.blocked}
-              title={s.blocked ? `Available ${s.blocked}` : undefined}
-            >
-              {s.cta}
-            </button>
-          )}
-        </div>
-      ))}
+    <div className="setup-notice" data-setup-notice="">
+      <Ico.Info />
+      <span>
+        Setup not finished: {setup.done} of {setup.total} done{cur ? <>. Next: step {cur.n}, {cur.title}</> : null}.
+      </span>
+      <div className="spacer" style={{ flex: 1 }} />
+      <button className="btn" onClick={onOpen}>Open Setup</button>
     </div>
   );
 }
@@ -170,12 +153,14 @@ function ConsoleFrame({ app }) {
     consoleLocationFromHash(typeof window === "undefined" ? "" : window.location.hash));
   const route = loc.id;
   const sub = loc.sub;
-  const [checklist, setChecklist] = React.useState(null);   // null = not fetched
-  const [checklistHidden, setChecklistHidden] = React.useState(false);
+  // The four states the Setup model needs. `stored` and `figaf` need no cf
+  // login (Credential Store reads); `l3` and `services` do.
+  const [data, setData] = React.useState({});
+  const [releaseVersion, setReleaseVersion] = React.useState(null);
 
+  const xsuaaMode = consoleXsuaaMode();
   const signedIn = ctx.login.cfStatus === "done";
   const flowActive = !!FIGAF_TOOL_FLOWS[ctx.choice] && step >= 3;   // flows on the Figaf Tool page
-  const ssoFlowActive = ctx.choice === SSO_FLOW && step >= 3;        // the flow on Session & access
 
   const navigate = React.useCallback((id, subroute) => {
     const r = CONSOLE_ROUTES.find((x) => x.id === id);
@@ -189,7 +174,7 @@ function ConsoleFrame({ app }) {
   React.useEffect(() => {
     const onHash = () => setLoc(consoleLocationFromHash(window.location.hash));
     window.addEventListener("hashchange", onHash);
-    // Normalize the address on first load (empty hash → #/apps).
+    // Normalize the address on first load (empty hash → the landing page).
     const r = CONSOLE_ROUTES.find((x) => x.id === route);
     const want = r ? (sub ? `${r.hash}/${sub}` : r.hash) : "";
     if (want && window.location.hash !== want) window.history.replaceState(null, "", want);
@@ -203,74 +188,76 @@ function ConsoleFrame({ app }) {
     // eslint-disable-next-line
   }, []);
 
-  // Setup-checklist statuses. All four are read once per sign-in. The two
-  // that OTHER pages change - the management user (Session & access) and the
-  // Figaf connection (Connections) - are read again every time the operator
-  // comes back to the dashboard, so the step turns green without a reload
-  // (run #3 finding 4). Install and services states arrive from the
-  // dashboard itself (onL3Status / onL3Services below).
-  const readChecklistStatuses = React.useCallback(async (onlyExternal) => {
+  // The two states OTHER pages change (management user on Session & access,
+  // Figaf connection on Connections) are read again every time the Setup or
+  // the dashboard comes back into view (run #3 finding 4). No cf login needed.
+  const readExternal = React.useCallback(async () => {
     const api = window.figaf;
-    if (!api) return null;
+    if (!api) return;
     const [figaf, stored] = await Promise.all([
       api.connections.figafStatus().catch((e) => ({ ok: false, error: e.message })),
-      api.login.storedUserStatus().catch(() => null),
+      api.login.storedUserStatus().catch(() => ({ available: false, bindingPresent: false })),
     ]);
-    if (onlyExternal) return { figaf, stored };
+    setData((d) => ({ ...d, figaf, stored }));
+  }, []);
+  // The cf-backed states: apps and service instances.
+  const readCf = React.useCallback(async () => {
+    const api = window.figaf;
+    if (!api || !api.l3) return;
     const [l3, services] = await Promise.all([
       api.l3.status().catch((e) => ({ ok: false, error: e.message })),
       (api.l3.services ? api.l3.services() : Promise.resolve(null)).catch(() => null),
     ]);
-    return { l3, figaf, stored, services };
+    setData((d) => ({ ...d, l3, services }));
   }, []);
 
   React.useEffect(() => {
+    if (route === "setup" || route === "apps" || route === "connections") readExternal();
+  }, [route, readExternal]);
+  // The dashboard (#/apps) fetches status and services itself and reports
+  // them through onL3Status / onL3Services - no second call from the frame
+  // (the failure-visibility spec intercepts exactly one status answer).
+  React.useEffect(() => {
     if (!signedIn) return;
-    let cancelled = false;
-    (async () => {
-      if (!checklist) {
-        const all = await readChecklistStatuses(false);
-        if (!cancelled && all) setChecklist(all);
-      } else if (route === "apps") {
-        const part = await readChecklistStatuses(true);
-        if (!cancelled && part) setChecklist((c) => (c ? { ...c, ...part } : c));
-      }
-    })();
-    return () => { cancelled = true; };
+    if (route === "setup" || route === "connections") readCf();
     // eslint-disable-next-line
   }, [signedIn, route]);
+  React.useEffect(() => {
+    const api = window.figaf;
+    if (!api || !api.l3 || releaseVersion !== null) return;
+    api.l3.catalog().then((c) => setReleaseVersion(c && c.ok ? c.releaseVersion || "" : "")).catch(() => setReleaseVersion(""));
+  }, [releaseVersion]);
 
-  // The dashboard reports every fresh l3:status (after install/remove/refresh);
-  // keep the checklist's platform item in step without re-fetching the rest.
-  const onL3Status = React.useCallback((s) => {
-    setChecklist((c) => (c ? { ...c, l3: s } : c));
-  }, []);
-  const onL3Services = React.useCallback((s) => {
-    setChecklist((c) => (c ? { ...c, services: s } : c));
-  }, []);
+  // The dashboard reports every fresh l3:status / l3:services (after
+  // install / remove / refresh); keep the model in step without re-fetching.
+  const onL3Status = React.useCallback((s) => { setData((d) => ({ ...d, l3: s })); }, []);
+  const onL3Services = React.useCallback((s) => { setData((d) => ({ ...d, services: s })); }, []);
+
+  const setup = buildSetupChecklist(data, { navigate });
+  const dataLoaded = data.stored !== undefined;
+
+  // The gate rule of the Setup (SPEC section 6): a page that needs cf, the
+  // manager in XSUAA mode with a Credential Store bound and no user stored -
+  // the Setup (step 2) is the right place, not the passcode card.
+  React.useEffect(() => {
+    if (signedIn || ctx.login.autoStatus === "trying" || !xsuaaMode) return;
+    const r = CONSOLE_ROUTES.find((x) => x.id === route);
+    if (!r || !r.needsCf) return;
+    const st = data.stored;
+    if (st && st.bindingPresent && !st.available) navigate("setup");
+    // eslint-disable-next-line
+  }, [route, signedIn, ctx.login.autoStatus, data.stored]);
 
   const startFlow = React.useCallback((choiceId) => {
     setCtx((c) => ({ ...c, choice: choiceId }));
     setStepRaw(3); // base steps 0-2 are not rendered in the console; 3 = first tail step
-    if (choiceId === SSO_FLOW) navigate("session", SSO_SUBROUTE);
-    else navigate("figaf-tool");
+    navigate("figaf-tool");
   }, [setCtx, setStepRaw, navigate]);
 
   const abandonFlow = React.useCallback(() => {
-    const wasSso = ctx.choice === SSO_FLOW;
     setCtx((c) => ({ ...c, choice: null }));
     setStepRaw(2);
-    if (wasSso) navigate("session");
-  }, [setCtx, setStepRaw, navigate, ctx.choice]);
-
-  // Deep link or reload on #/session/sso-upgrade: enter the flow by itself.
-  React.useEffect(() => {
-    if (route === "session" && sub === SSO_SUBROUTE && signedIn && ctx.choice !== SSO_FLOW) {
-      setCtx((c) => ({ ...c, choice: SSO_FLOW }));
-      setStepRaw(3);
-    }
-    // eslint-disable-next-line
-  }, [route, sub, signedIn]);
+  }, [setCtx, setStepRaw]);
 
   // A wizard branch rendered as a local stepper inside a console page.
   const renderFlow = (backLabel) => {
@@ -312,19 +299,30 @@ function ConsoleFrame({ app }) {
     ) : (
       <ScreenLogin ctx={ctx} setCtx={setCtx} onNext={() => {}} appendLog={appendLog} gate />
     );
+  } else if (route === "setup") {
+    page = (
+      <ScreenSetupPage
+        ctx={ctx}
+        setCtx={setCtx}
+        appendLog={appendLog}
+        data={data}
+        setup={setup}
+        navigate={navigate}
+        onRefreshExternal={readExternal}
+        onRefreshCf={readCf}
+        onOpenTerminal={() => setTerminalOpen(true)}
+        releaseVersion={releaseVersion || null}
+      />
+    );
   } else if (route === "apps") {
-    const setup = checklist ? buildSetupChecklist(checklist, { navigate, startFlow }) : null;
     page = (
       <>
-        {!checklistHidden && checklist && (
-          <div style={{ padding: "16px 28px 0" }}>
-            <SetupChecklist setup={setup} onDismiss={() => setChecklistHidden(true)} />
-          </div>
-        )}
+        {dataLoaded && <SetupNotice setup={setup} onOpen={() => navigate("setup")} />}
         <ScreenL3Apps
           ctx={ctx}
           setCtx={setCtx}
           onConnections={() => navigate("connections")}
+          onOpenSetup={() => navigate("setup")}
           onStatus={onL3Status}
           onServices={onL3Services}
           onOpenTerminal={() => setTerminalOpen(true)}
@@ -332,15 +330,18 @@ function ConsoleFrame({ app }) {
       </>
     );
   } else if (route === "connections") {
-    page = <ScreenConnections ctx={ctx} setCtx={setCtx} />;
+    page = (
+      <>
+        {dataLoaded && <SetupNotice setup={setup} onOpen={() => navigate("setup")} />}
+        <ScreenConnections ctx={ctx} setCtx={setCtx} />
+      </>
+    );
   } else if (route === "figaf-tool") {
     page = flowActive
       ? renderFlow("← Figaf Tool overview")
       : <ScreenFigafToolHub ctx={ctx} onStartFlow={startFlow} onGoSession={() => navigate("session")} />;
   } else if (route === "session") {
-    page = (sub === SSO_SUBROUTE && signedIn && ssoFlowActive)
-      ? renderFlow("← Session & access")
-      : <ScreenSession ctx={ctx} setCtx={setCtx} appendLog={appendLog} onStartSso={() => startFlow(SSO_FLOW)} addBtpFromRoute={sub === ADD_BTP_SUBROUTE} />;
+    page = <ScreenSession ctx={ctx} setCtx={setCtx} appendLog={appendLog} addBtpFromRoute={sub === ADD_BTP_SUBROUTE} />;
   } else if (route === "about") {
     page = (
       <ScreenAbout
@@ -364,14 +365,19 @@ function ConsoleFrame({ app }) {
       ? window.figafIsLongRunningFlow(ctx, currentStepId)
       : false;
 
+  const setupSub = !dataLoaded ? null : setup ? (setup.complete ? "complete" : `${setup.done} of ${setup.total} done`) : null;
+
   return (
     <WinFrame>
       <ConsoleRail
         activeRoute={route}
         onNavigate={navigate}
-        flowActive={flowActive} ssoFlowActive={ssoFlowActive}
+        flowActive={flowActive}
         aboutBadge={aboutBadge}
         ctx={ctx}
+        xsuaaMode={xsuaaMode}
+        setupSub={setupSub}
+        setupDot={!!(dataLoaded && setup && !setup.complete)}
         version={
           (typeof window !== "undefined" && window.figafVersion) ||
           (ctx.selfUpdate && ctx.selfUpdate.check ? ctx.selfUpdate.check.current : null)
@@ -396,17 +402,19 @@ function ConsoleFrame({ app }) {
   );
 }
 
-// The four one-time setup marks for a fresh installation.
-// Steps from the shared model + the console's navigation actions.
-function buildSetupChecklist(data, { navigate, startFlow }) {
+// The step model of the Setup (setup-checklist.js) plus the console's
+// navigation actions per step. Never null once the model script is loaded:
+// the model copes with missing inputs.
+function buildSetupChecklist(data, { navigate }) {
   const build = typeof window !== "undefined" ? window.figafSetupSteps : null;
   if (typeof build !== "function") return null;
-  const ssoDone = typeof window !== "undefined" && window.figafXsuaaMode === true;
-  const result = build(data, { ssoDone });
+  const result = build(data || {}, { ssoDone: consoleXsuaaMode() });
   const actions = {
-    "mgmt-user": () => navigate("session"),
+    "prepare": () => navigate("setup"),
+    "mgmt-user": () => navigate("setup"),
+    "services": () => navigate("setup"),
+    "platform": () => navigate("apps"),
     "figaf-connection": () => navigate("connections"),
-    "sso": () => startFlow("xsuaa-upgrade"),
   };
   for (const s of result.steps) s.action = actions[s.id] || null;
   return result;

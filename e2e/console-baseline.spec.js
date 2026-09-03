@@ -3,8 +3,15 @@
 // The signed-in state comes from the seeded cf login (see global-setup.js);
 // every cf-backed assertion runs against the real space. READ-ONLY: these
 // specs never install, remove, or start a deploy.
+//
+// The local server runs in TOKEN mode (no XSUAA binding): the space counts as
+// "not prepared", so the Setup page is the landing page and the pages that
+// need a prepared space are disabled in the rail (figaf-l3-l4 SPEC section 6).
+// Deep links still open them - that is how the specs below reach them.
 
 const { test, expect } = require("@playwright/test");
+
+const isRpc = (name) => (r) => decodeURIComponent(r.url()).includes("/rpc/" + name);
 
 test("unauthenticated visitor is redirected to /setup", async ({ browser }) => {
   const context = await browser.newContext({ storageState: undefined });
@@ -14,98 +21,108 @@ test("unauthenticated visitor is redirected to /setup", async ({ browser }) => {
   await context.close();
 });
 
-test("signed-in reload lands on the L3 dashboard (#/apps), no wizard", async ({ page }) => {
+test("signed-in reload lands on the Setup page (#/setup) while the space is not prepared, no wizard", async ({ page }) => {
   await page.goto("/");
   // Auto sign-in: session resume or stored user; then the console landing page.
-  await expect(page.locator("h1.pane-title")).toHaveText("Figaf L3 applications");
-  expect(page.url()).toContain("#/apps");
-  // The rail is navigation now, not wizard steps.
-  await expect(page.locator(".cnav-item")).toHaveCount(5);
+  await expect(page.locator("h1.pane-title")).toHaveText("Set up this installation");
+  expect(page.url()).toContain("#/setup");
+  // The rail is navigation now, not wizard steps: Setup + five pages.
+  await expect(page.locator(".cnav-item")).toHaveCount(6);
+  await expect(page.locator('.cnav-item[data-route="setup"]')).toHaveClass(/is-active/);
   // Signed-in footer shows who the manager works as.
   await expect(page.locator(".rail-foot")).toContainText("/");
 });
 
-test("base services card (catalog v3) reports the real instances of the space", async ({ page }) => {
-  await page.goto("/#/apps");
-  const card = page.getByText("Base services", { exact: true }).locator("..").locator("..");
-  await expect(card).toBeVisible();
-  // The dev space has all three instances: nothing to create.
-  await expect(card).toContainText("figaf-l3l4-db");
-  await expect(card).toContainText("figaf-l3l4-xsuaa");
-  await expect(card).toContainText("figaf-l3l4-credstore");
-  await expect(card.getByText("all ready")).toBeVisible();
-  await expect(card.getByRole("button", { name: /Create missing services/ })).toBeDisabled();
-});
-
-test("setup checklist shows the numbered install steps with why-lines, Secure access (SSO) FIRST", async ({ page }) => {
-  // Locally the manager runs in token mode, so the banner must show and step 1 is current.
-  await page.goto("/#/apps");
-  const banner = page.locator(".setup-checklist");
-  await expect(banner).toContainText("Set up this installation");
-  await expect(banner.locator(".pill.blue").first()).toHaveText(/^\d of 5 done$/);
-  // Catalog v3: five steps, in the install order (decision 0009), all visible.
-  const steps = banner.locator(".setup-step");
+test("setup page: five steps in the install order, step 1 current, the rest 'after step 1'; the progress pill and the rail agree", async ({ page }) => {
+  await page.goto("/#/setup");
+  const list = page.locator('[data-setup-page=""]');
+  await expect(list).toContainText("Installation progress");
+  await expect(list.locator('[data-setup-progress=""]')).toHaveText(/^\d of 5 done$/);
+  const steps = list.locator(".setup-step");
   await expect(steps).toHaveCount(5);
-  await expect(steps.nth(0)).toContainText("1. Secure access");
+  await expect(steps.nth(0)).toContainText("1. Prepare the space");
   await expect(steps.nth(1)).toContainText("2. Management user");
   await expect(steps.nth(2)).toContainText("3. Base services");
-  await expect(steps.nth(3)).toContainText("4. Shared backend");
+  await expect(steps.nth(3)).toContainText("4. Shared backend and first app");
   await expect(steps.nth(4)).toContainText("5. Figaf tool connection");
-  // Exactly one current step - step 1; every other step waits for it.
-  await expect(banner.locator(".setup-step.is-current")).toHaveCount(1);
-  await expect(banner.locator('.setup-step[data-step="sso"]')).toHaveClass(/is-current/);
+  await expect(list.locator(".setup-step.is-current")).toHaveCount(1);
+  await expect(list.locator('.setup-step[data-step="prepare"]')).toHaveClass(/is-current/);
   for (const id of ["mgmt-user", "services", "platform", "figaf-connection"]) {
-    await expect(banner.locator(`.setup-step[data-step="${id}"]`)).toContainText("after step 1");
+    await expect(list.locator(`.setup-step[data-step="${id}"]`)).toContainText("after step 1");
+    // Blocked steps show no body: no buttons, no forms.
+    await expect(list.locator(`.setup-step[data-step="${id}"] .setup-step-body`)).toHaveCount(0);
   }
-  const openSteps = banner.locator(".setup-step:not(.is-done)");
-  expect(await openSteps.count()).toBeGreaterThan(0);
-  expect(await banner.locator(".setup-why").count()).toBe(await openSteps.count());
-  // Step 1 explains the passcode, the single restart and the role collection; its button is live.
-  const sso = banner.locator('.setup-step[data-step="sso"]');
-  await expect(sso).toContainText("30-90 s");
-  await expect(sso).toContainText("passcode");
-  await expect(sso).toContainText("FigafL3L4-Manager-Admin");
-  await expect(sso.getByRole("button", { name: "Start upgrade" })).toBeEnabled();
-  // Hide is per page load.
-  await banner.getByRole("button", { name: "Hide" }).click();
-  await expect(banner).toHaveCount(0);
+  // Every open step explains itself (why-line); step 1 names the passcode and the restart.
+  const openSteps = list.locator(".setup-step:not(.is-done)");
+  expect(await list.locator(".setup-why").count()).toBe(await openSteps.count());
+  const prepare = list.locator('.setup-step[data-step="prepare"]');
+  await expect(prepare).toContainText("passcode");
+  await expect(prepare).toContainText("30-90 s");
+  // The rail's Setup entry carries the same count.
+  await expect(page.locator('.cnav-item[data-route="setup"] .cnav-sub')).toHaveText(/^\d of 5 done$/);
 });
 
-test("base services card in token mode: nothing that restarts the manager is offered", async ({ page }) => {
-  await page.goto("/#/apps");
-  const card = page.getByText("Base services", { exact: true }).locator("..").locator("..");
-  await expect(card).toContainText("Before step 1 (Secure access) nothing here restarts the manager");
-  await expect(card.getByRole("button", { name: /Restart manager/ })).toHaveCount(0);
-  await expect(card.getByRole("button", { name: "Bind to manager" })).toHaveCount(0);
+test("setup step 1 (signed in): asks for the plans and the role assignment BEFORE the run; a dropdown only for a missing instance with a choice; nothing is clicked", async ({ page }) => {
+  await page.goto("/#/setup");
+  const body = page.locator('[data-body="prepare"]');
+  await expect(body).toBeVisible();
+  // Service plans: the three instances of the release. The dev space's state
+  // varies between runs (wiped for a virgin run, or fully provisioned), so the
+  // spec checks the rule, not one state: an existing instance shows "exists";
+  // a missing one with more than one plan shows a dropdown with a note;
+  // a missing one with a single plan (xsuaa) shows the plan only.
+  const plans = body.locator('[data-panel="service-plans"]');
+  await expect(plans).toContainText("Service plans");
+  const rows = plans.locator(".setup-plan-row");
+  await expect(rows).toHaveCount(3);
+  for (const name of ["figaf-l3l4-db", "figaf-l3l4-xsuaa", "figaf-l3l4-credstore"]) {
+    const row = plans.locator(`.setup-plan-row[data-service="${name}"]`);
+    await expect(row).toContainText(name);
+    const exists = (await row.locator(".pill", { hasText: "exists" }).count()) === 1;
+    const dropdowns = await row.locator("select").count();
+    if (exists) {
+      expect(dropdowns).toBe(0);
+    } else if (name === "figaf-l3l4-xsuaa") {
+      expect(dropdowns).toBe(0);                    // one plan: nothing to choose
+      await expect(row).toContainText("plan application");
+    } else {
+      expect(dropdowns).toBe(1);                    // free / standard: the person decides
+      await expect(row.locator("select")).toHaveValue("free");
+      await expect(row).toContainText(/small limits|paid plan/);
+    }
+  }
+  const anyChoice = (await plans.locator("select").count()) > 0;
+  await expect(plans).toContainText(anyChoice ? "Plans that cost money are your decision" : "They all exist already");
+  // Role assignment: no BTP login locally - the panel says so and offers it first.
+  const role = body.locator('[data-panel="role-assign"]');
+  await expect(role).toContainText("no BTP login");
+  await expect(role).toContainText("before the last restart does not count");
+  await expect(role.getByRole("button", { name: "Add BTP login first" })).toBeVisible();
+  await expect(role.locator('input[type="checkbox"]')).toHaveCount(0);
+  // The primary button names the consequence. It is NOT clicked.
+  await expect(body.getByRole("button", { name: "Prepare the space without role assignment" })).toBeVisible();
+  // The phases of the run are listed up front (no assign-role row without the BTP login).
+  await expect(body.locator(".task-list .check-row")).toHaveCount(6); // cf target + 5 phases
+  await expect(body).toContainText("Prepare the XSUAA instance");
+  await expect(body).toContainText("Create the base services");
+  await expect(body).toContainText("Deploy approuter");
+  await expect(body).toContainText("Restart manager");
+  await expect(body).not.toContainText("Assign role collection");
 });
 
-test("setup checklist re-reads the management-user and Figaf states when the dashboard is shown again", async ({ page }) => {
-  // Run #3 finding 4: after storing the management user on Session & access,
-  // step 2 stayed "current step" until a page reload. The dashboard must read
-  // those two states again every time it comes back into view.
-  await page.goto("/#/apps");
-  await expect(page.locator(".setup-checklist")).toBeVisible();
-  await page.locator('.cnav-item[data-route="session"]').click();
-  await expect(page.locator("h1.pane-title")).toHaveText("Who the manager works as");
-  const isRpc = (name) => (r) => decodeURIComponent(r.url()).includes("/rpc/" + name);
-  const storedRead = page.waitForRequest(isRpc("login:storedUserStatus"));
-  const figafRead = page.waitForRequest(isRpc("connections:figafStatus"));
-  await page.locator('.cnav-item[data-route="apps"]').click();
-  await Promise.all([storedRead, figafRead]);
-  await expect(page.locator(".setup-checklist")).toBeVisible();
-});
-
-test("rail navigation reaches every page and updates the address", async ({ page }) => {
-  await page.goto("/#/apps");
-  await expect(page.locator("h1.pane-title")).toHaveText("Figaf L3 applications");
-
-  await page.locator('.cnav-item[data-route="connections"]').click();
-  await expect(page.locator("h1.pane-title")).toHaveText("Figaf tool & SAP systems");
-  expect(page.url()).toContain("#/connections");
-
-  await page.locator('.cnav-item[data-route="figaf-tool"]').click();
-  await expect(page.locator("h1.pane-title")).toHaveText("Figaf Tool deployments");
-  expect(page.url()).toContain("#/figaf-tool");
+test("rail: the pages that need a prepared space are disabled in token mode and lead to the Setup; Session & access and About open", async ({ page }) => {
+  await page.goto("/#/setup");
+  for (const id of ["apps", "connections", "figaf-tool"]) {
+    const item = page.locator(`.cnav-item[data-route="${id}"]`);
+    await expect(item).toHaveClass(/is-disabled/);
+    await expect(item).toHaveAttribute("data-locked", "1");
+    await expect(item.locator(".cnav-sub")).toHaveText("after step 1 (Setup)");
+  }
+  // A person can still click the greyed-out entry; it leads to the Setup.
+  // (force: Playwright's own actionability check refuses aria-disabled items.)
+  await page.locator('.cnav-item[data-route="apps"]').click({ force: true });
+  expect(page.url()).toContain("#/setup");
+  await expect(page.locator("h1.pane-title")).toHaveText("Set up this installation");
 
   await page.locator('.cnav-item[data-route="session"]').click();
   await expect(page.locator("h1.pane-title")).toHaveText("Who the manager works as");
@@ -116,70 +133,76 @@ test("rail navigation reaches every page and updates the address", async ({ page
   expect(page.url()).toContain("#/about");
 });
 
-test("session page: access map first, then CF session, BTP, management user, persistent SSO", async ({ page }) => {
+test("deep link #/apps still opens the dashboard, with the setup notice; the base services are a one-line status, the panel lives on the Setup", async ({ page }) => {
+  await page.goto("/#/apps");
+  await expect(page.locator("h1.pane-title")).toHaveText("Figaf L3 applications");
+  const notice = page.locator('[data-setup-notice=""]');
+  await expect(notice).toContainText("Setup not finished");
+  await expect(notice).toContainText("Next: step 1, Prepare the space");
+  // One line per instance with its real state; the repair link appears only
+  // when something is not ready (the dev space's state varies between runs).
+  const summary = page.locator('[data-services-summary=""]');
+  await expect(summary).toContainText("Base services");
+  await expect(summary.locator(".pill")).toHaveText(/^(all ready|\d not ready)$/);
+  await expect(summary).toContainText(/figaf-l3l4-db: (ready|missing|in-progress|failed)/);
+  await expect(summary).toContainText("figaf-l3l4-xsuaa:");
+  await expect(summary).toContainText("figaf-l3l4-credstore:");
+  const allReady = (await summary.locator(".pill").textContent()) === "all ready";
+  await expect(summary.getByRole("button", { name: "Repair in Setup (step 3)" })).toHaveCount(allReady ? 0 : 1);
+  // No creation button and no checklist banner on the dashboard any more.
+  await expect(page.getByRole("button", { name: /Create missing services/ })).toHaveCount(0);
+  await expect(page.locator(".setup-checklist")).toHaveCount(0);
+  await notice.getByRole("button", { name: "Open Setup" }).click();
+  expect(page.url()).toContain("#/setup");
+});
+
+test("setup page re-reads the management-user and Figaf states when it is shown again", async ({ page }) => {
+  // Run #3 finding 4: after storing the management user elsewhere, the step
+  // stayed "current step" until a page reload. The page must read those two
+  // states again every time it comes back into view.
+  await page.goto("/#/setup");
+  await expect(page.locator('[data-setup-page=""]')).toBeVisible();
+  await page.locator('.cnav-item[data-route="session"]').click();
+  await expect(page.locator("h1.pane-title")).toHaveText("Who the manager works as");
+  const storedRead = page.waitForRequest(isRpc("login:storedUserStatus"));
+  const figafRead = page.waitForRequest(isRpc("connections:figafStatus"));
+  await page.locator('.cnav-item[data-route="setup"]').click();
+  await Promise.all([storedRead, figafRead]);
+  await expect(page.locator('[data-setup-page=""]')).toBeVisible();
+});
+
+test("session page: access map first, then CF session, BTP, management user - and no Secure access card any more", async ({ page }) => {
   await page.goto("/#/session");
   await expect(page.locator("h1.pane-title")).toHaveText("Who the manager works as");
-  // The access map: one row per sign-in concept, each with a purpose and a state.
   const map = page.locator(".access-map");
   await expect(map).toContainText("How this manager signs you in");
   await expect(map.locator(".access-row")).toHaveCount(4);
   for (const name of ["Browser access", "Cloud Foundry login", "SAP BTP login", "Management user"]) {
     await expect(map.locator(`.access-row[data-access="${name}"] .access-purpose`)).not.toBeEmpty();
   }
-  // Locally the manager runs in token mode: bootstrap mode, setup token.
+  // Locally the manager runs in token mode: bootstrap mode, setup token, until step 1 of the Setup.
   await expect(map).toContainText("bootstrap mode");
   await expect(map.locator('.access-row[data-access="Browser access"]')).toContainText("setup token");
+  await expect(map.locator('.access-row[data-access="Browser access"]')).toContainText("step 1 of the Setup");
   await expect(map.locator('.access-row[data-access="Cloud Foundry login"]')).toContainText("signed in");
-  // The cards below.
   await expect(page.getByText("Cloud Foundry session")).toBeVisible();
   await expect(page.getByText("SAP BTP session")).toBeVisible();
   await expect(page.getByText("Management user (automatic sign-in)")).toBeVisible();
-  const sso = page.locator('[data-card="persistent-sso"]');
-  // Decision 0009: secure access is step 1, and the card says what it creates.
-  await expect(sso).toContainText("persistent SSO");
-  await expect(sso).toContainText("step 1");
-  await expect(sso).toContainText("figaf-l3l4-xsuaa");
-  await expect(sso).toContainText("Credential Store");
-  await expect(sso).toContainText("FigafL3L4-Manager-Admin");
-  await expect(sso).toContainText("30-90 s");
-  // No BTP login in this session: the card says so and offers it BEFORE the upgrade.
-  await expect(sso).toContainText("no BTP login");
-  await expect(sso).toContainText("before the last restart does not count");
-  await expect(sso.getByRole("button", { name: "Add BTP login first" })).toBeVisible();
-  await expect(sso.getByRole("button", { name: "Start upgrade" })).toBeVisible();
+  await expect(page.locator('[data-card="persistent-sso"]')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Start upgrade" })).toHaveCount(0);
 });
 
-test("persistent SSO upgrade opens on its own route under Session & access, and back returns", async ({ page }) => {
-  await page.goto("/#/session");
-  await page.locator('[data-card="persistent-sso"]').getByRole("button", { name: "Start upgrade" }).click();
-  await expect(page.locator("h1.pane-title")).toHaveText("Enable persistent SSO login");
-  expect(page.url()).toContain("#/session/sso-upgrade");
-  await expect(page.locator(".flow-strip")).toBeVisible();
-  // Run #4 finding 2: the role assignment is decided BEFORE Start. Locally there
-  // is no BTP login, so the panel says so, offers the BTP login, and the primary
-  // button names the consequence. Nothing is clicked: the upgrade must not start.
-  const panel = page.locator('[data-panel="role-assign"]');
-  await expect(panel).toContainText("no BTP login");
-  await expect(panel).toContainText("before the last restart does not count");
-  await expect(panel.getByRole("button", { name: "Add BTP login first" })).toBeVisible();
-  await expect(panel.locator('input[type="checkbox"]')).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Start upgrade without role assignment" })).toBeVisible();
-  await page.getByRole("button", { name: "← Session & access" }).click();
-  await expect(page.locator("h1.pane-title")).toHaveText("Who the manager works as");
-  expect(page.url()).toContain("#/session");
-  expect(page.url()).not.toContain("sso-upgrade");
-});
-
-test("deep link #/session/sso-upgrade renders the upgrade screen after auto sign-in", async ({ page }) => {
+test("the old route #/session/sso-upgrade opens the Setup", async ({ page }) => {
   await page.goto("/#/session/sso-upgrade");
-  await expect(page.locator("h1.pane-title")).toHaveText("Enable persistent SSO login");
-  await expect(page.locator(".flow-chip.is-active")).toContainText("Authentication");
+  await expect(page.locator("h1.pane-title")).toHaveText("Set up this installation");
+  expect(page.url()).toContain("#/setup");
 });
 
-test("figaf tool hub no longer offers the SSO upgrade (it lives on Session & access)", async ({ page }) => {
+test("figaf tool hub offers neither the SSO upgrade nor the Setup's work", async ({ page }) => {
   await page.goto("/#/figaf-tool");
   await expect(page.locator("h1.pane-title")).toHaveText("Figaf Tool deployments");
   await expect(page.getByRole("button", { name: "Start upgrade" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Prepare the space/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Start update" })).toBeVisible();
 });
 
@@ -215,31 +238,52 @@ test("figaf tool hub starts the update flow as a local stepper, and abandon retu
   await expect(page.locator("h1.pane-title")).toHaveText("Figaf Tool deployments");
 });
 
-test("deep link #/connections opens directly after auto sign-in", async ({ page }) => {
+test("deep link #/connections opens directly after auto sign-in, with the setup notice", async ({ page }) => {
   await page.goto("/#/connections");
   await expect(page.locator("h1.pane-title")).toHaveText("Figaf tool & SAP systems");
+  await expect(page.locator('[data-setup-notice=""]')).toContainText("Setup not finished");
 });
 
-test("auth gate shows the sign-in card without wizard wording", async ({ browser }) => {
+test("fresh session, token mode: the Setup opens with the sign-in card INSIDE step 1 - no separate gate page, no wizard wording", async ({ browser }) => {
   // Keep the claimed auth cookie but drop the wizard-session cookie: the next
   // request mints a fresh server session with no cf login and (locally) no
-  // stored user, so the gate must render - as a gate, not as wizard step 2.
+  // stored user. This is what a new person sees right after the token claim.
   const context = await browser.newContext({ storageState: "e2e/.auth/state.json" });
   await context.clearCookies({ name: "figaf_session" });
   const page = await context.newPage();
-  await page.goto("/#/apps");
-  // Console gate, first sign-in: Cloud Foundry first and required, BTP optional.
-  await expect(page.locator("h1.pane-title")).toHaveText("Sign in to Cloud Foundry");
-  await expect(page.getByText("Step 2", { exact: false })).toHaveCount(0);
-  const cards = page.locator(".login-cards > .card");
+  await page.goto("/");
+  await expect(page.locator("h1.pane-title")).toHaveText("Set up this installation");
+  expect(page.url()).toContain("#/setup");
+  const signin = page.locator('[data-body="prepare-signin"]');
+  await expect(signin).toContainText("First, sign in to Cloud Foundry");
+  const cards = signin.locator(".login-cards > .card");
   await expect(cards).toHaveCount(2);
   await expect(cards.nth(0)).toContainText("Cloud Foundry CLI");
   await expect(cards.nth(0)).toContainText("required");
   await expect(cards.nth(0).getByRole("button", { name: /Get passcode in browser/ })).toBeVisible();
   await expect(cards.nth(1)).toContainText("SAP BTP CLI");
   await expect(cards.nth(1)).toContainText("Optional");
+  await expect(page.getByText("Step 2", { exact: false })).toHaveCount(0);
+  await expect(page.getByText("Sign-in method")).toHaveCount(0);
+  // Nothing after step 1 is offered.
+  await expect(page.getByRole("button", { name: /Prepare the space/ })).toHaveCount(0);
+  await expect(page.locator('.cnav-item[data-route="apps"]')).toHaveClass(/is-disabled/);
+  await context.close();
+});
+
+test("fresh session, deep link to a page that needs cf: the gate renders as a gate (no wizard wording)", async ({ browser }) => {
+  const context = await browser.newContext({ storageState: "e2e/.auth/state.json" });
+  await context.clearCookies({ name: "figaf_session" });
+  const page = await context.newPage();
+  await page.goto("/#/apps");
+  await expect(page.locator("h1.pane-title")).toHaveText("Sign in to Cloud Foundry");
+  await expect(page.getByText("Step 2", { exact: false })).toHaveCount(0);
+  await expect(page.getByText("Sign-in method")).toHaveCount(0);
+  const cards = page.locator(".login-cards > .card");
+  await expect(cards).toHaveCount(2);
+  await expect(cards.nth(0)).toContainText("Cloud Foundry CLI");
+  await expect(cards.nth(0).getByRole("button", { name: /Get passcode in browser/ })).toBeVisible();
   await expect(cards.nth(1).getByRole("button", { name: "Sign in with SSO instead" })).toBeVisible();
-  // No wizard footer on the gate (the page swaps in by itself after sign-in).
   await expect(page.locator(".pane-foot")).toHaveCount(0);
   // The rail stays usable: About needs no CF session.
   await page.locator('.cnav-item[data-route="about"]').click();

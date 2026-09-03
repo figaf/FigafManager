@@ -4,7 +4,7 @@
 // Figaf Tool flows (deploy / update / connect). The flows keep their screens
 // and order; the console renders them inside this page as a local stepper
 // (see ConsoleFrame in console.jsx). The persistent-SSO upgrade is about the
-// manager's own sign-in and lives under Session & access (#/session/sso-upgrade).
+// manager's own sign-in and is Setup step 1 (#/setup, Prepare the space).
 
 function FigafToolActionCard({ title, desc, cta, disabled, hint, onClick }) {
   return (

@@ -49,7 +49,7 @@
     {
       id: "services-missing",
       re: /required service instance\(s\) missing/i,
-      hint: "Create the base services first (card above), wait until every instance is Ready, then try again.",
+      hint: "Create the base services first (Setup page, step 3), wait until every instance is Ready, then try again.",
     },
     {
       id: "checksum",
@@ -69,7 +69,7 @@
     {
       id: "bind",
       re: /bind-service .* failed|does the service instance exist/i,
-      hint: "The service instance is missing or not Ready in this space. Check the Base services card.",
+      hint: "The service instance is missing or not Ready in this space. Check the base services on the Setup page, step 3.",
     },
     {
       id: "start",

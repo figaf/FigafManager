@@ -1042,3 +1042,137 @@ test("l3:install refused for a missing required service is reported as FAILED in
   assert.ok(logLines.some((l) => l.startsWith("install arch FAILED: required service instance(s) missing")));
   assert.ok(!calls.some((c) => c.args[0] === "push"), "nothing may be pushed");
 });
+
+// ─── Setup step 1: l3:prepareSpaceServices (figaf-l3-l4 SPEC 5.2) ────────────
+
+test("l3:prepareSpaceServices: creates every missing instance except XSUAA with the chosen plans, waits only for the Credential Store, binds it, leaves the database creating (pending); no restart", async () => {
+  const dir = makeV3DirWithPlaceholder();
+  const state = {}; // everything missing
+  const { ctx, calls, logLines } = makeCtx(dir, (args) => {
+    if (args[0] === "create-service") {
+      // credstore is quick; the database stays "in progress" (nobody waits for it)
+      state[args[3]] = args[3] === "db" ? "create in progress" : "create succeeded";
+      return { code: 0, stdout: "" };
+    }
+    if (args[0] === "service") { const st = state[args[1]]; return st ? { code: 0, stdout: `status:    ${st}\n` } : { code: 1, stdout: "" }; }
+    if (args[0] === "bind-service") return { code: 0, stdout: "OK" };
+    return null;
+  });
+  ctx.host.getDeployTargetForSelf = () => ({ appName: "figaf-manager", apiUrl: "u", orgName: "o", spaceName: "s" });
+  ctx.sleep = async () => { throw new Error("must not wait for the database"); };
+  ctx.pollIntervalMs = 0;
+  const handlers = createL3Handlers(ctx);
+  const r = await handlers["l3:prepareSpaceServices"]({ plans: { db: "standard", credstore: "free" } });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.created.sort(), ["credstore", "db"]);
+  assert.deepEqual(r.bound, ["credstore"]);
+  assert.deepEqual(r.pending, ["db"]);
+  assert.deepEqual(r.failed, []);
+  const creates = calls.filter((c) => c.args[0] === "create-service");
+  assert.deepEqual(creates.map((c) => c.args[3]).sort(), ["credstore", "db"], "xsuaa is owned by l3:ensureXsuaa");
+  assert.deepEqual(creates.find((c) => c.args[3] === "db").args.slice(0, 4), ["create-service", "postgresql-db", "standard", "db"]);
+  assert.deepEqual(calls.find((c) => c.args[0] === "bind-service").args, ["bind-service", "figaf-manager", "credstore"]);
+  assert.ok(!calls.some((c) => c.args[0] === "restart"), "no restart in this step");
+  assert.ok(!calls.some((c) => c.args[0] === "curl" && c.args[1] === "/v3/domains"), "xsuaa is not touched here");
+  assert.ok(logLines.some((l) => /db: still being created/.test(l)), "the terminal says the database is left creating");
+});
+
+test("l3:prepareSpaceServices: a plan the catalog does not allow fails that instance only; the Credential Store is still created and bound; ok:false carries the reason", async () => {
+  const dir = makeV3DirWithPlaceholder();
+  const state = {};
+  const { ctx, calls } = makeCtx(dir, (args) => {
+    if (args[0] === "create-service") { state[args[3]] = "create succeeded"; return { code: 0, stdout: "" }; }
+    if (args[0] === "service") { const st = state[args[1]]; return st ? { code: 0, stdout: `status:    ${st}\n` } : { code: 1, stdout: "" }; }
+    if (args[0] === "bind-service") return { code: 0, stdout: "OK" };
+    return null;
+  });
+  ctx.host.getDeployTargetForSelf = () => ({ appName: "figaf-manager", apiUrl: "u", orgName: "o", spaceName: "s" });
+  ctx.sleep = async () => {}; ctx.pollIntervalMs = 0;
+  const r = await createL3Handlers(ctx)["l3:prepareSpaceServices"]({ plans: { db: "enterprise" } });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /plan 'enterprise' is not allowed for db/);
+  assert.deepEqual(r.created, ["credstore"]);
+  assert.deepEqual(r.bound, ["credstore"]);
+  assert.ok(!calls.some((c) => c.args[0] === "create-service" && c.args[3] === "db"));
+});
+
+test("l3:prepareSpaceServices: a Credential Store that cannot be created (free plan used up) is reported and NOT bound; the database is still started", async () => {
+  const dir = makeV3DirWithPlaceholder();
+  const state = {};
+  const { ctx, calls } = makeCtx(dir, (args) => {
+    if (args[0] === "create-service") {
+      if (args[3] === "credstore") return { code: 1, stdout: "", stderr: "FAILED\nService plan free: only one instance allowed per subaccount" };
+      state[args[3]] = "create in progress";
+      return { code: 0, stdout: "" };
+    }
+    if (args[0] === "service") { const st = state[args[1]]; return st ? { code: 0, stdout: `status:    ${st}\n` } : { code: 1, stdout: "" }; }
+    return null;
+  });
+  ctx.host.getDeployTargetForSelf = () => ({ appName: "figaf-manager", apiUrl: "u", orgName: "o", spaceName: "s" });
+  ctx.sleep = async () => {}; ctx.pollIntervalMs = 0;
+  const r = await createL3Handlers(ctx)["l3:prepareSpaceServices"]({});
+  assert.equal(r.ok, false);
+  assert.match(r.error, /only one instance allowed/);
+  assert.deepEqual(r.created, ["db"]);
+  assert.deepEqual(r.pending, ["db"]);
+  assert.deepEqual(r.bound, []);
+  assert.ok(!calls.some((c) => c.args[0] === "bind-service"), "nothing bound after a failed create");
+});
+
+test("l3:prepareSpaceServices: instances that exist are left alone; an already bound Credential Store is a success; no release = nothing to do", async () => {
+  const dir = makeV3DirWithPlaceholder();
+  const { ctx, calls } = makeCtx(dir, (args) => {
+    if (args[0] === "service") return { code: 0, stdout: "status:    create succeeded\n" };
+    if (args[0] === "bind-service") return { code: 1, stdout: "", stderr: "Service instance credstore is already bound to application figaf-manager." };
+    return null;
+  });
+  ctx.host.getDeployTargetForSelf = () => ({ appName: "figaf-manager", apiUrl: "u", orgName: "o", spaceName: "s" });
+  ctx.sleep = async () => {}; ctx.pollIntervalMs = 0;
+  const r = await createL3Handlers(ctx)["l3:prepareSpaceServices"]({});
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.created, []);
+  assert.deepEqual(r.pending, []);
+  assert.deepEqual(r.bound, ["credstore"]);
+  assert.ok(!calls.some((c) => c.args[0] === "create-service"));
+
+  const { ctx: ctx2 } = makeCtx(dir, () => null);
+  ctx2.host.resolveL3ArtifactsDir = () => null;
+  const r2 = await createL3Handlers(ctx2)["l3:prepareSpaceServices"]({});
+  assert.equal(r2.ok, true);
+  assert.match(r2.note, /nothing to prepare/);
+});
+
+test("l3:provisionServices with waitOnly: only the named instances are awaited; a not-awaited instance that already failed is reported failed", async () => {
+  const dir = makeV3Dir();
+  const state = {};
+  let polls = 0;
+  const { ctx } = makeCtx(dir, (args) => {
+    if (domainsResponder(args)) return domainsResponder(args);
+    if (args[0] === "create-service") {
+      state[args[3]] = args[3] === "db" ? "create failed" : "create in progress";
+      return { code: 0, stdout: "" };
+    }
+    if (args[0] === "service") {
+      const st = state[args[1]];
+      if (!st) return { code: 1, stdout: "" };
+      if (st === "create in progress" && ++polls > 2) state[args[1]] = "create succeeded";
+      return { code: 0, stdout: `status:    ${state[args[1]]}\n` };
+    }
+    return null;
+  });
+  ctx.sleep = async () => {}; ctx.pollIntervalMs = 0;
+  const r = await createL3Handlers(ctx)["l3:provisionServices"]({ waitOnly: ["credstore", "xsuaa"] });
+  assert.equal(r.ok, false);
+  assert.ok(r.failed.some((f) => f.name === "db"), JSON.stringify(r));
+  assert.deepEqual(r.timedOut, []);
+  assert.deepEqual(r.pending, []);
+});
+
+test("l3:install refuses with a pointer to Setup step 3 while a required instance is missing", async () => {
+  const dir = makeV3Dir();
+  const { ctx } = makeCtx(dir, cfServiceResponder({ xsuaa: "create succeeded", credstore: "create succeeded" }));
+  ctx.sleep = async () => {};
+  const r = await createL3Handlers(ctx)["l3:install"]({ appId: "arch" });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /required service instance\(s\) missing: db — create them first \(Setup, step 3\)/);
+});

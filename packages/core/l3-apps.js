@@ -558,7 +558,7 @@ function createL3Handlers(ctx) {
       if (missing.length) {
         return {
           ok: false,
-          error: `required service instance(s) missing: ${missing.join(", ")} — create them first (Base services card)`,
+          error: `required service instance(s) missing: ${missing.join(", ")} — create them first (Setup, step 3)`,
         };
       }
     }
@@ -634,10 +634,12 @@ function createL3Handlers(ctx) {
    * Create every MISSING catalog service, then wait until all are ready.
    * plans: optional { <name>: <plan> } overrides, validated against the
    * catalog's allowed plans. only: optional list of service names that
-   * restricts the run (the Secure-access step creates just the manager-bound
-   * ones). Progress lines go to the terminal drawer.
+   * restricts the run. waitOnly: optional list of names to WAIT for; the
+   * other created instances are started and reported as `pending` (Setup
+   * step 1 starts the database and moves on - it takes minutes and nothing
+   * in that step needs it). Progress lines go to the terminal drawer.
    */
-  async function provisionServices({ plans, only } = {}) {
+  async function provisionServices({ plans, only, waitOnly } = {}) {
       const dir = artifactsDir();
       if (!dir) return { ok: false, error: "No L3 artifact store on this host" };
       const c = loadCatalog(dir);
@@ -708,13 +710,24 @@ function createL3Handlers(ctx) {
         created.push(s.name);
       }
 
-      // Wait for asynchronous creations (PostgreSQL takes minutes).
-      const w = await waitForServices(declared.filter((s) => !failed.some((f) => f.name === s.name)).map((s) => s.name));
+      // Wait for asynchronous creations (PostgreSQL takes minutes). With
+      // waitOnly, the other instances are probed once and reported as pending.
+      const candidates = declared.filter((s) => !failed.some((f) => f.name === s.name)).map((s) => s.name);
+      const toWait = Array.isArray(waitOnly) ? candidates.filter((n) => waitOnly.includes(n)) : candidates;
+      const w = await waitForServices(toWait);
       failed.push(...w.failed);
       const timedOut = w.timedOut;
+      const pending = [];
+      for (const name of candidates.filter((n) => !toWait.includes(n))) {
+        const r = await run(resolveCf(), ["service", name], { source: "cf", quiet: true });
+        const st = serviceStatusFromCf(r.code, r.stdout);
+        if (st === "failed") failed.push({ name, error: "service operation failed (see cf service)" });
+        else if (st !== "ready") pending.push(name);
+      }
+      if (pending.length) log("l3", "line", `${pending.join(", ")}: still being created — not waited for, see Setup step 3`);
       const ok = failed.length === 0 && timedOut.length === 0;
       return {
-        ok, created, failed, timedOut,
+        ok, created, failed, timedOut, pending,
         error: ok ? undefined :
           [failed.map((f) => `${f.name}: ${f.error}`).join("; "), timedOut.length ? `still not ready: ${timedOut.join(", ")}` : ""]
             .filter(Boolean).join(" | "),
@@ -865,7 +878,7 @@ function createL3Handlers(ctx) {
     },
 
     /**
-     * Secure-access step (decision 0009): create the release's manager-bound
+     * Legacy (wizard frame only): create the release's manager-bound
      * services (the Credential Store) when missing and bind them to the
      * manager — WITHOUT a restart. The restage at the end of the SSO upgrade
      * activates the binding, so the management user can be stored right after
@@ -891,6 +904,52 @@ function createL3Handlers(ctx) {
         bound.push(s.name);
       }
       return { ok: true, created: prov.created, bound, note: "bindings become active with the restart at the end of this step" };
+    },
+
+    /**
+     * Setup step 1 "Prepare the space" (figaf-l3-l4 SPEC 5.2): create every
+     * MISSING catalog instance except the XSUAA one (l3:ensureXsuaa owns it)
+     * with the plans the person chose on the page, wait only for the
+     * manager-bound ones (the Credential Store) and bind them to the manager
+     * - no restart; the restage at the end of the step activates the binding.
+     * The database is only STARTED: it takes minutes and nothing in this step
+     * needs it, so it finishes in the background while the person signs in
+     * with IAS and stores the management user (Setup step 3 shows it).
+     * Result: { ok, created, bound, pending, failed, error?, note? }.
+     */
+    async "l3:prepareSpaceServices"({ plans } = {}) {
+      const dir = artifactsDir();
+      if (!dir) return { ok: true, created: [], bound: [], pending: [], failed: [], note: "no release on this host - nothing to prepare" };
+      const c = loadCatalog(dir);
+      if (!c.ok) return c;
+      const targets = (c.catalog.services || []).filter((s) => s.offering !== "xsuaa");
+      if (!targets.length) return { ok: true, created: [], bound: [], pending: [], failed: [], note: "this release declares no service instances besides XSUAA" };
+      const toBind = targets.filter((s) => s.bindToManager);
+      const self = selfAppName();
+      if (toBind.length && !self) return { ok: false, error: "cannot determine the manager's own app name (not running in CF?)" };
+      const prov = await provisionServices({ plans, only: targets.map((s) => s.name), waitOnly: toBind.map((s) => s.name) });
+      const errors = prov.ok ? [] : [prov.error];
+      const bound = [];
+      for (const s of toBind) {
+        const broken = (prov.failed || []).some((f) => f.name === s.name) || (prov.timedOut || []).includes(s.name);
+        if (broken) continue;
+        const r = await run(resolveCf(), ["bind-service", self, s.name], { source: "cf" });
+        if (r.code !== 0 && !/already bound/i.test(`${r.stdout}\n${r.stderr}`)) {
+          errors.push(`cf bind-service ${self} ${s.name} failed: ${cfTail(r)}`);
+          continue;
+        }
+        bound.push(s.name);
+      }
+      const ok = errors.length === 0;
+      return {
+        ok,
+        created: prov.created || [],
+        bound,
+        pending: prov.pending || [],
+        failed: prov.failed || [],
+        error: ok ? undefined : errors.join(" | "),
+        note: ok ? "bindings become active with the restart at the end of this step" : undefined,
+      };
     },
 
     /** Bind a bindToManager catalog service to the manager app itself. */

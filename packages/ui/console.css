@@ -155,3 +155,39 @@
 .ao-hint { font-weight: 600; color: var(--ink-0); }
 .ao-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .pill.red { background: #fde8e8; color: #b42318; }
+
+/* ── Setup page (#/setup) and the order it enforces ──────────────────────── */
+.cnav-item.is-disabled { opacity: 0.5; cursor: not-allowed; }
+.cnav-item.is-disabled:hover { background: transparent; }
+.cnav-item.is-disabled .cnav-label { color: var(--ink-3); }
+
+.setup-page .setup-step { align-items: flex-start; }
+.setup-page .setup-step.is-open { opacity: 1; }
+.setup-step-body { margin-top: 10px; }
+.setup-lead { font-size: 13px; color: var(--ink-2); margin: 0 0 10px; line-height: 1.5; }
+.setup-panel {
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  background: rgba(21, 101, 216, 0.05);
+  border: 1px solid rgba(21, 101, 216, 0.18);
+  font-size: 13px;
+  color: var(--ink-1);
+}
+.setup-panel-title { font-weight: 600; color: var(--ink-0); margin-bottom: 6px; }
+.setup-panel-text { margin: 0 0 8px; line-height: 1.5; color: var(--ink-2); font-size: 13px; }
+.setup-plan-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 0; border-top: 1px solid var(--line); }
+.setup-actions { display: flex; gap: 8px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
+.setup-box { margin-top: 12px; padding: 12px 14px; border-radius: 10px; font-size: 13px; color: var(--ink-1); line-height: 1.5; }
+.setup-box p { margin: 6px 0 0; }
+.setup-box.is-ok { background: rgba(34, 197, 94, 0.06); border: 1px solid rgba(34, 197, 94, 0.25); }
+.setup-box.is-error { background: rgba(225, 29, 72, 0.07); border: 1px solid rgba(225, 29, 72, 0.25); color: var(--error, #b91c1c); }
+.setup-box-note { margin-top: 10px !important; padding: 8px 10px; border-radius: 6px; background: rgba(21, 101, 216, 0.06); border: 1px solid rgba(21, 101, 216, 0.18); font-size: 12px; }
+.setup-box-note.is-warn { background: rgba(225, 29, 72, 0.07); border-color: rgba(225, 29, 72, 0.2); }
+.setup-notice {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 16px 28px 0; padding: 10px 14px;
+  border: 1px solid rgba(21, 101, 216, 0.18); border-radius: 10px;
+  background: rgba(21, 101, 216, 0.05); font-size: 13px; color: var(--ink-1);
+}
+.login-embedded .login-cards { gap: 12px; }

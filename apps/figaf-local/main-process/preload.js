@@ -145,6 +145,7 @@ contextBridge.exposeInMainWorld("figaf", {
     restartSelf:        ()  => ipcRenderer.invoke("l3:restartSelf"),
     ensureXsuaa:            (a) => ipcRenderer.invoke("l3:ensureXsuaa", a || {}),
     prepareManagerServices: (a) => ipcRenderer.invoke("l3:prepareManagerServices", a || {}),
+    prepareSpaceServices:   (a) => ipcRenderer.invoke("l3:prepareSpaceServices", a || {}),
     install:   (a) => ipcRenderer.invoke("l3:install", a || {}),
     update:    (a) => ipcRenderer.invoke("l3:update", a || {}),
     disable:   (a) => ipcRenderer.invoke("l3:disable", a || {}),

@@ -273,7 +273,7 @@ function BaseServicesCard({ services, busy, onProvision, onBind, onRestart, onRe
   const [plans, setPlans] = React.useState({});
   const [bindingLive, setBindingLive] = React.useState(null); // login:storedUserStatus.bindingPresent
   const [confirmRestart, setConfirmRestart] = React.useState(false);
-  // Token mode (before step 1, Secure access): nothing on this card may restart
+  // Token mode (before Setup step 1, Prepare the space): nothing on this card may restart
   // the manager - a restart would cost a second setup token (decision 0009).
   // Step 1 creates and binds the Credential Store itself.
   const ssoMode = typeof window !== "undefined" && window.figafXsuaaMode === true;
@@ -322,8 +322,8 @@ function BaseServicesCard({ services, busy, onProvision, onBind, onRestart, onRe
         Service instances this release needs in the space. Created by the manager with plain
         <span className="kbd">cf create-service</span>; plans that cost money are your choice.
         {!ssoMode && (
-          <span data-token-mode-note=""> Before step 1 (Secure access) nothing here restarts the manager: that step creates the XSUAA
-          instance and the Credential Store and binds them to the manager itself.</span>
+          <span data-token-mode-note=""> Before step 1 (Prepare the space) nothing here restarts the manager: that step creates the
+          instances and binds them to the manager itself.</span>
         )}
       </div>
       {services.map((s) => {
@@ -354,7 +354,7 @@ function BaseServicesCard({ services, busy, onProvision, onBind, onRestart, onRe
               </button>
             )}
             {s.bindToManager && s.status === "ready" && s.boundToManager === false && !ssoMode && (
-              <span style={{ fontSize: 12, color: "var(--ink-3)" }} data-gated="bind">bound by step 1 (Secure access)</span>
+              <span style={{ fontSize: 12, color: "var(--ink-3)" }} data-gated="bind">bound by step 1 (Prepare the space)</span>
             )}
             {s.bindToManager && s.status === "ready" && s.boundToManager === true && bindingLive === false && (
               <span style={{ fontSize: 12, color: "var(--ink-3)" }}>bound · restart needed</span>
@@ -367,8 +367,8 @@ function BaseServicesCard({ services, busy, onProvision, onBind, onRestart, onRe
       })}
       {credstore && credstore.boundToManager === true && bindingLive === false && !ssoMode && (
         <div style={{ marginTop: 10, padding: 10, border: "1px solid var(--line)", borderRadius: 8, fontSize: 13 }} data-gated="restart">
-          <strong>Binding not active yet.</strong> It becomes active with the restage at the end of step 1
-          (Secure access). No separate restart here: in token mode a restart would cost a new setup token.
+          <strong>Binding not active yet.</strong> It becomes active with the restart at the end of step 1
+          (Prepare the space). No separate restart here: in token mode a restart would cost a new setup token.
         </div>
       )}
       {credstore && credstore.boundToManager === true && bindingLive === false && ssoMode && (
@@ -392,12 +392,36 @@ function BaseServicesCard({ services, busy, onProvision, onBind, onRestart, onRe
   );
 }
 
+// One line on the dashboard: the state of the base services, and the way to
+// the Setup (step 3) when something is not ready. The full panel (create,
+// bind, restart) lives on the Setup page.
+function BaseServicesSummary({ services, onOpenSetup }) {
+  if (services === null) {
+    return <div data-services-summary="" style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 14 }}>Checking base services…</div>;
+  }
+  if (!services || services.length === 0) return null;
+  const notReady = services.filter((s) => s.status !== "ready");
+  return (
+    <div data-services-summary="" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 12, color: "var(--ink-3)", marginBottom: 14 }}>
+      <span style={{ fontWeight: 600, color: "var(--ink-2)" }}>Base services</span>
+      {notReady.length === 0
+        ? <span className="pill green">all ready</span>
+        : <span className="pill gray">{notReady.length} not ready</span>}
+      <span>{services.map((s) => `${s.name}: ${s.status}`).join(" · ")}</span>
+      {notReady.length > 0 && onOpenSetup && (
+        <button className="btn-link" onClick={onOpenSetup}>Repair in Setup (step 3)</button>
+      )}
+    </div>
+  );
+}
+
 // onStatus (optional): receives every fresh l3:status result, so a host frame
-// (the console's setup checklist) can follow install/remove without polling.
+// (the console's Setup model) can follow install/remove without polling.
 // onServices (optional): the same for l3:services results.
+// onOpenSetup (optional): opens the Setup page (repair of the base services).
 // onOpenTerminal (optional): opens the terminal drawer (the console frame
 // passes it so the outcome panel can offer "Show CLI output").
-function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus, onServices, onOpenTerminal }) {
+function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onOpenSetup, onStatus, onServices, onOpenTerminal }) {
   const [catalog, setCatalog] = React.useState(null);   // { releaseVersion, platform, apps } | { error }
   const [statuses, setStatuses] = React.useState({});   // appId → status row
   const [platformStatus, setPlatformStatus] = React.useState(null); // catalog-v2 platform row
@@ -433,8 +457,8 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus, onServices
   // null = not loaded yet; [] = looked and found none (manual entry stays).
   const [figafSystems, setFigafSystems] = React.useState(null);
   // Catalog v3 base services: null = not loaded, [] = release declares none.
+  // Shown as a one-line summary here; created and repaired on the Setup page.
   const [services, setServices] = React.useState(null);
-  const [servicesBusy, setServicesBusy] = React.useState(null); // "provision" | "bind" | "restart" | null
 
   const api = typeof window !== "undefined" ? window.figaf : null;
 
@@ -449,22 +473,6 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus, onServices
       setServices([]);
     }
   }, [api, onServices]);
-
-  async function serviceAction(kind, fn) {
-    if (servicesBusy) return;
-    setServicesBusy(kind);
-    setOutcome(null);
-    try {
-      const r = await fn();
-      if (r && !r.ok && r.error) failed(kind, "Base services", r);
-      return r;
-    } catch (e) {
-      failed(kind, "Base services", { ok: false, error: (e && e.message) || "action failed" });
-    } finally {
-      setServicesBusy(null);
-      if (kind !== "restart") refreshServices();
-    }
-  }
 
   const refresh = React.useCallback(async () => {
     if (!api || !api.l3) return;
@@ -557,14 +565,7 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus, onServices
         )}
 
         {catalog && !catalog.error && (
-          <BaseServicesCard
-            services={services}
-            busy={servicesBusy}
-            onRefresh={refreshServices}
-            onProvision={(plans) => serviceAction("provision", () => api.l3.provisionServices({ plans }))}
-            onBind={(name) => serviceAction("bind", () => api.l3.bindManagerService({ name }))}
-            onRestart={() => serviceAction("restart", () => api.l3.restartSelf())}
-          />
+          <BaseServicesSummary services={services} onOpenSetup={onOpenSetup} />
         )}
 
         {catalog && catalog.platform && (
@@ -628,4 +629,6 @@ function ScreenL3Apps({ ctx, setCtx, onBack, onConnections, onStatus, onServices
   );
 }
 
-Object.assign(window, { ScreenL3Apps });
+// BaseServicesCard and L3ActionOutcome are reused by the Setup page
+// (screen-setup-page.jsx, step 3).
+Object.assign(window, { ScreenL3Apps, BaseServicesCard, L3ActionOutcome });

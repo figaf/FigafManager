@@ -74,6 +74,7 @@
   // letting the banner peek through in surprising places.
   window.figafIsLongRunningFlow = function (ctx, stepId) {
     if (!ctx) return false;
+    if (ctx.setupRunning) return true; // the Setup page is preparing the space
     if (ctx.prereqsStarted && (ctx.prereqs || []).some(p => p.status === "pending" || p.status === "running")) return true;
     if (ctx.pushStatus === "running") return true;
     if (ctx.deployStarted && ctx.pushStatus !== "done" && ctx.pushStatus !== "error" && ctx.pushStatus !== "idle") return true;

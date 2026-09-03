@@ -8,7 +8,7 @@
 //   - manager part: ./manager-xsuaa-part.json (ships with the manager)
 //   - release part: xs-security.json in the L3 release (ships with the apps)
 // composeXsSecurity() builds the full document whenever the manager creates or
-// updates the instance (Secure-access step, Base services card, before every
+// updates the instance (Setup step 1 "Prepare the space", Setup step 3, before every
 // install/update). Union by name, the release entry wins on a name clash,
 // xsappname is always the shared one.
 //

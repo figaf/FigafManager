@@ -35,7 +35,10 @@ function isValidApiUrl(s) {
 // ═══════════════════════════════════════════════════════════
 // 2. CLI Login — SSO + passcode
 // ═══════════════════════════════════════════════════════════
-function ScreenLogin({ ctx, setCtx, onNext, appendLog, gate }) {
+// gate: rendered as the console's auth gate (no wizard wording, no footer).
+// embedded: rendered INSIDE another page (the Setup page): only the cards,
+// no page header - the host page says why the sign-in is needed.
+function ScreenLogin({ ctx, setCtx, onNext, appendLog, gate, embedded }) {
   const { login } = ctx;
   const setLogin = (patch) => setCtx(c => ({ ...c, login: { ...c.login, ...patch } }));
   const [gaChoice, setGaChoice] = React.useState(null);
@@ -688,6 +691,32 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog, gate }) {
             <div className="slide-in">
               {!login.passcodeRequested ? (
                 <div>
+                  {/* The stored management user comes FIRST: when it exists, one
+                      click signs in; when only the Credential Store exists, storing
+                      the user is the right next step. The passcode is the fallback. */}
+                  {storedUser && storedUser.available && (
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+                      <button className="btn btn-primary" onClick={loginWithStoredUser} disabled={login.cfStatus === "running"}>
+                        {login.cfStatus === "running"
+                          ? <><Ico.Spinner /> Signing in…</>
+                          : <>Sign in with stored management user</>}
+                      </button>
+                      <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                        <span className="kbd">{storedUser.username}</span> from SAP Credential Store — no passcode needed.{" "}
+                        <button className="btn-link" onClick={() => setMgmtSetupOpen((o) => !o)}>Replace user</button>
+                      </span>
+                    </div>
+                  )}
+                  {storedUser && !storedUser.available && storedUser.bindingPresent && !mgmtSetupOpen && (
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+                      <button className="btn btn-primary" onClick={() => setMgmtSetupOpen(true)}>
+                        Set up management user
+                      </button>
+                      <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                        Store a technical CF user in SAP Credential Store — then no passcode is needed again.
+                      </span>
+                    </div>
+                  )}
                   {cfOnly && (
                     <div className="field" style={{ marginBottom: 12 }}>
                       <label className="field-label">
@@ -708,7 +737,7 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog, gate }) {
                     </div>
                   )}
                   <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                    <button className="btn btn-primary" onClick={requestPasscode} disabled={cfOnly && !isValidApiUrl(login.apiUrl)}>
+                    <button className={`btn ${storedUser && storedUser.bindingPresent ? "" : "btn-primary"}`} onClick={requestPasscode} disabled={cfOnly && !isValidApiUrl(login.apiUrl)}>
                       Get passcode in browser <Ico.External />
                     </button>
                     <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
@@ -717,29 +746,6 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog, gate }) {
                         : "Then open your CF passcode page and paste the one-time code."}
                     </span>
                   </div>
-                  {storedUser && storedUser.available && (
-                    <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
-                      <button className="btn" onClick={loginWithStoredUser} disabled={login.cfStatus === "running"}>
-                        {login.cfStatus === "running"
-                          ? <><Ico.Spinner /> Signing in…</>
-                          : <>Sign in with stored management user</>}
-                      </button>
-                      <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                        <span className="kbd">{storedUser.username}</span> from SAP Credential Store — no passcode needed.{" "}
-                        <button className="btn-link" onClick={() => setMgmtSetupOpen((o) => !o)}>Replace user</button>
-                      </span>
-                    </div>
-                  )}
-                  {storedUser && !storedUser.available && storedUser.bindingPresent && !mgmtSetupOpen && (
-                    <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
-                      <button className="btn" onClick={() => setMgmtSetupOpen(true)}>
-                        Set up management user
-                      </button>
-                      <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                        Store a technical CF user in SAP Credential Store — then no passcode is needed.
-                      </span>
-                    </div>
-                  )}
                   {storedUser && storedUser.bindingPresent && mgmtSetupOpen && (
                     <div style={{ marginTop: 12, padding: 12, border: "1px solid var(--border)", borderRadius: 8 }}>
                       <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>
@@ -932,6 +938,15 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog, gate }) {
         </div>
   );
 
+  const cards = (
+    <div className="login-cards" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {cfFirst ? <>{cfCard}{btpCard}</> : <>{btpCard}{cfCard}</>}
+    </div>
+  );
+
+  // Embedded in another page (the Setup): the cards only.
+  if (embedded) return <div className="login-embedded">{cards}</div>;
+
   return (
     <>
       <div className="pane-body">
@@ -947,22 +962,23 @@ function ScreenLogin({ ctx, setCtx, onNext, appendLog, gate }) {
           </p>
         </div>
 
-        <div className="field" style={{ marginBottom: 22 }}>
-          <div className="field-label">Sign-in method</div>
-          <div className="radio-row">
-            <div className="radio-tile selected">
-              <Ico.Shield style={{ width: 14, height: 14 }} /> Single sign-on (SSO)
-            </div>
-            <div className="radio-tile" style={{ opacity: 0.55 }}>
-              <Ico.User style={{ width: 14, height: 14 }} /> Username & password
-              <span className="pill gray" style={{ marginLeft: 4 }}>Coming soon</span>
+        {/* The wizard's method picker; the console gate has one method. */}
+        {!gate && (
+          <div className="field" style={{ marginBottom: 22 }}>
+            <div className="field-label">Sign-in method</div>
+            <div className="radio-row">
+              <div className="radio-tile selected">
+                <Ico.Shield style={{ width: 14, height: 14 }} /> Single sign-on (SSO)
+              </div>
+              <div className="radio-tile" style={{ opacity: 0.55 }}>
+                <Ico.User style={{ width: 14, height: 14 }} /> Username & password
+                <span className="pill gray" style={{ marginLeft: 4 }}>Coming soon</span>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
-        <div className="login-cards" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {cfFirst ? <>{cfCard}{btpCard}</> : <>{btpCard}{cfCard}</>}
-        </div>
+        {cards}
       </div>
 
       {!gate && <WizardFooter nextDisabled={!canContinue} onNext={onNext} onBack={null} />}

@@ -61,7 +61,7 @@ test("the live 2026-09-03 failure: action, where, cf's words, the manifest hint,
 test("early refusal (required services missing): no step, the services hint, nothing about cf", () => {
   const o = load()({
     ...BASE, action: "install", appName: "B2B Archiving Setup",
-    result: { ok: false, error: "required service instance(s) missing: figaf-l3l4-db — create them first (Base services card)" },
+    result: { ok: false, error: "required service instance(s) missing: figaf-l3l4-db — create them first (Setup, step 3)" },
   });
   assert.equal(o.hintId, "services-missing");
   assert.equal(o.where, "");

@@ -237,6 +237,7 @@
       // One XSUAA instance + secure access first (decision 0009).
       ensureXsuaa:            function (a) { return rpc("l3:ensureXsuaa", a || {}); },
       prepareManagerServices: function (a) { return rpc("l3:prepareManagerServices", a || {}); },
+      prepareSpaceServices:   function (a) { return rpc("l3:prepareSpaceServices", a || {}); },
       install:   function (a) { return rpc("l3:install", a || {}); },
       update:    function (a) { return rpc("l3:update", a || {}); },
       disable:   function (a) { return rpc("l3:disable", a || {}); },
